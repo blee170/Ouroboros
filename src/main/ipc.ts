@@ -213,14 +213,16 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.workspaceSave, (_e, ws: Workspace) => saveWorkspace(ws))
   ipcMain.handle(IPC.projectOpen, async () => {
     const win = ctx.getWindow()
-    const r = await dialog.showOpenDialog(win ?? undefined!, { properties: ['openDirectory'], title: 'Open project folder' })
+    const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Open project folder' }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (r.canceled || !r.filePaths[0]) return null
     return r.filePaths[0]
   })
   ipcMain.handle(IPC.projectRecent, () => store.getRecent())
   ipcMain.handle(IPC.dialogFolder, async () => {
     const win = ctx.getWindow()
-    const r = await dialog.showOpenDialog(win ?? undefined!, { properties: ['openDirectory'] })
+    const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'] }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     return r.canceled ? null : (r.filePaths[0] ?? null)
   })
 

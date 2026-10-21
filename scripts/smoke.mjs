@@ -13,8 +13,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let failures = 0
 const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${msg}`); if (!cond) failures++ }
 
+// SMOKE_EXE=release/linux-unpacked/ouroboros tests the packaged build instead of out/.
 const app = await electron.launch({
-  args: ['out/main/index.js', '--no-sandbox', `--user-data-dir=${userData}`],
+  ...(process.env.SMOKE_EXE ? { executablePath: process.env.SMOKE_EXE } : {}),
+  args: [...(process.env.SMOKE_EXE ? [] : ['out/main/index.js']), '--no-sandbox', `--user-data-dir=${userData}`],
   env: { ...process.env, OUROBOROS_API_TOKEN: TOKEN, OUROBOROS_PROJECT: project, OUROBOROS_SHELL: '/bin/bash', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
 })
 app.process().stderr.on('data', (d) => process.stderr.write(`[electron] ${d}`))
@@ -32,6 +34,10 @@ const api = async (method, path, body) => {
 }
 check((await api('GET', '/api/agents')).status === 200, 'api authenticates with token')
 check((await fetch(base + '/api/agents')).status === 401, 'api rejects missing token')
+const appPath = await app.evaluate(({ app: a }) => a.getAppPath())
+// dev: app path is out/main (we launched out/main/index.js); packaged: <app.asar>
+const mcpPath = (appPath.endsWith(join('out', 'main')) ? join(appPath, 'mcp-server.js') : join(appPath, 'out/main/mcp-server.js')).replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+check((await import('node:fs')).existsSync(mcpPath), `mcp server script resolvable at runtime (${mcpPath})`)
 
 // Two terminal nodes
 await page.click('text=+ Terminal')

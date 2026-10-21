@@ -23,6 +23,13 @@ nsis:
 linux:
   target: [AppImage]
   category: Development
+  # node-pty publishes prebuilds only for win32/darwin; on Linux it is compiled by npm into build/Release,
+  # which node-pty's package.json "files" whitelist leaves out of the package, so copy it in explicitly.
+  extraResources:
+    - from: node_modules/node-pty/build/Release/pty.node
+      to: app.asar.unpacked/node_modules/node-pty/build/Release/pty.node
+    - from: node_modules/node-pty/build/Release/spawn-helper
+      to: app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper
 extraResources:
   - from: resources/icon.png
     to: icon.png

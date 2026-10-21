@@ -1,0 +1,129 @@
+/** Node kinds shown on the canvas. */
+export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external'
+
+/** Lifecycle status of an agent/terminal node, derived from Claude Code hooks (or PTY exit). */
+export type AgentStatus = 'starting' | 'idle' | 'working' | 'needs-you' | 'done' | 'ended'
+
+export interface ClaudeOptions {
+  /** `claude --continue` on launch (resume most recent conversation in cwd). */
+  continue?: boolean
+  /** `claude --resume <id>` on launch. */
+  resume?: string
+  model?: string
+  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk' | 'auto'
+  /** Extra text appended to the system prompt (conductor preset uses this). */
+  appendSystemPrompt?: string
+  /** Free-form extra CLI args. */
+  extraArgs?: string[]
+}
+
+export interface WorktreeInfo {
+  path: string
+  branch: string
+}
+
+/** Data carried by every canvas node (serialised into the workspace file). */
+export interface NodeData {
+  kind: NodeKind
+  title: string
+  /** Working directory the shell/claude is started in. */
+  cwd: string
+  /** Shell executable for terminal nodes; undefined = platform default. */
+  shell?: string
+  /** A command to type into the shell right after spawn (terminal nodes). */
+  initialCommand?: string
+  claude?: ClaudeOptions
+  worktree?: WorktreeInfo
+  /** Markdown body for note nodes. */
+  note?: string
+  /** Claude Code session id once known (SessionStart hook). */
+  sessionId?: string
+  // --- runtime-only fields (not persisted) ---
+  status?: AgentStatus
+  statusDetail?: string
+  lastAssistantMessage?: string
+  lastEventAt?: number
+  ptyAlive?: boolean
+  [key: string]: unknown
+}
+
+export type HandoffMode = 'auto' | 'manual'
+
+/** Data carried by a handoff edge (A -> B). */
+export interface HandoffEdgeData {
+  mode: HandoffMode
+  /** Prompt template; `{{last_assistant_message}}`, `{{source_title}}`, `{{source_cwd}}` are substituted. */
+  template: string
+  /** Optional condition: fire only if the source's last message matches (substring, or /regex/flags). */
+  condition?: string
+  lastFiredAt?: number
+  [key: string]: unknown
+}
+
+export interface WorkspaceNode {
+  id: string
+  position: { x: number; y: number }
+  width?: number
+  height?: number
+  data: NodeData
+}
+
+export interface WorkspaceEdge {
+  id: string
+  source: string
+  target: string
+  data: HandoffEdgeData
+}
+
+export interface Workspace {
+  version: 1
+  projectRoot: string
+  viewport?: { x: number; y: number; zoom: number }
+  nodes: WorkspaceNode[]
+  edges: WorkspaceEdge[]
+}
+
+/** Subset of a Claude Code hook payload that we care about. */
+export interface HookEvent {
+  hook_event_name: string
+  session_id?: string
+  cwd?: string
+  transcript_path?: string
+  tool_name?: string
+  tool_input?: unknown
+  /** Notification hook: permission_prompt | idle_prompt | agent_needs_input | ... */
+  notification_type?: string
+  message?: string
+  /** Stop hook */
+  last_assistant_message?: string
+  /** SessionStart */
+  source?: string
+  [key: string]: unknown
+}
+
+/** Snapshot of one agent as seen by the roster / MCP server. */
+export interface AgentSnapshot {
+  id: string
+  kind: NodeKind
+  title: string
+  cwd: string
+  status: AgentStatus
+  statusDetail?: string
+  sessionId?: string
+  lastAssistantMessage?: string
+  lastEventAt?: number
+  ptyAlive: boolean
+}
+
+export interface AppSettings {
+  notifications: boolean
+  minimizeToTray: boolean
+  trackExternalSessions: boolean
+  defaultShell?: string
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  notifications: true,
+  minimizeToTray: true,
+  trackExternalSessions: false
+}

@@ -1,0 +1,160 @@
+import http from 'node:http'
+import { randomBytes } from 'node:crypto'
+import type { HookEvent } from '@shared/types'
+
+export const PREFERRED_HOOK_PORT = 47821
+
+export interface ApiHandlers {
+  listAgents(): unknown
+  readOutput(nodeId: string, lines: number): string | null
+  sendPrompt(nodeId: string, text: string): boolean
+  createAgent(input: { cwd?: string; title?: string; prompt?: string; kind?: 'claude' | 'terminal' }): Promise<{ id: string }>
+  setNote(nodeId: string, note: string): boolean
+  listHandoffs(): unknown
+}
+
+export interface HookServerDeps {
+  onHook(nodeId: string, event: HookEvent): void
+  onExternalHook(event: HookEvent): void
+  api: ApiHandlers
+}
+
+function readJson(req: http.IncomingMessage, limit = 2_000_000): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > limit) {
+        reject(new Error('payload too large'))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8')
+      if (!raw.trim()) return resolve({})
+      try {
+        resolve(JSON.parse(raw))
+      } catch (e) {
+        reject(e)
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+function send(res: http.ServerResponse, status: number, body: unknown): void {
+  const text = JSON.stringify(body)
+  res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) })
+  res.end(text)
+}
+
+/**
+ * Local HTTP server that (1) receives Claude Code HTTP hooks and (2) serves the small JSON API the
+ * MCP server process uses. Binds to 127.0.0.1 only. API routes require the per-launch token.
+ */
+export class HookServer {
+  /** Per-launch secret for the JSON API; OUROBOROS_API_TOKEN overrides it (tests). */
+  readonly token = process.env.OUROBOROS_API_TOKEN || randomBytes(24).toString('hex')
+  port = 0
+  private server: http.Server | null = null
+
+  constructor(private deps: HookServerDeps) {}
+
+  get baseUrl(): string {
+    return `http://127.0.0.1:${this.port}`
+  }
+
+  async start(): Promise<number> {
+    this.server = http.createServer((req, res) => {
+      this.handle(req, res).catch((err) => {
+        send(res, 500, { error: String(err?.message ?? err) })
+      })
+    })
+    const server = this.server
+    const tryListen = (port: number): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const onError = (err: NodeJS.ErrnoException): void => {
+          server.off('listening', onListening)
+          reject(err)
+        }
+        const onListening = (): void => {
+          server.off('error', onError)
+          const addr = server.address()
+          resolve(typeof addr === 'object' && addr ? addr.port : port)
+        }
+        server.once('error', onError)
+        server.once('listening', onListening)
+        server.listen(port, '127.0.0.1')
+      })
+    try {
+      this.port = await tryListen(PREFERRED_HOOK_PORT)
+    } catch {
+      this.port = await tryListen(0)
+    }
+    return this.port
+  }
+
+  stop(): void {
+    this.server?.close()
+    this.server = null
+  }
+
+  private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const path = url.pathname
+    const method = req.method ?? 'GET'
+
+    // --- Claude Code hooks ---------------------------------------------------
+    if (method === 'POST' && path.startsWith('/hook/')) {
+      const target = decodeURIComponent(path.slice('/hook/'.length))
+      const body = (await readJson(req)) as HookEvent
+      // Respond immediately so Claude Code is never blocked by our processing.
+      send(res, 200, {})
+      if (!body || typeof body !== 'object' || typeof body.hook_event_name !== 'string') return
+      if (target === 'external') this.deps.onExternalHook(body)
+      else this.deps.onHook(target, body)
+      return
+    }
+
+    // --- JSON API (MCP server, tests) --------------------------------------
+    if (path.startsWith('/api/')) {
+      const token = req.headers['x-ouroboros-token']
+      if (token !== this.token) return send(res, 401, { error: 'unauthorized' })
+      const api = this.deps.api
+      const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
+      if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
+      if (method === 'GET' && path === '/api/handoffs') return send(res, 200, { handoffs: api.listHandoffs() })
+      if (method === 'POST' && path === '/api/agents') {
+        const body = (await readJson(req)) as Parameters<ApiHandlers['createAgent']>[0]
+        const created = await api.createAgent(body ?? {})
+        return send(res, 200, created)
+      }
+      if (m && method === 'GET' && m[2] === 'output') {
+        const lines = Math.min(2000, Math.max(1, Number(url.searchParams.get('lines') ?? 80) | 0))
+        const out = api.readOutput(decodeURIComponent(m[1]), lines)
+        if (out === null) return send(res, 404, { error: 'unknown agent' })
+        return send(res, 200, { output: out })
+      }
+      if (m && method === 'POST' && m[2] === 'prompt') {
+        const body = (await readJson(req)) as { text?: string }
+        if (!body || typeof body.text !== 'string') return send(res, 400, { error: 'text required' })
+        const ok = api.sendPrompt(decodeURIComponent(m[1]), body.text)
+        return send(res, ok ? 200 : 404, { ok })
+      }
+      const n = /^\/api\/notes\/([^/]+)$/.exec(path)
+      if (n && method === 'POST') {
+        const body = (await readJson(req)) as { note?: string }
+        if (!body || typeof body.note !== 'string') return send(res, 400, { error: 'note required' })
+        const ok = api.setNote(decodeURIComponent(n[1]), body.note)
+        return send(res, ok ? 200 : 404, { ok })
+      }
+      return send(res, 404, { error: 'not found' })
+    }
+
+    if (path === '/health') return send(res, 200, { ok: true })
+    send(res, 404, { error: 'not found' })
+  }
+}

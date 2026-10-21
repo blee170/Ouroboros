@@ -1,0 +1,270 @@
+import { create } from 'zustand'
+import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
+import { nanoid } from 'nanoid'
+import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } from '@shared/protocol'
+import type { AppSettings, HandoffEdgeData, NodeData, NodeKind, Workspace, WorkspaceNode } from '@shared/types'
+import { DEFAULT_SETTINGS } from '@shared/types'
+import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
+
+export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external'>
+export type BoardEdge = Edge<HandoffEdgeData & { firing?: boolean }, 'handoff'>
+
+const api = (): Window['ouroboros'] => window.ouroboros
+
+function basename(p: string): string {
+  const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || p
+}
+
+function rfType(kind: NodeKind): BoardNode['type'] {
+  if (kind === 'note') return 'note'
+  if (kind === 'external') return 'external'
+  return 'agent'
+}
+
+function toBoardNode(n: WorkspaceNode): BoardNode {
+  return {
+    id: n.id,
+    type: rfType(n.data.kind),
+    position: n.position,
+    width: n.width,
+    height: n.height,
+    dragHandle: '.node-header',
+    data: { ...n.data, launchSeq: 0 }
+  }
+}
+
+interface BoardState {
+  projectRoot: string
+  nodes: BoardNode[]
+  edges: BoardEdge[]
+  settings: AppSettings
+  selectedNodeId: string | null
+  selectedEdgeId: string | null
+  rosterOpen: boolean
+  inspectorOpen: boolean
+  viewport?: Viewport
+  // actions
+  init(): Promise<void>
+  openProject(root: string): Promise<void>
+  onNodesChange(changes: NodeChange<BoardNode>[]): void
+  onEdgesChange(changes: EdgeChange<BoardEdge>[]): void
+  onConnect(c: Connection): void
+  addNode(kind: NodeKind, partial?: Partial<NodeData> & { id?: string; position?: { x: number; y: number } }): string
+  updateNodeData(id: string, patch: Partial<NodeData>): void
+  updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
+  removeNode(id: string): Promise<void>
+  removeEdge(id: string): void
+  restartNode(id: string): Promise<void>
+  select(nodeId: string | null, edgeId: string | null): void
+  toggleRoster(): void
+  toggleInspector(): void
+  setViewport(v: Viewport): void
+  setSettings(patch: Partial<AppSettings>): Promise<void>
+  applyStatus(p: AgentStatusPayload): void
+  applyHandoffFired(p: HandoffFiredPayload): void
+  applyExternal(p: ExternalSessionPayload): void
+  pullExternal(id: string): void
+  persist(): void
+}
+
+let syncTimer: ReturnType<typeof setTimeout> | null = null
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleSync(get: () => BoardState): void {
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = setTimeout(() => {
+    const s = get()
+    api().board.sync({
+      projectRoot: s.projectRoot,
+      nodes: s.nodes.filter((n) => n.data.kind !== 'external').map((n) => ({ id: n.id, data: n.data })),
+      edges: s.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { mode: e.data?.mode ?? 'auto', template: e.data?.template ?? DEFAULT_HANDOFF_TEMPLATE, condition: e.data?.condition, lastFiredAt: e.data?.lastFiredAt } }))
+    })
+  }, 150)
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => get().persist(), 1000)
+}
+
+export const useBoard = create<BoardState>((set, get) => ({
+  projectRoot: '',
+  nodes: [],
+  edges: [],
+  settings: DEFAULT_SETTINGS,
+  selectedNodeId: null,
+  selectedEdgeId: null,
+  rosterOpen: true,
+  inspectorOpen: true,
+  viewport: undefined,
+
+  async init() {
+    const settings = await api().settings.get()
+    set({ settings })
+  },
+
+  async openProject(root) {
+    const { workspace } = await api().workspace.load(root)
+    const nodes = (workspace?.nodes ?? []).map(toBoardNode)
+    const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null })
+    scheduleSync(get)
+  },
+
+  onNodesChange(changes) {
+    set({ nodes: applyNodeChanges(changes, get().nodes) })
+    if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) scheduleSync(get)
+    else if (changes.some((c) => c.type === 'dimensions')) scheduleSync(get)
+  },
+  onEdgesChange(changes) {
+    set({ edges: applyEdgeChanges(changes, get().edges) })
+    if (changes.some((c) => c.type !== 'select')) scheduleSync(get)
+  },
+  onConnect(c) {
+    if (!c.source || !c.target || c.source === c.target) return
+    const edge: BoardEdge = { id: nanoid(8), source: c.source, target: c.target, type: 'handoff', data: { mode: 'auto', template: DEFAULT_HANDOFF_TEMPLATE } }
+    set({ edges: addEdge(edge, get().edges) })
+    scheduleSync(get)
+  },
+
+  addNode(kind, partial = {}) {
+    const id = partial.id ?? nanoid(10)
+    const s = get()
+    const cwd = partial.cwd ?? s.projectRoot
+    const count = s.nodes.filter((n) => n.data.kind !== 'external').length
+    const position = partial.position ?? { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 }
+    const isNote = kind === 'note'
+    const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : basename(cwd)
+    const { position: _p, id: _id, ...rest } = partial
+    const data: NodeData = {
+      kind,
+      title: rest.title ?? titleDefault,
+      cwd,
+      note: isNote ? (rest.note ?? '') : undefined,
+      claude: kind === 'claude' || kind === 'conductor' ? { ...(rest.claude ?? {}) } : undefined,
+      ...rest,
+      launchSeq: 0
+    }
+    const node: BoardNode = {
+      id,
+      type: rfType(kind),
+      position,
+      width: isNote ? 300 : 560,
+      height: isNote ? 220 : 400,
+      dragHandle: '.node-header',
+      data
+    }
+    set({ nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null })
+    scheduleSync(get)
+    return id
+  },
+
+  updateNodeData(id, patch) {
+    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)) })
+    scheduleSync(get)
+  },
+  updateEdgeData(id, patch) {
+    set({ edges: get().edges.map((e) => (e.id === id ? { ...e, data: { ...(e.data ?? { mode: 'auto', template: DEFAULT_HANDOFF_TEMPLATE }), ...patch } } : e)) })
+    scheduleSync(get)
+  },
+
+  async removeNode(id) {
+    const n = get().nodes.find((x) => x.id === id)
+    if (n && n.data.kind !== 'note' && n.data.kind !== 'external') await api().pty.kill(id)
+    set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId })
+    scheduleSync(get)
+  },
+  removeEdge(id) {
+    set({ edges: get().edges.filter((e) => e.id !== id), selectedEdgeId: null })
+    scheduleSync(get)
+  },
+
+  async restartNode(id) {
+    await api().pty.kill(id)
+    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, launchSeq: (Number(n.data.launchSeq) || 0) + 1, status: 'starting', statusDetail: 'restarting' } } : n)) })
+  },
+
+  select(nodeId, edgeId) {
+    set({ selectedNodeId: nodeId, selectedEdgeId: edgeId })
+  },
+  toggleRoster() {
+    set({ rosterOpen: !get().rosterOpen })
+  },
+  toggleInspector() {
+    set({ inspectorOpen: !get().inspectorOpen })
+  },
+  setViewport(v) {
+    set({ viewport: v })
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => get().persist(), 1500)
+  },
+  async setSettings(patch) {
+    const settings = await api().settings.set(patch)
+    set({ settings })
+  },
+
+  applyStatus(p) {
+    set({
+      nodes: get().nodes.map((n) =>
+        n.id === p.nodeId
+          ? { ...n, data: { ...n.data, status: p.status, statusDetail: p.statusDetail ?? n.data.statusDetail, sessionId: p.sessionId ?? n.data.sessionId, lastAssistantMessage: p.lastAssistantMessage ?? n.data.lastAssistantMessage, lastEventAt: p.at } }
+          : n
+      )
+    })
+  },
+  applyHandoffFired(p) {
+    set({ edges: get().edges.map((e) => (e.id === p.edgeId ? { ...e, data: { ...(e.data as HandoffEdgeData), lastFiredAt: p.at, firing: true } } : e)) })
+    setTimeout(() => set({ edges: get().edges.map((e) => (e.id === p.edgeId ? { ...e, data: { ...(e.data as HandoffEdgeData), firing: false } } : e)) }), 2000)
+  },
+  applyExternal(p) {
+    const id = `ext:${p.sessionId}`
+    const existing = get().nodes.find((n) => n.id === id)
+    if (p.status === 'ended') {
+      if (existing) set({ nodes: get().nodes.filter((n) => n.id !== id) })
+      return
+    }
+    if (existing) {
+      set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, status: p.status, statusDetail: p.statusDetail, lastAssistantMessage: p.lastAssistantMessage ?? n.data.lastAssistantMessage, lastEventAt: p.at, cwd: p.cwd || n.data.cwd } } : n)) })
+      return
+    }
+    const count = get().nodes.filter((n) => n.data.kind === 'external').length
+    const node: BoardNode = {
+      id,
+      type: 'external',
+      position: { x: -360, y: 80 + count * 150 },
+      width: 300,
+      height: 130,
+      dragHandle: '.node-header',
+      data: { kind: 'external', title: basename(p.cwd || 'external session'), cwd: p.cwd, sessionId: p.sessionId, status: p.status, statusDetail: p.statusDetail, lastAssistantMessage: p.lastAssistantMessage, lastEventAt: p.at }
+    }
+    set({ nodes: [...get().nodes, node] })
+  },
+  pullExternal(id) {
+    const n = get().nodes.find((x) => x.id === id)
+    if (!n || n.data.kind !== 'external' || !n.data.sessionId) return
+    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, claude: { resume: n.data.sessionId }, position: { x: 80, y: 80 } })
+    set({ nodes: get().nodes.filter((x) => x.id !== id) })
+  },
+
+  persist() {
+    const s = get()
+    if (!s.projectRoot) return
+    const ws: Workspace = {
+      version: 1,
+      projectRoot: s.projectRoot,
+      viewport: s.viewport,
+      nodes: s.nodes
+        .filter((n) => n.data.kind !== 'external')
+        .map((n) => {
+          const { launchSeq: _l, ...data } = n.data
+          return { id: n.id, position: n.position, width: n.measured?.width ?? n.width, height: n.measured?.height ?? n.height, data }
+        }),
+      edges: s.edges.map((e) => {
+        const { firing: _f, ...data } = (e.data ?? { mode: 'auto', template: DEFAULT_HANDOFF_TEMPLATE }) as HandoffEdgeData & { firing?: boolean }
+        return { id: e.id, source: e.source, target: e.target, data }
+      })
+    }
+    void api().workspace.save(ws)
+  }
+}))
+
+// Exposed for smoke tests and quick debugging from DevTools.
+;(window as unknown as { __board: typeof useBoard }).__board = useBoard

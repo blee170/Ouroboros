@@ -1,0 +1,28 @@
+appId: dev.blee170.ouroboros
+productName: Ouroboros
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - "**/node_modules/node-pty/**"
+  - out/main/mcp-server.js
+npmRebuild: false   # node-pty ships N-API prebuilds (win32-x64/arm64); no Electron rebuild needed
+win:
+  target:
+    - target: portable
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target: [AppImage]
+  category: Development
+extraResources:
+  - from: resources/icon.png
+    to: icon.png

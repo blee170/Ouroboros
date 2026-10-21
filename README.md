@@ -11,7 +11,22 @@ Personal infinite-canvas cockpit for running and **conducting** many Claude Code
 - **Browser & other tools per card**: Inspector → *MCP servers* → one-click presets for **Aside** (`aside mcp`), **ego lite** and **Playwright MCP**, or any custom server; the card's `claude` gets them via `--mcp-config`.
 - **Roster + broadcast**, git **worktree per card**, workspace saved to `<project>/.ouroboros.json`, external Claude Code sessions (e.g. the Windows Claude app's Code tab) shown as cards and pullable into the canvas via `--resume`.
 
-## Run (Windows)
+## Install as a normal program (Windows)
+
+Build once, then launch from the desktop/Start menu icon — no terminal needed afterwards:
+
+```powershell
+cd C:\Users\<you>\Ouroboros
+npm run dist:win            # ~2–5 min; produces release\Ouroboros-Setup-<version>.exe and release\Ouroboros-<version>-portable.exe
+```
+
+- **Installer** (`Ouroboros-Setup-<version>.exe`): installs per user (no admin), creates a desktop and Start-menu shortcut, launches when done.
+- **Portable** (`Ouroboros-<version>-portable.exe`): a single exe you can keep anywhere and pin to the taskbar.
+- The build is unsigned, so the first launch shows SmartScreen: click *More info → Run anyway* once.
+- `Ouroboros.exe <folder>` opens that project directly (handy as a shortcut target).
+- After pulling new code, run `npm run dist:win` again and re-install or replace the exe.
+
+## Run from source (Windows)
 
 Prerequisites: Node 22+, Git for Windows (Claude Code needs Git Bash), Claude Code CLI on `PATH` (`claude`). No compiler is needed: `node-pty` ships prebuilt N-API binaries for win32-x64/arm64.
 

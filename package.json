@@ -14,8 +14,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dist:win": "electron-vite build && electron-builder --win --x64",
-    "dist:linux": "electron-vite build && electron-builder --linux --x64"
+    "dist:win": "node scripts/gen-icon.mjs && electron-vite build && electron-builder --win --x64",
+    "dist:linux": "node scripts/gen-icon.mjs && electron-vite build && electron-builder --linux --x64",
+    "icon": "node scripts/gen-icon.mjs",
+    "dist:win:portable": "node scripts/gen-icon.mjs && electron-vite build && electron-builder --win portable --x64"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

@@ -11,15 +11,25 @@ asarUnpack:
   - out/main/mcp-server.js
 npmRebuild: false   # node-pty ships N-API prebuilds (win32-x64/arm64); no Electron rebuild needed
 win:
+  icon: resources/icon.ico
+  requestedExecutionLevel: asInvoker
   target:
-    - target: portable
-      arch: [x64]
     - target: nsis
       arch: [x64]
+    - target: portable
+      arch: [x64]
   artifactName: ${productName}-${version}-${arch}.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.exe
 nsis:
   oneClick: false
+  perMachine: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Ouroboros
+  runAfterFinish: true
+  artifactName: ${productName}-Setup-${version}.${ext}
 linux:
   target: [AppImage]
   category: Development

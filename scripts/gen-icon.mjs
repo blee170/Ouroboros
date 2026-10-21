@@ -50,3 +50,19 @@ const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
 mkdirSync('resources', { recursive: true })
 writeFileSync('resources/icon.png', png)
 console.log('wrote resources/icon.png', png.length, 'bytes')
+// ICO with a single PNG-compressed 256x256 entry (valid on Windows Vista and later).
+const dir = Buffer.alloc(16)
+dir[0] = 0 // width 256 -> 0
+dir[1] = 0 // height 256 -> 0
+dir[2] = 0 // palette
+dir[3] = 0
+dir.writeUInt16LE(1, 4) // planes
+dir.writeUInt16LE(32, 6) // bpp
+dir.writeUInt32LE(png.length, 8)
+dir.writeUInt32LE(22, 12) // offset = 6 + 16
+const hdr = Buffer.alloc(6)
+hdr.writeUInt16LE(0, 0)
+hdr.writeUInt16LE(1, 2)
+hdr.writeUInt16LE(1, 4)
+writeFileSync('resources/icon.ico', Buffer.concat([hdr, dir, png]))
+console.log('wrote resources/icon.ico')

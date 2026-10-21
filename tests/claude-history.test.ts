@@ -16,6 +16,10 @@ describe('parseSessionHead', () => {
       '{"type":"assistant","truncated'
     expect(parseSessionHead(text, 'fallback')).toEqual({ id: 's1', cwd: '/p/a', title: 'Roster automation plan', branch: 'main' })
   })
+  it('uses a custom session title when present', () => {
+    const text = line({ type: 'user', cwd: '/p/c', message: { content: 'first' } }) + line({ type: 'custom-title', customTitle: 'csbadminton 총괄' })
+    expect(parseSessionHead(text, 'x').title).toBe('csbadminton 총괄')
+  })
   it('falls back to the first user prompt (array content) and the file id', () => {
     const text = line({ type: 'user', cwd: '/p/b', message: { content: [{ type: 'text', text: 'fix login bug please' }] } })
     expect(parseSessionHead(text, 'file-id')).toEqual({ id: 'file-id', cwd: '/p/b', title: 'fix login bug please', branch: undefined })

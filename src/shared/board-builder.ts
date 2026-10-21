@@ -43,12 +43,15 @@ export const ROLE_ORDER: RoleKind[] = ['implementer', 'tester', 'reviewer', 'ops
 
 export interface BuildBoardInput {
   projectRoot: string
-  conductor: { cwd: string; title?: string; mode: 'continue' | 'resume' | 'fresh'; sessionId?: string }
+  conductor: { cwd: string; title?: string; mode: 'continue' | 'resume' | 'fresh'; sessionId?: string; initialPrompt?: string }
   roles: RoleKind[]
   /** Other folders to put on the board as Claude cards that resume their latest session. */
   extraFolders: Array<{ cwd: string; title: string; sessionId?: string }>
   /** Shared worktree/role folder; defaults to conductor.cwd */
   roleCwd?: string
+  /** Add a browser card (default true). */
+  browser?: boolean
+  browserUrl?: string
 }
 
 export interface BuiltBoard {
@@ -108,6 +111,7 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
         '3. Tester → Reviewer fires only when the Tester\'s reply contains PASS.',
         '4. Reviewer → Implementer is manual: press ▶ on the line to send review findings back.',
         '5. Ops never deploys without the phrase APPROVED BY OWNER in its prompt.',
+        '6. The Browser card is a real browser: log in there once and agents can use it (browser_* tools).',
         '',
         'Edit any card\'s prompt or any line\'s template in the Inspector.'
       ].join('\n')
@@ -122,7 +126,13 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
     position: { x: 420 + GAP_X, y: 0 },
     width: Math.max(CARD_W, rowWidth - 420 - GAP_X),
     height: CARD_H,
-    data: { kind: 'conductor', title: input.conductor.title ?? `Conductor · ${basename(input.conductor.cwd)}`, cwd: input.conductor.cwd, claude: conductorClaude }
+    data: {
+      kind: 'conductor',
+      title: input.conductor.title ?? `Conductor · ${basename(input.conductor.cwd)}`,
+      cwd: input.conductor.cwd,
+      claude: conductorClaude,
+      initialPrompt: input.conductor.initialPrompt?.trim() || undefined
+    }
   })
 
   // Row 1: role cards
@@ -139,6 +149,17 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
     }
     nodes.push({ id, position: { x: i * (CARD_W + GAP_X), y: CARD_H + GAP_Y }, width: CARD_W, height: CARD_H, data })
   })
+
+  // Row 1, after the roles: a browser card the agents can drive
+  if (input.browser !== false) {
+    nodes.push({
+      id: makeId(),
+      position: { x: roles.length * (CARD_W + GAP_X), y: CARD_H + GAP_Y },
+      width: 640,
+      height: CARD_H,
+      data: { kind: 'browser', title: '🌐 Browser', cwd: input.projectRoot, url: input.browserUrl ?? 'https://www.google.com' }
+    })
+  }
 
   // Row 2: extra folders resuming their latest session
   input.extraFolders.forEach((f, i) => {
@@ -189,3 +210,6 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
   }
   return { nodes, edges }
 }
+
+/** Default first instruction for a Conductor that resumes an existing orchestration session. */
+export const RESUME_CONDUCTOR_PROMPT = `You have been resumed inside Ouroboros, a canvas where each Claude Code session is a card and you have MCP tools (list_agents, create_agent, send_prompt, read_output, set_note, browser_*). Do this now, in order: (1) read your latest checkpoint/ledger and memory so you know the current lanes, their state and what the owner asked; (2) call list_agents; (3) for every lane that should be active, create_agent in the right folder with a self-contained prompt that restates the lane's goal, current state and next step — one card per lane, titled like the lane; (4) write the ledger/checkpoint summary with set_note into the note card; (5) reply to the owner with a 5-line status: cards created, what is running, what is waiting on them. Keep the owner's own conventions (names, ledger format, approval rules) exactly as before.`

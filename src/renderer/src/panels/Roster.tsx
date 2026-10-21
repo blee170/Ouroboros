@@ -6,7 +6,7 @@ import { toPastePayload } from '@shared/handoff'
 
 export function Roster() {
   const allNodes = useBoard((s) => s.nodes)
-  const nodes = useMemo(() => allNodes.filter((n) => n.data.kind !== 'note'), [allNodes])
+  const nodes = useMemo(() => allNodes.filter((n) => n.data.kind !== 'note' && n.data.kind !== 'browser'), [allNodes])
   const select = useBoard((s) => s.select)
   const rf = useReactFlow()
   const [checked, setChecked] = useState<Record<string, boolean>>({})

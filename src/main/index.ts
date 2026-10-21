@@ -2,6 +2,7 @@ import { BrowserWindow, Menu, Tray, app, nativeImage, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Board } from './board'
+import { BrowserManager } from './browser-manager'
 import { HookServer } from './hook-server'
 import { createApiHandlers, registerIpc, resolveMcpScriptPath, type MainContext } from './ipc'
 import { PtyManager } from './pty-manager'
@@ -32,7 +33,8 @@ function createWindow(ctx: MainContext): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      webviewTag: true
     }
   })
   win.on('close', (e) => {
@@ -97,6 +99,7 @@ async function main(): Promise<void> {
     board,
     ptys,
     store,
+    browsers: new BrowserManager(),
     tmpDir: join(app.getPath('userData'), 'claude-launch'),
     mcpScriptPath: resolveMcpScriptPath(),
     getWindow: () => mainWindow,

@@ -37,7 +37,7 @@ describe('bundled mcp server', () => {
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['create_agent', 'list_agents', 'read_output', 'send_prompt', 'set_note'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'create_agent', 'list_agents', 'read_output', 'send_prompt', 'set_note'])
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text

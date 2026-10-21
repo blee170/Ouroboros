@@ -90,12 +90,21 @@ export function Inspector() {
 
   return (
     <div className="panel inspector">
-      <h3>{d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? 'Claude agent' : 'Terminal'}</h3>
+      <h3>{d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? 'Claude agent' : d.kind === 'browser' ? 'Browser' : 'Terminal'}</h3>
       <label>
         Title
         <input className="text" value={d.title} onChange={(e) => updateNodeData(nodeId, { title: e.target.value })} />
       </label>
-      {d.kind !== 'note' && (
+      {d.kind === 'browser' && (
+        <>
+          <label>
+            Home URL
+            <input className="text" value={d.url ?? ''} onChange={(e) => updateNodeData(nodeId, { url: e.target.value })} />
+          </label>
+          <div className="muted small">Agents drive this card with the browser_* MCP tools (Conductor has them; enable "Board & browser tools" on other Claude cards). Logins persist in the shared browser profile.</div>
+        </>
+      )}
+      {d.kind !== 'note' && d.kind !== 'browser' && (
         <label>
           Folder
           <div className="row">
@@ -109,6 +118,11 @@ export function Inspector() {
           <label className="row">
             <input type="checkbox" checked={Boolean(claude.continue)} onChange={(e) => setClaude({ continue: e.target.checked })} /> Continue last conversation on launch (--continue)
           </label>
+          {d.kind === 'claude' && (
+            <label className="row">
+              <input type="checkbox" checked={Boolean(claude.boardTools)} onChange={(e) => setClaude({ boardTools: e.target.checked })} /> Board & browser tools (ouroboros MCP: list_agents, send_prompt, browser_*)
+            </label>
+          )}
           <label>
             Resume session id (--resume)
             <input className="text" value={claude.resume ?? ''} onChange={(e) => setClaude({ resume: e.target.value || undefined })} />
@@ -191,7 +205,7 @@ export function Inspector() {
           </label>
         </>
       )}
-      {d.kind !== 'note' && d.kind !== 'external' && (
+      {d.kind !== 'note' && d.kind !== 'external' && d.kind !== 'browser' && (
         <div className="block">
           <div className="muted small">Git worktree</div>
           {d.worktree ? (
@@ -214,7 +228,7 @@ export function Inspector() {
           <div className="small clamp-6">{d.lastAssistantMessage}</div>
         </div>
       )}
-      {d.kind !== 'note' && d.kind !== 'external' && (
+      {d.kind !== 'note' && d.kind !== 'external' && d.kind !== 'browser' && (
         <div className="row">
           <button className="btn" onClick={() => void restartNode(nodeId)}>
             ↻ Apply & restart

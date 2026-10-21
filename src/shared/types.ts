@@ -1,5 +1,5 @@
 /** Node kinds shown on the canvas. */
-export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external'
+export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external' | 'browser'
 
 /** Lifecycle status of an agent/terminal node, derived from Claude Code hooks (or PTY exit). */
 export type AgentStatus = 'starting' | 'idle' | 'working' | 'needs-you' | 'done' | 'ended'
@@ -17,6 +17,8 @@ export interface ClaudeOptions {
   extraArgs?: string[]
   /** Extra MCP servers attached to this card via --mcp-config (same shape as .mcp.json "mcpServers"). */
   mcpServers?: Record<string, McpServerSpec>
+  /** Attach the board's own MCP server (agents + browser cards) to a plain Claude card. Conductors always have it. */
+  boardTools?: boolean
 }
 
 export interface McpServerSpec {
@@ -67,6 +69,10 @@ export interface NodeData {
   worktree?: WorktreeInfo
   /** Markdown body for note nodes. */
   note?: string
+  /** Browser cards: last/home URL. */
+  url?: string
+  /** Sent once to the card's Claude session as soon as it is ready, then cleared. */
+  initialPrompt?: string
   /** Claude Code session id once known (SessionStart hook). */
   sessionId?: string
   // --- runtime-only fields (not persisted) ---
@@ -151,6 +157,8 @@ export interface AppSettings {
   minimizeToTray: boolean
   trackExternalSessions: boolean
   defaultShell?: string
+  /** Home page for new browser cards. */
+  browserHome?: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

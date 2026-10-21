@@ -4,11 +4,12 @@ import { useBoard } from '@/store/board'
 import { AgentNode } from './nodes/AgentNode'
 import { NoteNode } from './nodes/NoteNode'
 import { ExternalNode } from './nodes/ExternalNode'
+import { BrowserNode } from './nodes/BrowserNode'
 import { HandoffEdge } from './edges/HandoffEdge'
 import { STATUS_COLOR } from '@shared/status'
 import type { NodeKind } from '@shared/types'
 
-const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode }
+const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode, browser: BrowserNode }
 const edgeTypes: EdgeTypes = { handoff: HandoffEdge }
 
 interface Menu {
@@ -85,6 +86,7 @@ export function Canvas() {
           <button onClick={() => add('claude')}>✦ Claude agent</button>
           <button onClick={() => add('conductor')}>🎼 Conductor</button>
           <button onClick={() => add('terminal')}>▣ Terminal</button>
+          <button onClick={() => add('browser')}>🌐 Browser</button>
           <button onClick={() => add('note')}>📝 Note</button>
         </div>
       )}

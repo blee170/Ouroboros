@@ -42,6 +42,9 @@ export function Toolbar() {
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('terminal')}>
         + Terminal
       </button>
+      <button className="btn" disabled={!projectRoot} onClick={() => addNode('browser')}>
+        + Browser
+      </button>
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('note')}>
         + Note
       </button>

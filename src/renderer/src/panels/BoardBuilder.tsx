@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { nanoid } from 'nanoid'
 import { useBoard } from '@/store/board'
 import type { ClaudeProjectHistory, FolderInfo } from '@shared/protocol'
-import { ROLE_ORDER, ROLE_PRESETS, buildBoard, type RoleKind } from '@shared/board-builder'
+import { RESUME_CONDUCTOR_PROMPT, ROLE_ORDER, ROLE_PRESETS, buildBoard, type RoleKind } from '@shared/board-builder'
 
 function parentOf(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, '')
@@ -34,6 +34,9 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
   const [roles, setRoles] = useState<Record<RoleKind, boolean>>({ implementer: true, tester: true, reviewer: true, ops: true })
   const [extras, setExtras] = useState<Record<string, boolean>>({})
   const [replace, setReplace] = useState(false)
+  const [initialPrompt, setInitialPrompt] = useState('')
+  const [withBrowser, setWithBrowser] = useState(true)
+  const settings = useBoard((s) => s.settings)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -54,6 +57,8 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
   const visibleFolders = useMemo(() => {
     const q = filter.trim().toLowerCase()
     const list = [...folders]
+    // the root itself (sessions started in e.g. ~/.claudecode live there) and the current project
+    if (root && !list.some((f) => samePath(f.path, root))) list.unshift({ path: root, name: `(root) ${root.split(/[\\/]/).pop() ?? root}`, isGit: false, hasClaudeMd: false })
     if (!list.some((f) => samePath(f.path, projectRoot)) && projectRoot) list.unshift({ path: projectRoot, name: projectRoot.split(/[\\/]/).pop() ?? projectRoot, isGit: true, hasClaudeMd: false })
     return q ? list.filter((f) => f.name.toLowerCase().includes(q) || (f.packageName ?? '').toLowerCase().includes(q)) : list
   }, [folders, filter, projectRoot])
@@ -70,7 +75,14 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
       .filter((f) => extras[f.path] && !samePath(f.path, conductorCwd))
       .map((f) => ({ cwd: f.path, title: `${f.name} · latest`, sessionId: sessionsFor(f.path)[0]?.id }))
     const built = buildBoard(
-      { projectRoot, conductor: { cwd: conductorCwd, mode, sessionId: mode === 'resume' ? sessionId || undefined : undefined }, roles: chosenRoles, extraFolders },
+      {
+        projectRoot,
+        conductor: { cwd: conductorCwd, mode, sessionId: mode === 'resume' ? sessionId || undefined : undefined, initialPrompt },
+        roles: chosenRoles,
+        extraFolders,
+        browser: withBrowser,
+        browserUrl: settings.browserHome
+      },
       () => nanoid(10)
     )
     await addGenerated(built.nodes, built.edges, replace)
@@ -111,8 +123,20 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
                       </span>
                     </div>
                     {sessions.length > 0 && (
-                      <div className="muted small session-line" title={sessions.map((s) => s.title).join('\n')}>
+                      <div className="muted small session-line" title={sessions.map((s) => `${ago(s.lastAt)} · ${s.title}`).join('\n')}>
                         {sessions.length} session{sessions.length > 1 ? 's' : ''} · latest {ago(sessions[0].lastAt)}: {sessions[0].title}
+                      </div>
+                    )}
+                    {isConductor && mode === 'resume' && sessions.length > 0 && (
+                      <div className="small">
+                        <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
+                          <option value="">— pick the session to resume —</option>
+                          {sessions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {ago(s.lastAt)} · {s.title}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     )}
                   </li>
@@ -145,6 +169,15 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
                 </select>
               </label>
             )}
+            <label>
+              First instruction to the Conductor (sent automatically when it is ready)
+              <textarea rows={4} value={initialPrompt} placeholder="optional" onChange={(e) => setInitialPrompt(e.target.value)} />
+            </label>
+            {mode !== 'fresh' && (
+              <button className="btn small" onClick={() => setInitialPrompt(RESUME_CONDUCTOR_PROMPT)}>
+                Use "rebuild my lanes from your checkpoint" instruction
+              </button>
+            )}
             <div className="muted small" style={{ marginTop: 10 }}>
               Role cards (run in the Conductor's folder)
             </div>
@@ -155,6 +188,9 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
                 <span className="muted small">{ROLE_PRESETS[r].prompt.split('. ')[1]?.slice(0, 60)}…</span>
               </label>
             ))}
+            <label className="row">
+              <input type="checkbox" checked={withBrowser} onChange={(e) => setWithBrowser(e.target.checked)} /> 🌐 Browser card
+            </label>
             <div className="muted small" style={{ marginTop: 10 }}>
               Lines: Implementer → Tester (auto) · Tester → Reviewer (auto when the reply contains PASS) · Reviewer → Implementer (manual ▶)
             </div>

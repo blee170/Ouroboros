@@ -13,6 +13,7 @@ import { prepareLaunch } from './claude-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, HookServer } from './hook-server'
 import { PtyManager, defaultShell } from './pty-manager'
+import type { BrowserManager } from './browser-manager'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
@@ -22,6 +23,7 @@ export interface MainContext {
   ptys: PtyManager
   hookServer: HookServer
   store: UserStore
+  browsers: BrowserManager
   tmpDir: string
   mcpScriptPath: string
   getWindow(): BrowserWindow | null
@@ -65,6 +67,33 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
       return true
     },
     listHandoffs: () => ctx.board.edges,
+    browser: {
+      list: () =>
+        [...ctx.board.nodes.values()]
+          .filter((n) => n.data.kind === 'browser')
+          .map((n) => ({ id: n.id, title: n.data.title, url: n.data.url, ready: ctx.browsers.has(n.id) })),
+      create: async (input) => {
+        const id = nanoid(10)
+        const count = ctx.board.nodes.size
+        const node: WorkspaceNode = {
+          id,
+          position: { x: 80 + (count % 4) * 560, y: 80 + Math.floor(count / 4) * 420 },
+          width: 640,
+          height: 480,
+          data: { kind: 'browser', title: input.title || 'Browser', cwd: ctx.board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' }
+        }
+        sendToRenderer(ctx, IPC.boardAddNode, node)
+        // wait (bounded) for the webview to register so the caller can act right away
+        for (let i = 0; i < 40 && !ctx.browsers.has(id); i++) await new Promise((r) => setTimeout(r, 250))
+        return { id }
+      },
+      navigate: (id, url) => ctx.browsers.navigate(id, url),
+      read: (id, max) => ctx.browsers.read(id, max),
+      links: (id, limit) => ctx.browsers.links(id, limit),
+      click: (id, target) => ctx.browsers.click(id, target),
+      type: (id, input) => ctx.browsers.type(id, input),
+      screenshot: (id) => ctx.browsers.screenshot(id, join(ctx.tmpDir, 'screenshots'))
+    },
     createAgent: async (input) => {
       const id = nanoid(10)
       const cwd = input.cwd || ctx.board.projectRoot || app.getPath('home')
@@ -262,6 +291,9 @@ export function registerIpc(ctx: MainContext): void {
       return { ok: false, error: (err as Error).message }
     }
   })
+
+  ipcMain.on(IPC.browserRegister, (_e, nodeId: string, wcId: number) => ctx.browsers.register(nodeId, wcId))
+  ipcMain.on(IPC.browserUnregister, (_e, nodeId: string) => ctx.browsers.unregister(nodeId))
 
   ipcMain.handle(IPC.historyList, (_e, rootFilter?: string) => listClaudeSessions(undefined, { rootFilter: rootFilter || undefined }))
   ipcMain.handle(IPC.foldersList, (_e, root: string) => listSubfolders(root))

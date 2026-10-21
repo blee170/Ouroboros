@@ -11,6 +11,16 @@ export interface ApiHandlers {
   createAgent(input: { cwd?: string; title?: string; prompt?: string; kind?: 'claude' | 'terminal' }): Promise<{ id: string }>
   setNote(nodeId: string, note: string): boolean
   listHandoffs(): unknown
+  browser: {
+    list(): unknown
+    create(input: { url?: string; title?: string }): Promise<{ id: string }>
+    navigate(id: string, url: string): Promise<unknown>
+    read(id: string, maxChars?: number): Promise<unknown>
+    links(id: string, limit?: number): Promise<unknown>
+    click(id: string, target: { selector?: string; text?: string }): Promise<unknown>
+    type(id: string, input: { selector?: string; text: string; submit?: boolean }): Promise<unknown>
+    screenshot(id: string): Promise<unknown>
+  }
 }
 
 export interface HookServerDeps {
@@ -143,6 +153,29 @@ export class HookServer {
         if (!body || typeof body.text !== 'string') return send(res, 400, { error: 'text required' })
         const ok = api.sendPrompt(decodeURIComponent(m[1]), body.text)
         return send(res, ok ? 200 : 404, { ok })
+      }
+      // --- browser cards ---
+      if (method === 'GET' && path === '/api/browsers') return send(res, 200, { browsers: api.browser.list() })
+      if (method === 'POST' && path === '/api/browsers') {
+        const body = (await readJson(req)) as { url?: string; title?: string }
+        return send(res, 200, await api.browser.create(body ?? {}))
+      }
+      const b = /^\/api\/browsers\/([^/]+)\/(navigate|read|links|click|type|screenshot)$/.exec(path)
+      if (b) {
+        const id = decodeURIComponent(b[1])
+        const action = b[2]
+        try {
+          if (action === 'read' && method === 'GET') return send(res, 200, await api.browser.read(id, Number(url.searchParams.get('max') ?? 20000) | 0 || 20000))
+          if (action === 'links' && method === 'GET') return send(res, 200, { links: await api.browser.links(id, Number(url.searchParams.get('limit') ?? 100) | 0 || 100) })
+          if (method !== 'POST') return send(res, 405, { error: 'method' })
+          const body = (await readJson(req)) as Record<string, unknown>
+          if (action === 'navigate') return send(res, 200, await api.browser.navigate(id, String(body.url ?? '')))
+          if (action === 'click') return send(res, 200, await api.browser.click(id, { selector: body.selector as string | undefined, text: body.text as string | undefined }))
+          if (action === 'type') return send(res, 200, await api.browser.type(id, { selector: body.selector as string | undefined, text: String(body.text ?? ''), submit: Boolean(body.submit) }))
+          if (action === 'screenshot') return send(res, 200, await api.browser.screenshot(id))
+        } catch (err) {
+          return send(res, 400, { error: (err as Error).message })
+        }
       }
       const n = /^\/api\/notes\/([^/]+)$/.exec(path)
       if (n && method === 'POST') {

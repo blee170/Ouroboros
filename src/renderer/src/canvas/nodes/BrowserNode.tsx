@@ -1,0 +1,105 @@
+import { memo, useEffect, useRef, useState } from 'react'
+import { NodeResizer, type NodeProps } from '@xyflow/react'
+import type { BoardNode } from '@/store/board'
+import { useBoard } from '@/store/board'
+
+/** Minimal surface of Electron's <webview> element that we use. */
+interface WebviewEl extends HTMLElement {
+  getWebContentsId(): number
+  loadURL(url: string): Promise<void>
+  getURL(): string
+  reload(): void
+  goBack(): void
+  goForward(): void
+  canGoBack(): boolean
+  canGoForward(): boolean
+}
+
+function normalise(url: string): string {
+  const u = url.trim()
+  if (!u) return 'about:blank'
+  if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return u
+  if (/\s/.test(u) || !u.includes('.')) return `https://www.google.com/search?q=${encodeURIComponent(u)}`
+  return `https://${u}`
+}
+
+function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
+  const ref = useRef<WebviewEl | null>(null)
+  const updateNodeData = useBoard((s) => s.updateNodeData)
+  const removeNode = useBoard((s) => s.removeNode)
+  const [address, setAddress] = useState(data.url ?? 'https://www.google.com')
+  const [ready, setReady] = useState(false)
+  const [pageTitle, setPageTitle] = useState('')
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const api = window.ouroboros
+    const onReady = (): void => {
+      setReady(true)
+      api.browser.register(id, el.getWebContentsId())
+    }
+    const onNav = (): void => {
+      const u = el.getURL()
+      setAddress(u)
+      updateNodeData(id, { url: u })
+    }
+    const onTitle = (e: Event): void => setPageTitle((e as unknown as { title: string }).title ?? '')
+    el.addEventListener('dom-ready', onReady)
+    el.addEventListener('did-navigate', onNav)
+    el.addEventListener('did-navigate-in-page', onNav)
+    el.addEventListener('page-title-updated', onTitle)
+    return () => {
+      el.removeEventListener('dom-ready', onReady)
+      el.removeEventListener('did-navigate', onNav)
+      el.removeEventListener('did-navigate-in-page', onNav)
+      el.removeEventListener('page-title-updated', onTitle)
+      api.browser.unregister(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+
+  const go = (): void => {
+    const u = normalise(address)
+    setAddress(u)
+    ref.current?.loadURL(u).catch(() => undefined)
+  }
+
+  return (
+    <div className={`browser-node${selected ? ' selected' : ''}`}>
+      <NodeResizer minWidth={360} minHeight={240} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8' }} />
+      <div className="node-header">
+        <span className="title" title={pageTitle}>
+          🌐 {data.title}
+        </span>
+        <button className="icon-btn nodrag" title="Back" onClick={() => ref.current?.goBack()}>
+          ‹
+        </button>
+        <button className="icon-btn nodrag" title="Forward" onClick={() => ref.current?.goForward()}>
+          ›
+        </button>
+        <button className="icon-btn nodrag" title="Reload" onClick={() => ref.current?.reload()}>
+          ↻
+        </button>
+        <input
+          className="address nodrag"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') go()
+          }}
+          placeholder="URL or search"
+        />
+        <span className="status-text">{ready ? pageTitle.slice(0, 40) : 'loading…'}</span>
+        <button className="icon-btn nodrag" title="Close" onClick={() => void removeNode(id)}>
+          ✕
+        </button>
+      </div>
+      <div className="browser-host nodrag nowheel">
+        <webview ref={ref as React.Ref<HTMLElement>} src={data.url ?? 'https://www.google.com'} partition="persist:ouroboros-browser" allowpopups style={{ width: '100%', height: '100%' }} />
+      </div>
+    </div>
+  )
+}
+
+export const BrowserNode = memo(BrowserNodeImpl)

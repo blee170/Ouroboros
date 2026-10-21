@@ -4,6 +4,7 @@ import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
 import { useTerminal } from '@/lib/useTerminal'
+import { toPastePayload } from '@shared/handoff'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
@@ -32,6 +33,18 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, seq, id, kind])
+
+  // First instruction: typed once the session reports idle/ready, then removed from the card data.
+  useEffect(() => {
+    if (!data.initialPrompt || status !== 'idle') return
+    const prompt = data.initialPrompt
+    updateNodeData(id, { initialPrompt: undefined })
+    const api = window.ouroboros
+    setTimeout(() => {
+      api.pty.write(id, toPastePayload(prompt))
+      setTimeout(() => api.pty.write(id, '\r'), 200)
+    }, 1200)
+  }, [data.initialPrompt, status, id, updateNodeData])
 
   const color = STATUS_COLOR[status]
   return (

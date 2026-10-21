@@ -49,6 +49,12 @@ export function parseSessionHead(text: string, fallbackId: string): { id: string
     if (!cwd && typeof d.cwd === 'string') cwd = d.cwd
     if (!branch && typeof d.gitBranch === 'string' && d.gitBranch) branch = d.gitBranch
     if (d.type === 'summary' && typeof d.summary === 'string' && !summary) summary = d.summary
+    // session names given with --name or /rename (field names vary across versions)
+    for (const key of ['customTitle', 'sessionName', 'name', 'title']) {
+      if ((d.type === 'custom-title' || d.type === 'session-name' || d.type === 'rename') && typeof d[key] === 'string' && d[key]) {
+        summary = d[key] as string
+      }
+    }
     if (d.type === 'user' && !firstUser) {
       const msg = d.message as { content?: unknown } | undefined
       const t = msg ? textOf(msg.content) : undefined

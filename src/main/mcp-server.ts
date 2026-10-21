@@ -95,6 +95,50 @@ server.registerTool(
   }
 )
 
+// ---- browser cards -------------------------------------------------------
+const BROWSER_NOTE = 'Browser cards are real Chromium views on the canvas; the user sees everything you do and can log in for you. Prefer browser_read over screenshots.'
+
+server.registerTool(
+  'browser_list',
+  { title: 'List browser cards', description: `Browser cards on the board with id, title, url and ready flag. ${BROWSER_NOTE}`, inputSchema: {} },
+  async () => text(await api('GET', '/api/browsers'))
+)
+server.registerTool(
+  'browser_open',
+  { title: 'Open a browser card', description: 'Add a new browser card to the canvas (optionally at a URL) and return its id.', inputSchema: { url: z.string().optional(), title: z.string().optional() } },
+  async (input) => text(await api('POST', '/api/browsers', input))
+)
+server.registerTool(
+  'browser_navigate',
+  { title: 'Navigate a browser card', description: 'Load a URL in a browser card. Returns the final URL.', inputSchema: { browser_id: z.string(), url: z.string() } },
+  async ({ browser_id, url }) => text(await api('POST', `/api/browsers/${encodeURIComponent(browser_id)}/navigate`, { url }))
+)
+server.registerTool(
+  'browser_read',
+  { title: 'Read a browser page', description: 'Current URL, title and visible text of the page (truncated to max_chars, default 20000).', inputSchema: { browser_id: z.string(), max_chars: z.number().int().min(500).max(200000).optional() } },
+  async ({ browser_id, max_chars }) => text(await api('GET', `/api/browsers/${encodeURIComponent(browser_id)}/read?max=${max_chars ?? 20000}`))
+)
+server.registerTool(
+  'browser_links',
+  { title: 'List links on the page', description: 'Anchor texts and hrefs on the current page.', inputSchema: { browser_id: z.string(), limit: z.number().int().min(1).max(500).optional() } },
+  async ({ browser_id, limit }) => text(await api('GET', `/api/browsers/${encodeURIComponent(browser_id)}/links?limit=${limit ?? 100}`))
+)
+server.registerTool(
+  'browser_click',
+  { title: 'Click something', description: 'Click an element by CSS selector or by its visible text (buttons, links, inputs).', inputSchema: { browser_id: z.string(), selector: z.string().optional(), text: z.string().optional() } },
+  async ({ browser_id, selector, text: t }) => text(await api('POST', `/api/browsers/${encodeURIComponent(browser_id)}/click`, { selector, text: t }))
+)
+server.registerTool(
+  'browser_type',
+  { title: 'Type into a field', description: 'Set the value of an input/textarea (by selector, else the focused or first text field) and optionally press Enter.', inputSchema: { browser_id: z.string(), text: z.string(), selector: z.string().optional(), submit: z.boolean().optional() } },
+  async ({ browser_id, text: t, selector, submit }) => text(await api('POST', `/api/browsers/${encodeURIComponent(browser_id)}/type`, { selector, text: t, submit }))
+)
+server.registerTool(
+  'browser_screenshot',
+  { title: 'Screenshot a browser card', description: 'Capture the page to a PNG file and return its path (open it with the Read tool).', inputSchema: { browser_id: z.string() } },
+  async ({ browser_id }) => text(await api('POST', `/api/browsers/${encodeURIComponent(browser_id)}/screenshot`, {}))
+)
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)

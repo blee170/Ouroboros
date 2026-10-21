@@ -24,6 +24,8 @@ export const IPC = {
   appInfo: 'app:info',
   historyList: 'history:list',
   foldersList: 'folders:list',
+  browserRegister: 'browser:register',
+  browserUnregister: 'browser:unregister',
   // main -> renderer (send)
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
@@ -182,6 +184,11 @@ export interface OuroborosApi {
   }
   folders: {
     list(root: string): Promise<FolderInfo[]>
+  }
+  browser: {
+    /** Called by a browser card once its <webview> is ready. */
+    register(nodeId: string, webContentsId: number): void
+    unregister(nodeId: string): void
   }
 }
 

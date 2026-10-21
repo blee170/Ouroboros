@@ -16,11 +16,12 @@ describe('buildBoard', () => {
   )
 
   it('creates note + conductor + roles + extra cards with no overlapping positions', () => {
-    expect(built.nodes.map((x) => x.data.kind)).toEqual(['note', 'conductor', 'claude', 'claude', 'claude', 'claude', 'claude'])
+    expect(built.nodes.map((x) => x.data.kind)).toEqual(['note', 'conductor', 'claude', 'claude', 'claude', 'claude', 'browser', 'claude'])
     const conductor = built.nodes[1]
     expect(conductor.data.claude?.continue).toBe(true)
     expect(conductor.data.claude?.appendSystemPrompt).toContain('"Implementer"')
-    expect(built.nodes[6].data.claude).toEqual({ resume: 'sess-9' })
+    expect(built.nodes[7].data.claude).toEqual({ resume: 'sess-9' })
+    expect(built.nodes[6].data.url).toBe('https://www.google.com')
     const keys = new Set(built.nodes.map((x) => `${x.position.x},${x.position.y}`))
     expect(keys.size).toBe(built.nodes.length)
   })
@@ -38,7 +39,9 @@ describe('buildBoard', () => {
   })
 
   it('resume mode and fewer roles', () => {
-    const b = buildBoard({ projectRoot: '/p', conductor: { cwd: '/p', mode: 'resume', sessionId: 'abc' }, roles: ['implementer', 'ops'], extraFolders: [] }, makeId)
+    const b = buildBoard({ projectRoot: '/p', conductor: { cwd: '/p', mode: 'resume', sessionId: 'abc', initialPrompt: '  rebuild lanes ' }, roles: ['implementer', 'ops'], extraFolders: [], browser: false }, makeId)
+    expect(b.nodes[1].data.initialPrompt).toBe('rebuild lanes')
+    expect(b.nodes.some((x) => x.data.kind === 'browser')).toBe(false)
     expect(b.nodes[1].data.claude?.resume).toBe('abc')
     expect(b.edges).toEqual([])
     expect(conductorPrompt({ projectRoot: '/p', conductor: { cwd: '/p', mode: 'fresh' }, roles: ['ops'], extraFolders: [] })).toContain('"Ops"')

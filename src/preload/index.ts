@@ -55,6 +55,10 @@ const api: OuroborosApi = {
   },
   folders: {
     list: (root) => ipcRenderer.invoke(IPC.foldersList, root)
+  },
+  browser: {
+    register: (nodeId, webContentsId) => ipcRenderer.send(IPC.browserRegister, nodeId, webContentsId),
+    unregister: (nodeId) => ipcRenderer.send(IPC.browserUnregister, nodeId)
   }
 }
 

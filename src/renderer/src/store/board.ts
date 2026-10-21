@@ -6,7 +6,7 @@ import type { AppSettings, HandoffEdgeData, NodeData, NodeKind, Workspace, Works
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 
-export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external'>
+export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external' | 'browser'>
 export type BoardEdge = Edge<HandoffEdgeData & { firing?: boolean }, 'handoff'>
 
 const api = (): Window['ouroboros'] => window.ouroboros
@@ -19,6 +19,7 @@ function basename(p: string): string {
 function rfType(kind: NodeKind): BoardNode['type'] {
   if (kind === 'note') return 'note'
   if (kind === 'external') return 'external'
+  if (kind === 'browser') return 'browser'
   return 'agent'
 }
 
@@ -134,13 +135,15 @@ export const useBoard = create<BoardState>((set, get) => ({
     const count = s.nodes.filter((n) => n.data.kind !== 'external').length
     const position = partial.position ?? { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 }
     const isNote = kind === 'note'
-    const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : basename(cwd)
+    const isBrowser = kind === 'browser'
+    const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : basename(cwd)
     const { position: _p, id: _id, ...rest } = partial
     const data: NodeData = {
       kind,
       title: rest.title ?? titleDefault,
       cwd,
       note: isNote ? (rest.note ?? '') : undefined,
+      url: isBrowser ? (rest.url ?? s.settings.browserHome ?? 'https://www.google.com') : undefined,
       claude: kind === 'claude' || kind === 'conductor' ? { ...(rest.claude ?? {}) } : undefined,
       ...rest,
       launchSeq: 0
@@ -149,8 +152,8 @@ export const useBoard = create<BoardState>((set, get) => ({
       id,
       type: rfType(kind),
       position,
-      width: isNote ? 300 : 560,
-      height: isNote ? 220 : 400,
+      width: isNote ? 300 : isBrowser ? 640 : 560,
+      height: isNote ? 220 : isBrowser ? 480 : 400,
       dragHandle: '.node-header',
       data
     }
@@ -162,7 +165,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   async addGenerated(generated, generatedEdges, replace) {
     const s = get()
     if (replace) {
-      for (const n of s.nodes) if (n.data.kind !== 'note' && n.data.kind !== 'external') await api().pty.kill(n.id)
+      for (const n of s.nodes) if (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor') await api().pty.kill(n.id)
     }
     const keep = replace ? [] : s.nodes
     const keepEdges = replace ? [] : s.edges
@@ -183,7 +186,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   async removeNode(id) {
     const n = get().nodes.find((x) => x.id === id)
-    if (n && n.data.kind !== 'note' && n.data.kind !== 'external') await api().pty.kill(id)
+    if (n && (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor')) await api().pty.kill(id)
     set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId })
     scheduleSync(get)
   },

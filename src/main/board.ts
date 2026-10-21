@@ -153,7 +153,7 @@ export class Board extends EventEmitter {
   snapshot(): AgentSnapshot[] {
     const out: AgentSnapshot[] = []
     for (const n of this.nodes.values()) {
-      if (n.data.kind === 'note') continue
+      if (n.data.kind === 'note' || n.data.kind === 'browser') continue
       out.push({
         id: n.id,
         kind: n.data.kind,

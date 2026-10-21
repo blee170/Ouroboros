@@ -12,11 +12,14 @@ mkdirSync(join(project, 'sub'))
 // fake Claude Code history for the Board Builder
 const claudeCfg = mkdtempSync(join(tmpdir(), 'ouro-cfg-'))
 const { writeFileSync } = await import('node:fs')
+// no internet in CI: point new browser cards at the local hook server
+writeFileSync(join(userData, 'settings.json'), JSON.stringify({ browserHome: 'http://127.0.0.1:47821/health' }))
 mkdirSync(join(claudeCfg, 'projects', 'enc'), { recursive: true })
 writeFileSync(join(claudeCfg, 'projects', 'enc', 'sess-1.jsonl'), JSON.stringify({ type: 'user', sessionId: 'sess-1', cwd: join(project, 'sub'), message: { content: 'smoke session title' } }) + '\n')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let failures = 0
-const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${msg}`); if (!cond) failures++ }
+const t0 = Date.now()
+const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} [${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`); if (!cond) failures++ }
 
 // SMOKE_EXE=release/linux-unpacked/ouroboros tests the packaged build instead of out/.
 const app = await electron.launch({
@@ -116,10 +119,30 @@ await page.check('.folder-item:has-text("sub") input[type=checkbox]') // extra c
 await page.click('text=Create board')
 await sleep(1500)
 const after = await page.evaluate(() => window.__board.getState().nodes.map((n) => n.data.kind))
-check(after.length === before + 7, `Build board added note+conductor+4 roles+1 extra (${after.length - before})`)
+check(after.length === before + 8, `Build board added note+conductor+4 roles+browser+1 extra (${after.length - before})`)
 const edgeCount = await page.evaluate(() => window.__board.getState().edges.length)
 check(edgeCount === 4, `Build board wired 3 role lines on top of the existing one (${edgeCount - 1})`)
 check((await api('GET', '/api/handoffs')).json.handoffs.length === edgeCount, 'generated lines synced to main')
+
+// browser card: create via api, navigate to the hook server, read, type+click on a data: page
+const bcreated = await api('POST', '/api/browsers', { url: `${base}/health`, title: 'smoke browser' })
+check(typeof bcreated.json.id === 'string', 'browser card created through the api')
+const bid = bcreated.json.id
+let page1 = null
+for (let i = 0; i < 20 && !page1?.json?.text?.includes('"ok":true'); i++) { await sleep(300); page1 = await api('GET', `/api/browsers/${bid}/read`) }
+check(Boolean(page1?.json?.text?.includes('"ok":true')), `browser_read returns page text (${(page1?.json?.text ?? '').slice(0, 40)})`)
+const form = 'data:text/html,' + encodeURIComponent('<input id="q"><button id="b" onclick="document.title=\'clicked:\'+document.getElementById(\'q\').value">go</button>')
+await api('POST', `/api/browsers/${bid}/navigate`, { url: form })
+await sleep(500)
+await api('POST', `/api/browsers/${bid}/type`, { selector: '#q', text: 'hello' })
+const clicked = await api('POST', `/api/browsers/${bid}/click`, { text: 'go' })
+await sleep(300)
+const page2 = await api('GET', `/api/browsers/${bid}/read`)
+check(clicked.json.ok === true && page2.json.title === 'clicked:hello', `browser_type + browser_click work (${page2.json.title})`)
+const shot = await api('POST', `/api/browsers/${bid}/screenshot`, {})
+const shotOk = typeof shot.json.path === 'string' && (await import('node:fs')).existsSync(shot.json.path)
+check(shotOk || /timed out/.test(String(shot.json.error)), `browser_screenshot writes a png or times out cleanly without a compositor (${shotOk ? 'png' : shot.json.error})`)
+check((await api('GET', '/api/browsers')).json.browsers.some((b) => b.id === bid && b.ready), 'browser_list shows the card as ready')
 
 await app.close()
 rmSync(claudeCfg, { recursive: true, force: true })

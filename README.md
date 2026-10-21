@@ -6,6 +6,8 @@ Personal infinite-canvas cockpit for running and **conducting** many Claude Code
 - **Status map**: every Claude card reports *Working / Needs you / Done* in real time through Claude Code's HTTP hooks (auto-injected via `--settings`), with Windows toast when an agent needs you.
 - **Lines that do something**: drag from a card's right port to another's left port. When the source finishes a response (`Stop` hook), the rendered template is pasted into the target — automatically, or with the ▶ button. Conditions and rate limits included.
 - **Conductor**: a Claude card with an internal MCP server (`list_agents`, `read_output`, `send_prompt`, `create_agent`, `set_note`). Talk to one card; it reads the board and dispatches to the others.
+- **✨ Build board**: scans a root folder and your Claude Code history (`~/.claude/projects`), then generates a board — Conductor (continuing that folder's latest conversation), Implementer / Tester / Reviewer / Ops role cards with role prompts, handoff lines between them, and cards resuming other folders' latest sessions.
+- **Browser & other tools per card**: Inspector → *MCP servers* → one-click presets for **Aside** (`aside mcp`), **ego lite** and **Playwright MCP**, or any custom server; the card's `claude` gets them via `--mcp-config`.
 - **Roster + broadcast**, git **worktree per card**, workspace saved to `<project>/.ouroboros.json`, external Claude Code sessions (e.g. the Windows Claude app's Code tab) shown as cards and pullable into the canvas via `--resume`.
 
 ## Run (Windows)
@@ -27,7 +29,7 @@ npm run dist:win     # release\Ouroboros-<version>-x64.exe (portable) + NSIS ins
 1. Open a project folder. Right-click the canvas → **Claude agent** / **Conductor** / **Terminal** / **Note**.
 2. Each Claude card runs `claude --settings <hooks>` in its folder (options in the Inspector: `--continue`, `--resume`, model, permission mode, extra system prompt, worktree).
 3. Connect cards to create handoff lines; edit mode/condition/template in the Inspector.
-4. Put a **Conductor** card in the middle and give it the goal; it uses the MCP tools to delegate and report back.
+4. Put a **Conductor** card in the middle and give it the goal; it uses the MCP tools to delegate and report back. Or press **✨ Build board** to generate Conductor + role cards + lines from an existing project folder.
 5. Settings (⚙): notifications, tray, *track external sessions* (writes an HTTP hook into `~/.claude/settings.json`; requires the default hook port 47821 to be free).
 
 ## Development

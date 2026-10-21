@@ -9,6 +9,11 @@ const TOKEN = 'smoke-token'
 const project = mkdtempSync(join(tmpdir(), 'ouro-smoke-'))
 const userData = mkdtempSync(join(tmpdir(), 'ouro-userdata-'))
 mkdirSync(join(project, 'sub'))
+// fake Claude Code history for the Board Builder
+const claudeCfg = mkdtempSync(join(tmpdir(), 'ouro-cfg-'))
+const { writeFileSync } = await import('node:fs')
+mkdirSync(join(claudeCfg, 'projects', 'enc'), { recursive: true })
+writeFileSync(join(claudeCfg, 'projects', 'enc', 'sess-1.jsonl'), JSON.stringify({ type: 'user', sessionId: 'sess-1', cwd: join(project, 'sub'), message: { content: 'smoke session title' } }) + '\n')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let failures = 0
 const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${msg}`); if (!cond) failures++ }
@@ -17,7 +22,7 @@ const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${msg}`); 
 const app = await electron.launch({
   ...(process.env.SMOKE_EXE ? { executablePath: process.env.SMOKE_EXE } : {}),
   args: [...(process.env.SMOKE_EXE ? [] : ['out/main/index.js']), '--no-sandbox', `--user-data-dir=${userData}`],
-  env: { ...process.env, OUROBOROS_API_TOKEN: TOKEN, OUROBOROS_PROJECT: project, OUROBOROS_SHELL: '/bin/bash', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
+  env: { ...process.env, CLAUDE_CONFIG_DIR: claudeCfg, OUROBOROS_API_TOKEN: TOKEN, OUROBOROS_PROJECT: project, OUROBOROS_SHELL: '/bin/bash', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
 })
 app.process().stderr.on('data', (d) => process.stderr.write(`[electron] ${d}`))
 const page = await app.firstWindow()
@@ -97,7 +102,27 @@ check(existsSync(wsFile), 'workspace file written')
 const ws = JSON.parse(readFileSync(wsFile, 'utf8'))
 check(ws.nodes.length === 3 && ws.edges.length === 1 && !ws.nodes.some((x) => x.data.kind === 'external'), `workspace persisted 3 nodes / 1 edge, externals excluded (${ws.nodes.length}/${ws.edges.length})`)
 
+// history + folders api, then Board Builder end to end
+const hist = await page.evaluate((root) => window.ouroboros.history.list(root), project)
+check(hist.length === 1 && hist[0].sessions[0].title === 'smoke session title', 'history.list reads fake Claude Code transcripts')
+const fl = await page.evaluate((root) => window.ouroboros.folders.list(root), project)
+check(fl.some((f) => f.name === 'sub'), 'folders.list lists subfolders')
+const before = await page.evaluate(() => window.__board.getState().nodes.length)
+await page.click('text=Build board')
+await page.waitForSelector('.builder-grid')
+await page.fill('.modal.wide input.text >> nth=0', project) // root = project so "sub" shows up
+await sleep(800)
+await page.check('.folder-item:has-text("sub") input[type=checkbox]') // extra card for the sub folder
+await page.click('text=Create board')
+await sleep(1500)
+const after = await page.evaluate(() => window.__board.getState().nodes.map((n) => n.data.kind))
+check(after.length === before + 7, `Build board added note+conductor+4 roles+1 extra (${after.length - before})`)
+const edgeCount = await page.evaluate(() => window.__board.getState().edges.length)
+check(edgeCount === 4, `Build board wired 3 role lines on top of the existing one (${edgeCount - 1})`)
+check((await api('GET', '/api/handoffs')).json.handoffs.length === edgeCount, 'generated lines synced to main')
+
 await app.close()
+rmSync(claudeCfg, { recursive: true, force: true })
 rmSync(project, { recursive: true, force: true })
 rmSync(userData, { recursive: true, force: true })
 console.log(failures ? `\n${failures} check(s) failed` : '\nall smoke checks passed')

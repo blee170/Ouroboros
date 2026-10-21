@@ -15,6 +15,37 @@ export interface ClaudeOptions {
   appendSystemPrompt?: string
   /** Free-form extra CLI args. */
   extraArgs?: string[]
+  /** Extra MCP servers attached to this card via --mcp-config (same shape as .mcp.json "mcpServers"). */
+  mcpServers?: Record<string, McpServerSpec>
+}
+
+export interface McpServerSpec {
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  /** For remote servers */
+  type?: 'stdio' | 'http' | 'sse'
+  url?: string
+  headers?: Record<string, string>
+}
+
+/** Ready-made MCP server entries the Inspector can add with one click. */
+export const MCP_PRESETS: Record<string, { label: string; hint: string; spec: McpServerSpec }> = {
+  aside: {
+    label: 'Aside browser',
+    hint: 'Requires the Aside app + CLI (aside.com → Developer settings). Gives the card a logged-in browser it can drive.',
+    spec: { command: 'aside', args: ['mcp'] }
+  },
+  'ego-lite': {
+    label: 'ego lite browser',
+    hint: 'Requires ego lite (citrolabs/ego-lite). The ego-browser CLI must be on PATH; this runs its MCP mode if available.',
+    spec: { command: 'ego-browser', args: ['mcp'] }
+  },
+  playwright: {
+    label: 'Playwright MCP',
+    hint: 'Microsoft Playwright MCP (needs Node). Drives a separate Chromium profile; add --extension to attach to your Chrome/Edge tabs.',
+    spec: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] }
+  }
 }
 
 export interface WorktreeInfo {

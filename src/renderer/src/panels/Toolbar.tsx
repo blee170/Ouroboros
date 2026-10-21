@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useBoard } from '@/store/board'
 import { SettingsDialog } from './SettingsDialog'
+import { BoardBuilder } from './BoardBuilder'
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -15,6 +16,7 @@ export function Toolbar() {
   const toggleRoster = useBoard((s) => s.toggleRoster)
   const toggleInspector = useBoard((s) => s.toggleInspector)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [builderOpen, setBuilderOpen] = useState(false)
   const nodes = useBoard((s) => s.nodes)
   const needs = nodes.filter((n) => n.data.status === 'needs-you').length
   const working = nodes.filter((n) => n.data.status === 'working').length
@@ -43,6 +45,9 @@ export function Toolbar() {
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('note')}>
         + Note
       </button>
+      <button className="btn" disabled={!projectRoot} onClick={() => setBuilderOpen(true)} title="Generate a board from your folders and Claude Code history">
+        ✨ Build board
+      </button>
       <span className="spacer" />
       <span className="stat">
         <span className="dot" style={{ background: '#3b82f6' }} /> {working} working
@@ -64,6 +69,7 @@ export function Toolbar() {
         ⚙
       </button>
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {builderOpen && <BoardBuilder onClose={() => setBuilderOpen(false)} />}
     </div>
   )
 }

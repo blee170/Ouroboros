@@ -14,6 +14,7 @@ import type { ApiHandlers, HookServer } from './hook-server'
 import { PtyManager, defaultShell } from './pty-manager'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
+import { listClaudeSessions, listSubfolders } from './claude-history'
 
 export interface MainContext {
   board: Board
@@ -255,6 +256,9 @@ export function registerIpc(ctx: MainContext): void {
       return { ok: false, error: (err as Error).message }
     }
   })
+
+  ipcMain.handle(IPC.historyList, (_e, rootFilter?: string) => listClaudeSessions(undefined, { rootFilter: rootFilter || undefined }))
+  ipcMain.handle(IPC.foldersList, (_e, root: string) => listSubfolders(root))
 
   ipcMain.handle(IPC.appInfo, () => ({
     platform: process.platform,

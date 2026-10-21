@@ -49,6 +49,12 @@ const api: OuroborosApi = {
   },
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo)
+  },
+  history: {
+    list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
+  },
+  folders: {
+    list: (root) => ipcRenderer.invoke(IPC.foldersList, root)
   }
 }
 

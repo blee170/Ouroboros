@@ -105,3 +105,13 @@ textarea { resize: vertical; font-family: Consolas, monospace; font-size: 12px; 
 .react-flow__controls button { background: var(--panel-2) !important; border-bottom: 1px solid var(--border) !important; color: var(--text) !important; }
 .react-flow__node { font-family: inherit; }
 .react-flow__resize-control.line { border-width: 1px; }
+
+/* board builder */
+.modal.wide { width: 980px; }
+.builder-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-top: 8px; }
+.builder-col { min-width: 0; }
+.folder-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.folder-item { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.folder-item.chosen { border-color: var(--accent); }
+.folder-item .title { font-weight: 600; }
+.session-line { margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

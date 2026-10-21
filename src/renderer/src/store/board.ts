@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } from '@shared/protocol'
-import type { AppSettings, HandoffEdgeData, NodeData, NodeKind, Workspace, WorkspaceNode } from '@shared/types'
+import type { AppSettings, HandoffEdgeData, NodeData, NodeKind, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 
@@ -51,6 +51,8 @@ interface BoardState {
   onEdgesChange(changes: EdgeChange<BoardEdge>[]): void
   onConnect(c: Connection): void
   addNode(kind: NodeKind, partial?: Partial<NodeData> & { id?: string; position?: { x: number; y: number } }): string
+  /** Add a generated set of nodes/edges (Board Builder). `replace` closes every existing card first. */
+  addGenerated(nodes: WorkspaceNode[], edges: WorkspaceEdge[], replace: boolean): Promise<void>
   updateNodeData(id: string, patch: Partial<NodeData>): void
   updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
   removeNode(id: string): Promise<void>
@@ -155,6 +157,19 @@ export const useBoard = create<BoardState>((set, get) => ({
     set({ nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null })
     scheduleSync(get)
     return id
+  },
+
+  async addGenerated(generated, generatedEdges, replace) {
+    const s = get()
+    if (replace) {
+      for (const n of s.nodes) if (n.data.kind !== 'note' && n.data.kind !== 'external') await api().pty.kill(n.id)
+    }
+    const keep = replace ? [] : s.nodes
+    const keepEdges = replace ? [] : s.edges
+    const nodes = generated.map(toBoardNode)
+    const edges: BoardEdge[] = generatedEdges.map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
+    set({ nodes: [...keep, ...nodes], edges: [...keepEdges, ...edges], selectedNodeId: null, selectedEdgeId: null })
+    scheduleSync(get)
   },
 
   updateNodeData(id, patch) {

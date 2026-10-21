@@ -103,23 +103,23 @@ export function prepareLaunch(params: {
   writeFileSync(settingsPath, JSON.stringify(buildHookSettings(params.baseUrl, params.nodeId), null, 2))
   let mcpConfigPath: string | undefined
   const claude: ClaudeOptions = { ...params.claude }
+  const mcpServers: Record<string, unknown> = { ...(claude.mcpServers ?? {}) }
   if (params.kind === 'conductor') {
-    mcpConfigPath = join(params.tmpDir, `${params.nodeId}.mcp.json`)
-    writeFileSync(
-      mcpConfigPath,
-      JSON.stringify(
-        buildMcpConfig({
-          execPath: params.execPath,
-          scriptPath: params.mcpScriptPath,
-          baseUrl: params.baseUrl,
-          token: params.token,
-          nodeId: params.nodeId
-        }),
-        null,
-        2
-      )
+    Object.assign(
+      mcpServers,
+      (buildMcpConfig({
+        execPath: params.execPath,
+        scriptPath: params.mcpScriptPath,
+        baseUrl: params.baseUrl,
+        token: params.token,
+        nodeId: params.nodeId
+      }).mcpServers as Record<string, unknown>)
     )
     claude.appendSystemPrompt = [CONDUCTOR_SYSTEM_PROMPT, claude.appendSystemPrompt].filter(Boolean).join(' ')
+  }
+  if (Object.keys(mcpServers).length > 0) {
+    mcpConfigPath = join(params.tmpDir, `${params.nodeId}.mcp.json`)
+    writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }, null, 2))
   }
   const command = buildClaudeCommand(claude, { settingsPath, mcpConfigPath }, shellKind(params.shell), params.claudeBin)
   return { settingsPath, mcpConfigPath, command }

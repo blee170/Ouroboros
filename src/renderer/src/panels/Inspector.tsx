@@ -1,6 +1,6 @@
 import { useBoard } from '@/store/board'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
-import type { ClaudeOptions } from '@shared/types'
+import { MCP_PRESETS, type ClaudeOptions, type McpServerSpec } from '@shared/types'
 
 export function Inspector() {
   const nodeId = useBoard((s) => s.selectedNodeId)
@@ -132,6 +132,50 @@ export function Inspector() {
             Extra system prompt
             <textarea rows={3} value={claude.appendSystemPrompt ?? ''} onChange={(e) => setClaude({ appendSystemPrompt: e.target.value || undefined })} />
           </label>
+          <div className="block">
+            <div className="muted small">MCP servers on this card {d.kind === 'conductor' ? '(the board server "ouroboros" is always added)' : ''}</div>
+            {Object.entries(claude.mcpServers ?? {}).map(([name, spec]) => (
+              <div key={name} className="row small">
+                <span className="mono">{name}</span>
+                <span className="muted clamp">{(spec as McpServerSpec).url ?? [(spec as McpServerSpec).command, ...((spec as McpServerSpec).args ?? [])].join(' ')}</span>
+                <span className="spacer" />
+                <button
+                  className="icon-btn"
+                  title="Remove"
+                  onClick={() => {
+                    const next = { ...(claude.mcpServers ?? {}) }
+                    delete next[name]
+                    setClaude({ mcpServers: Object.keys(next).length ? next : undefined })
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <div className="row" style={{ flexWrap: 'wrap' }}>
+              {Object.entries(MCP_PRESETS).map(([key, p]) => (
+                <button key={key} className="btn small" title={p.hint} disabled={Boolean(claude.mcpServers?.[key])} onClick={() => setClaude({ mcpServers: { ...(claude.mcpServers ?? {}), [key]: p.spec } })}>
+                  + {p.label}
+                </button>
+              ))}
+              <button
+                className="btn small"
+                onClick={() => {
+                  const raw = prompt('MCP server JSON, e.g. {"name":{"command":"npx","args":["-y","some-mcp"]}}')
+                  if (!raw) return
+                  try {
+                    const parsed = JSON.parse(raw) as Record<string, McpServerSpec>
+                    setClaude({ mcpServers: { ...(claude.mcpServers ?? {}), ...parsed } })
+                  } catch (e) {
+                    alert(`Invalid JSON: ${(e as Error).message}`)
+                  }
+                }}
+              >
+                + custom…
+              </button>
+            </div>
+            <div className="muted small">Changes apply on "Apply & restart". Browser servers open their own window; the card gets the tools.</div>
+          </div>
           {d.sessionId && <div className="muted small">session {d.sessionId}</div>}
         </>
       )}

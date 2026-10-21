@@ -27,3 +27,25 @@ describe('quoteArg / buildClaudeCommand', () => {
     expect(buildClaudeCommand({}, { settingsPath: 'C:\\x\\s.json' }, 'powershell')).toBe('& claude --settings C:\\x\\s.json')
   })
 })
+
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { prepareLaunch } from '../src/main/claude-launcher'
+
+describe('prepareLaunch', () => {
+  it('writes an mcp config when a plain claude card has extra servers, and merges the board server for conductors', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'ouro-launch-'))
+    const base = { shell: '/bin/bash', baseUrl: 'http://127.0.0.1:1', token: 't', tmpDir: tmp, execPath: '/el', mcpScriptPath: '/mcp.js' }
+    const plain = prepareLaunch({ ...base, nodeId: 'p1', kind: 'claude', claude: {} })
+    expect(plain.mcpConfigPath).toBeUndefined()
+    const withAside = prepareLaunch({ ...base, nodeId: 'p2', kind: 'claude', claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
+    expect(JSON.parse(readFileSync(withAside.mcpConfigPath!, 'utf8'))).toEqual({ mcpServers: { aside: { command: 'aside', args: ['mcp'] } } })
+    expect(withAside.command).toContain('--mcp-config')
+    const cond = prepareLaunch({ ...base, nodeId: 'c1', kind: 'conductor', claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
+    const cfg = JSON.parse(readFileSync(cond.mcpConfigPath!, 'utf8')) as { mcpServers: Record<string, { command: string }> }
+    expect(Object.keys(cfg.mcpServers).sort()).toEqual(['aside', 'ouroboros'])
+    expect(cfg.mcpServers.ouroboros.command).toBe('/el')
+    rmSync(tmp, { recursive: true, force: true })
+  })
+})

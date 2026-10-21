@@ -22,6 +22,8 @@ export const IPC = {
   agentsList: 'agents:list',
   externalInstallHooks: 'external:installHooks',
   appInfo: 'app:info',
+  historyList: 'history:list',
+  foldersList: 'folders:list',
   // main -> renderer (send)
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
@@ -99,6 +101,30 @@ export interface AppInfo {
   initialProject?: string
 }
 
+export interface ClaudeSessionInfo {
+  id: string
+  cwd: string
+  title: string
+  /** mtime of the transcript, ms since epoch */
+  lastAt: number
+  branch?: string
+  size: number
+}
+
+export interface ClaudeProjectHistory {
+  cwd: string
+  /** newest first */
+  sessions: ClaudeSessionInfo[]
+}
+
+export interface FolderInfo {
+  path: string
+  name: string
+  isGit: boolean
+  hasClaudeMd: boolean
+  packageName?: string
+}
+
 export interface WorkspaceLoadResult {
   workspace: Workspace | null
   projectRoot: string
@@ -147,6 +173,13 @@ export interface OuroborosApi {
   }
   app: {
     info(): Promise<AppInfo>
+  }
+  history: {
+    /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */
+    list(rootFilter?: string): Promise<ClaudeProjectHistory[]>
+  }
+  folders: {
+    list(root: string): Promise<FolderInfo[]>
   }
 }
 

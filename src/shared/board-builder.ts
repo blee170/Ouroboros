@@ -15,27 +15,27 @@ export const ROLE_PRESETS: Record<RoleKind, RolePreset> = {
     icon: '🛠',
     permissionMode: 'acceptEdits',
     prompt:
-      'Role: Implementer card on an Ouroboros board. You receive tasks from the Conductor or from a human. Work in small, reviewable commits; run the relevant tests before you report. When you finish a task, end your reply with a short "RESULT:" section listing changed files, how you verified, and anything left open — that text is handed to the Tester card automatically.'
+      'Role: Implementer card on an Ouroboros board. You receive tasks from the Conductor or from a human. Work in small, reviewable commits; run the relevant tests before you report. When you finish a task, end your reply with a short RESULT: section listing changed files, how you verified, and anything left open — that text is handed to the Tester card automatically.'
   },
   tester: {
     title: 'Tester',
     icon: '🧪',
     permissionMode: 'acceptEdits',
     prompt:
-      'Role: Tester card on an Ouroboros board. You receive the Implementer\'s result via handoff. Reproduce the change, write or extend tests, run the full relevant suite. Report only failures with a minimal reproduction and the suspected cause; if everything passes, reply with a line starting with "PASS:" followed by what you ran — that word triggers the handoff to the Reviewer.'
+      'Role: Tester card on an Ouroboros board. You receive the Implementer\'s result via handoff. Reproduce the change, write or extend tests, run the full relevant suite. Report only failures with a minimal reproduction and the suspected cause; if everything passes, reply with a line starting with PASS: followed by what you ran — that word triggers the handoff to the Reviewer.'
   },
   reviewer: {
     title: 'Reviewer',
     icon: '🔍',
     permissionMode: 'plan',
     prompt:
-      'Role: Reviewer card on an Ouroboros board. Review the diff for correctness, security and consistency with CLAUDE.md. Do not edit code. Produce: (1) blocking findings with file:line, (2) nits, (3) a PR title and description ready to paste. If there are blocking findings, start your reply with "CHANGES REQUESTED:" so the Conductor sends them back to the Implementer.'
+      'Role: Reviewer card on an Ouroboros board. Review the diff for correctness, security and consistency with CLAUDE.md. Do not edit code. Produce: (1) blocking findings with file:line, (2) nits, (3) a PR title and description ready to paste. If there are blocking findings, start your reply with CHANGES REQUESTED: so the Conductor sends them back to the Implementer.'
   },
   ops: {
     title: 'Ops',
     icon: '🚀',
     prompt:
-      'Role: Ops card on an Ouroboros board. You own deploys, environment and service health (e.g. Cloudflare, Supabase, CI). Prefer read-only checks (status, logs, health endpoints) and report findings concisely. Never deploy to production, rotate secrets or run destructive commands unless the prompt contains the exact phrase "APPROVED BY OWNER".'
+      'Role: Ops card on an Ouroboros board. You own deploys, environment and service health (e.g. Cloudflare, Supabase, CI). Prefer read-only checks (status, logs, health endpoints) and report findings concisely. Never deploy to production, rotate secrets or run destructive commands unless the prompt contains the exact phrase APPROVED BY OWNER.'
   }
 }
 
@@ -172,7 +172,7 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
       data: {
         mode: 'auto',
         condition: '/\\bPASS\\b|통과|all tests pass/i',
-        template: 'Tests passed ("{{source_title}}" report below). Review the current diff and write the PR description.\n\n{{last_assistant_message}}'
+        template: 'Tests passed ({{source_title}} report below). Review the current diff and write the PR description.\n\n{{last_assistant_message}}'
       }
     })
   }

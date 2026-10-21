@@ -28,9 +28,10 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     if (kind === 'terminal') {
       void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: data.initialCommand })
     } else if (kind === 'claude' || kind === 'conductor') {
-      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, claude: data.claude ?? {} })
+      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, claude: data.claude ?? {}, title: data.title })
     }
-  }, [handle, seq, id, kind, data.cwd, data.shell, data.initialCommand, data.claude, data.worktree])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handle, seq, id, kind])
 
   const color = STATUS_COLOR[status]
   return (

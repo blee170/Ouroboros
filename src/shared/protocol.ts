@@ -53,6 +53,8 @@ export interface ClaudeLaunchOptions {
   shell?: string
   kind: 'claude' | 'conductor'
   claude: NonNullable<NodeData['claude']>
+  /** Card title, used as the Claude session display name (--name). */
+  title?: string
 }
 
 export interface BoardSyncPayload {

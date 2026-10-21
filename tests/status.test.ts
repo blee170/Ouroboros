@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reduceHook } from '@shared/status'
+import { detectClaudeReady, reduceHook } from '@shared/status'
 
 describe('reduceHook', () => {
   it('maps lifecycle events to statuses', () => {
@@ -15,5 +15,13 @@ describe('reduceHook', () => {
   })
   it('ignores unknown events', () => {
     expect(reduceHook('idle', { hook_event_name: 'SomethingNew' })).toBeNull()
+  })
+})
+
+describe('detectClaudeReady', () => {
+  it('recognises the TUI banner or footer even with ANSI codes', () => {
+    expect(detectClaudeReady('\u001b[1mClaude Code v2.1.306\u001b[0m')).toBe(true)
+    expect(detectClaudeReady('>  \u001b[2m? for shortcuts\u001b[0m')).toBe(true)
+    expect(detectClaudeReady('PS C:\\Users\\me> ')).toBe(false)
   })
 })

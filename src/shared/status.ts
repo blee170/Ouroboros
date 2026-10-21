@@ -75,3 +75,10 @@ export const STATUS_COLOR: Record<AgentStatus, string> = {
   done: '#22c55e',
   ended: '#525252'
 }
+
+/** True when a chunk of terminal output shows the Claude Code TUI is up (fallback when SessionStart hooks do not arrive). */
+export function detectClaudeReady(chunk: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  const clean = chunk.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+  return /Claude Code v\d|\? for shortcuts|Try "|auto mode on|accept edits on|plan mode on/.test(clean)
+}

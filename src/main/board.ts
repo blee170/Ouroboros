@@ -86,6 +86,7 @@ export class Board extends EventEmitter {
       if (patch.sessionId) {
         n.data.sessionId = patch.sessionId
         this.sessionToNode.set(patch.sessionId, nodeId)
+        this.dropExternal(patch.sessionId)
       }
       n.data.lastEventAt = at
     }
@@ -100,11 +101,25 @@ export class Board extends EventEmitter {
     this.emit('status', payload)
   }
 
+  /** A session we launched also fired the global hook before we knew its id: remove the stray external card. */
+  private dropExternal(sessionId: string): void {
+    const ext = this.externalSessions.get(sessionId)
+    if (!ext) return
+    this.externalSessions.delete(sessionId)
+    const payload: ExternalSessionPayload = { ...ext, status: 'ended', statusDetail: 'claimed by a card', at: Date.now() }
+    this.emit('external', payload)
+  }
+
   /** Apply a hook event addressed to a known node. Returns the status update if any. */
   applyHook(nodeId: string, event: HookEvent): void {
     const n = this.nodes.get(nodeId)
     const update = reduceHook(n?.data.status, event)
     this.emit('hook', { nodeId, event })
+    if (n && typeof event.session_id === 'string' && !n.data.sessionId) {
+      n.data.sessionId = event.session_id
+      this.sessionToNode.set(event.session_id, nodeId)
+      this.dropExternal(event.session_id)
+    }
     if (!update) return
     this.setStatus(nodeId, update)
     if (event.hook_event_name === 'Stop') {

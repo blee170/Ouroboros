@@ -7,6 +7,7 @@ import { IPC } from '@shared/protocol'
 import type { AppSettings, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
 import { selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { tailLines } from '@shared/ansi'
+import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
 import { prepareLaunch } from './claude-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -150,6 +151,10 @@ export function registerIpc(ctx: MainContext): void {
   ptys.on('data', (nodeId: string, data: string) => {
     board.appendOutput(nodeId, data)
     sendToRenderer(ctx, IPC.ptyData, { nodeId, data })
+    const n = board.nodes.get(nodeId)
+    if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting' && detectClaudeReady(data)) {
+      board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+    }
   })
   ptys.on('exit', (nodeId: string, code: number) => {
     board.setPtyAlive(nodeId, false)
@@ -193,7 +198,8 @@ export function registerIpc(ctx: MainContext): void {
         token: hookServer.token,
         tmpDir: ctx.tmpDir,
         execPath: process.execPath,
-        mcpScriptPath: ctx.mcpScriptPath
+        mcpScriptPath: ctx.mcpScriptPath,
+        title: opts.title
       })
       ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command })
       board.setPtyAlive(opts.nodeId, true)

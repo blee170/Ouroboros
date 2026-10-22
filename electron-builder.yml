@@ -1,5 +1,10 @@
 appId: dev.blee170.ouroboros
 productName: Ouroboros
+publish:
+  provider: github
+  owner: blee170
+  repo: Ouroboros
+  releaseType: release
 directories:
   output: release
   buildResources: resources

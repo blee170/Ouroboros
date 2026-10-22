@@ -24,7 +24,8 @@ npm run dist:win            # ~2–5 min; produces release\Ouroboros-Setup-<vers
 - **Portable** (`Ouroboros-<version>-portable.exe`): a single exe you can keep anywhere and pin to the taskbar.
 - The build is unsigned, so the first launch shows SmartScreen: click *More info → Run anyway* once.
 - `Ouroboros.exe <folder>` opens that project directly (handy as a shortcut target).
-- After pulling new code, run `npm run dist:win` again and re-install or replace the exe.
+- **Updating**: Settings (⚙) → *Check for updates* downloads the latest GitHub Release and installs it on restart. Releases are built automatically by GitHub Actions when a `v*` tag is pushed. Because the repository is private, paste a fine-grained GitHub token (Contents: read on `blee170/Ouroboros`) into Settings once; it is stored encrypted.
+- Without a token (or to build locally), `git pull && npm run dist:win` and re-run the installer still works.
 
 ## Run from source (Windows)
 

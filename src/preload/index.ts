@@ -62,6 +62,13 @@ const api: OuroborosApi = {
   browser: {
     register: (nodeId, webContentsId) => ipcRenderer.send(IPC.browserRegister, nodeId, webContentsId),
     unregister: (nodeId) => ipcRenderer.send(IPC.browserUnregister, nodeId)
+  },
+  update: {
+    check: () => ipcRenderer.invoke(IPC.updateCheck),
+    download: () => ipcRenderer.invoke(IPC.updateDownload),
+    install: () => ipcRenderer.invoke(IPC.updateInstall),
+    setToken: (token) => ipcRenderer.invoke(IPC.updateSetToken, token),
+    onStatus: (cb) => on(IPC.updateStatus, cb)
   }
 }
 

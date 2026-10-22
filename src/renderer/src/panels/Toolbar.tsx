@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { UpdateStatus } from '@shared/protocol'
 import { useBoard } from '@/store/board'
 import { SettingsDialog } from './SettingsDialog'
 import { BoardBuilder } from './BoardBuilder'
@@ -17,6 +18,16 @@ export function Toolbar() {
   const toggleInspector = useBoard((s) => s.toggleInspector)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [builderOpen, setBuilderOpen] = useState(false)
+  const [upd, setUpd] = useState<UpdateStatus | null>(null)
+  useEffect(() => {
+    const off = window.ouroboros.update.onStatus(setUpd)
+    // one quiet check shortly after start
+    const t = setTimeout(() => void window.ouroboros.update.check(), 8000)
+    return () => {
+      off()
+      clearTimeout(t)
+    }
+  }, [])
   const nodes = useBoard((s) => s.nodes)
   const needs = nodes.filter((n) => n.data.status === 'needs-you').length
   const working = nodes.filter((n) => n.data.status === 'working').length
@@ -68,6 +79,11 @@ export function Toolbar() {
       <button className="btn" onClick={toggleInspector}>
         Inspector
       </button>
+      {(upd?.state === 'available' || upd?.state === 'ready' || upd?.state === 'downloading') && (
+        <button className="btn update-badge" title={upd.state === 'ready' ? 'Restart to install' : 'Open settings to update'} onClick={() => (upd.state === 'ready' ? void window.ouroboros.update.install() : setSettingsOpen(true))}>
+          ⬆ {upd.state === 'ready' ? `Restart for v${upd.version}` : upd.state === 'downloading' ? `${upd.percent ?? 0}%` : `v${upd.version} available`}
+        </button>
+      )}
       <button className="btn" onClick={() => setSettingsOpen(true)}>
         ⚙
       </button>

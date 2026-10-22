@@ -159,6 +159,8 @@ export interface AppSettings {
   defaultShell?: string
   /** Home page for new browser cards. */
   browserHome?: string
+  /** GitHub token (stored encrypted) used to download updates from the private repository. */
+  githubTokenEnc?: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

@@ -25,6 +25,11 @@ export const IPC = {
   historyList: 'history:list',
   foldersList: 'folders:list',
   browserRegister: 'browser:register',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  updateSetToken: 'update:setToken',
+  updateStatus: 'update:status',
   browserUnregister: 'browser:unregister',
   // main -> renderer (send)
   ptyData: 'pty:data',
@@ -99,6 +104,15 @@ export interface ExternalSessionPayload {
   at: number
 }
 
+export interface UpdateStatus {
+  state: 'idle' | 'checking' | 'available' | 'up-to-date' | 'downloading' | 'ready' | 'error' | 'unavailable'
+  currentVersion: string
+  version?: string
+  percent?: number
+  notes?: string
+  message?: string
+}
+
 export interface AppInfo {
   platform: string
   version: string
@@ -109,6 +123,8 @@ export interface AppInfo {
   /** How the board MCP server is launched for Claude cards. */
   mcpRunner?: string
   mcpScript?: string
+  hasUpdateToken?: boolean
+  packaged?: boolean
 }
 
 export interface ClaudeSessionInfo {
@@ -198,6 +214,14 @@ export interface OuroborosApi {
     /** Called by a browser card once its <webview> is ready. */
     register(nodeId: string, webContentsId: number): void
     unregister(nodeId: string): void
+  }
+  update: {
+    check(): Promise<UpdateStatus>
+    download(): Promise<UpdateStatus>
+    install(): Promise<void>
+    /** Store (encrypted) the GitHub token used for update downloads; empty string clears it. */
+    setToken(token: string): Promise<{ ok: boolean; hasToken: boolean }>
+    onStatus(cb: (s: UpdateStatus) => void): () => void
   }
 }
 

@@ -15,6 +15,7 @@ import type { ApiHandlers, HookServer } from './hook-server'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
+import { decryptToken, encryptToken, type Updater } from './updater'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
@@ -27,6 +28,7 @@ export interface MainContext {
   hookServer: HookServer
   store: UserStore
   browsers: BrowserManager
+  updater: Updater
   tmpDir: string
   mcpScriptPath: string
   getWindow(): BrowserWindow | null
@@ -416,8 +418,20 @@ export function registerIpc(ctx: MainContext): void {
     userData: app.getPath('userData'),
     initialProject: initialProjectArg(),
     mcpRunner: findNodeBinary() ?? `${process.execPath} (ELECTRON_RUN_AS_NODE)`,
-    mcpScript: ctx.mcpScriptPath
+    mcpScript: ctx.mcpScriptPath,
+    hasUpdateToken: Boolean(decryptToken(store.getSettings().githubTokenEnc)),
+    packaged: app.isPackaged
   }))
+
+  ctx.updater.on('status', (st) => sendToRenderer(ctx, IPC.updateStatus, st))
+  ipcMain.handle(IPC.updateCheck, () => ctx.updater.check())
+  ipcMain.handle(IPC.updateDownload, () => ctx.updater.download())
+  ipcMain.handle(IPC.updateInstall, () => ctx.updater.install())
+  ipcMain.handle(IPC.updateSetToken, (_e, token: string) => {
+    const enc = encryptToken(String(token ?? '').trim())
+    store.setSettings({ githubTokenEnc: enc || undefined })
+    return { ok: true, hasToken: Boolean(enc) }
+  })
 }
 
 /** `Ouroboros.exe <folder>` or OUROBOROS_PROJECT=<folder> opens that project on start. */

@@ -1,7 +1,7 @@
 {
   "name": "ouroboros",
   "productName": "Ouroboros",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Personal infinite-canvas cockpit for running and conducting multiple Claude Code sessions on Windows",
   "main": "./out/main/index.js",
   "author": "blee170",
@@ -28,6 +28,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.12.0",
+    "electron-updater": "^6.8.9",
     "nanoid": "^6.0.2",
     "node-pty": "^1.1.0",
     "react": "^19.3.1",

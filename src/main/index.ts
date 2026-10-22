@@ -7,6 +7,7 @@ import { HookServer } from './hook-server'
 import { createApiHandlers, registerIpc, resolveMcpScriptPath, type MainContext } from './ipc'
 import { PtyManager } from './pty-manager'
 import { UserStore } from './workspace-store'
+import { Updater, decryptToken } from './updater'
 
 const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
@@ -101,11 +102,13 @@ async function main(): Promise<void> {
     ptys,
     store,
     browsers: new BrowserManager(),
+    updater: null as unknown as Updater,
     tmpDir: join(app.getPath('userData'), 'claude-launch'),
     mcpScriptPath: resolveMcpScriptPath(),
     getWindow: () => mainWindow,
     hookServer: null as unknown as HookServer
   }
+  ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))
   ctx.hookServer = new HookServer({
     onHook: (nodeId, event) => board.applyHook(nodeId, event),
     onExternalHook: (event) => board.applyExternalHook(event),

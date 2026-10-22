@@ -148,6 +148,11 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
         cwd = wt.path
       }
       const count = ctx.board.nodes.size
+      // Guard: --continue in a folder where a conductor already lives would clone the conductor's own
+      // conversation (and re-run whatever it was doing). Start fresh there instead.
+      const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
+      const conductorHere = [...ctx.board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
+      const wantContinue = Boolean(input.continue) && !conductorHere
       const claude: WorkspaceNode['data']['claude'] =
         input.kind === 'terminal'
           ? undefined
@@ -155,7 +160,7 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
               appendSystemPrompt: input.role_prompt?.trim() || undefined,
               permissionMode: input.permission_mode as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
               model: input.model || undefined,
-              continue: input.continue || undefined,
+              continue: wantContinue || undefined,
               resume: input.resume || undefined
             }
       const node: WorkspaceNode = {

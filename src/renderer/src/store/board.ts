@@ -265,6 +265,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   pullExternal(id) {
     const n = get().nodes.find((x) => x.id === id)
     if (!n || n.data.kind !== 'external' || !n.data.sessionId) return
+    // already on the board as a real card? just drop the external shadow
+    if (get().nodes.some((x) => x.id !== id && x.data.sessionId === n.data.sessionId)) {
+      set({ nodes: get().nodes.filter((x) => x.id !== id) })
+      return
+    }
     get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, claude: { resume: n.data.sessionId }, position: { x: 80, y: 80 } })
     set({ nodes: get().nodes.filter((x) => x.id !== id) })
   },

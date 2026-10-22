@@ -13,6 +13,11 @@ export default function App() {
   const inspectorOpen = useBoard((s) => s.inspectorOpen)
 
   useEffect(() => {
+    const name = projectRoot.replace(/[\\/]+$/, '').split(/[\\/]/).pop()
+    document.title = name ? `${name} — Ouroboros` : 'Ouroboros'
+  }, [projectRoot])
+
+  useEffect(() => {
     const b = useBoard.getState()
     void b.init().then(() => window.ouroboros.app.info()).then((info) => {
       if (info.initialProject && !useBoard.getState().projectRoot) void useBoard.getState().openProject(info.initialProject)

@@ -48,7 +48,8 @@ export interface ApiHandlers {
 export interface HookServerDeps {
   onHook(nodeId: string, event: HookEvent): void
   onExternalHook(event: HookEvent): void
-  api: ApiHandlers
+  /** API scoped to the window that owns `selfId` (the caller's own card id); unscoped = current window. */
+  resolveApi(selfId?: string): ApiHandlers | undefined
 }
 
 function readJson(req: http.IncomingMessage, limit = 2_000_000): Promise<unknown> {
@@ -155,7 +156,10 @@ export class HookServer {
     if (path.startsWith('/api/')) {
       const token = req.headers['x-ouroboros-token']
       if (token !== this.token) return send(res, 401, { error: 'unauthorized' })
-      const api = this.deps.api
+      const selfHeader = req.headers['x-ouroboros-self']
+      const self = (Array.isArray(selfHeader) ? selfHeader[0] : selfHeader) || url.searchParams.get('self') || undefined
+      const api = this.deps.resolveApi(self)
+      if (!api) return send(res, 503, { error: 'no window open' })
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
       if (method === 'GET' && path === '/api/bookmarks') return send(res, 200, { bookmarks: api.bookmarks(url.searchParams.get('q') ?? undefined) })

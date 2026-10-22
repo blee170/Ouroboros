@@ -30,7 +30,8 @@ const SELF = process.env.OUROBOROS_SELF_ID ?? ''
 async function api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(BASE + path, {
     method,
-    headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN },
+    // the caller's card id scopes every call to the window (board) that owns it
+    headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN, ...(SELF ? { 'x-ouroboros-self': SELF } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body)
   })
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>

@@ -4,13 +4,13 @@ import { join } from 'node:path'
 import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer } from './hook-server'
-import { createApiHandlers, registerIpc, resolveMcpScriptPath, type MainContext } from './ipc'
+import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeHook, type MainContext, type WindowSession } from './ipc'
 import { PtyManager } from './pty-manager'
 import { UserStore } from './workspace-store'
 import { Updater, decryptToken } from './updater'
+import { SessionRegistry } from './windows'
 
 const isDev = !app.isPackaged
-let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
 
@@ -20,7 +20,8 @@ function iconPath(): string {
   return join(__dirname, '../../resources/icon.png')
 }
 
-function createWindow(ctx: MainContext): BrowserWindow {
+/** One window = one project. Each window gets its own Board and API scope. */
+function createWindow(ctx: MainContext, projectRoot?: string): WindowSession {
   const win = new BrowserWindow({
     width: 1480,
     height: 920,
@@ -38,14 +39,19 @@ function createWindow(ctx: MainContext): BrowserWindow {
       webviewTag: true
     }
   })
+  const session = createSession(ctx, win, new Board(), projectRoot)
+  ctx.windows.add(session)
+  win.on('focus', () => ctx.windows.touch(session.id))
   win.on('close', (e) => {
-    if (!quitting && ctx.store.getSettings().minimizeToTray && tray) {
+    // Only the last window hides to the tray; other windows close for real (their cards end).
+    if (!quitting && ctx.store.getSettings().minimizeToTray && tray && ctx.windows.size === 1) {
       e.preventDefault()
       win.hide()
     }
   })
   win.on('closed', () => {
-    mainWindow = null
+    ctx.windows.remove(session.id)
+    session.dispose()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
@@ -56,7 +62,17 @@ function createWindow(ctx: MainContext): BrowserWindow {
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'))
   }
-  return win
+  return session
+}
+
+function showAll(ctx: MainContext): void {
+  if (ctx.windows.size === 0) {
+    createWindow(ctx)
+    return
+  }
+  for (const s of ctx.windows.all()) if (!s.win.isDestroyed()) s.win.show()
+  const cur = ctx.windows.current()
+  if (cur && !cur.win.isDestroyed()) cur.win.focus()
 }
 
 function createTray(ctx: MainContext): void {
@@ -64,14 +80,11 @@ function createTray(ctx: MainContext): void {
   if (img.isEmpty()) return
   tray = new Tray(img.resize({ width: 16, height: 16 }))
   tray.setToolTip('Ouroboros')
-  const show = (): void => {
-    if (!mainWindow) mainWindow = createWindow(ctx)
-    mainWindow.show()
-    mainWindow.focus()
-  }
+  const show = (): void => showAll(ctx)
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Show Ouroboros', click: show },
+      { label: 'New window', click: () => void createWindow(ctx) },
       { type: 'separator' },
       {
         label: 'Quit',
@@ -92,42 +105,53 @@ async function main(): Promise<void> {
   }
   // Separate ids: toasts left in Action Center by a dev run must not COM-activate node_modules\electron.exe later.
   app.setAppUserModelId(isDev ? 'dev.blee170.ouroboros.dev' : 'dev.blee170.ouroboros')
+  // Browser cards present a plain Chrome UA (consistently, client hints included): Google sign-in and
+  // bot checks refuse anything that mentions Electron.
+  app.userAgentFallback = app.userAgentFallback.replace(/\s?Electron\/[\d.]+/, '').replace(/\s?ouroboros\/[\d.]+/i, '')
   await app.whenReady()
 
-  const board = new Board()
   const ptys = new PtyManager()
   const store = new UserStore(app.getPath('userData'))
   const ctx: MainContext = {
-    board,
+    windows: new SessionRegistry<WindowSession>(),
+    openProjectWindow: (projectRoot) => {
+      const existing = projectRoot ? ctx.windows.forProject(projectRoot) : undefined
+      if (existing) {
+        existing.win.show()
+        existing.win.focus()
+        return existing
+      }
+      return createWindow(ctx, projectRoot)
+    },
     ptys,
     store,
     browsers: new BrowserManager(),
     updater: null as unknown as Updater,
     tmpDir: join(app.getPath('userData'), 'claude-launch'),
     mcpScriptPath: resolveMcpScriptPath(),
-    getWindow: () => mainWindow,
     hookServer: null as unknown as HookServer
   }
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))
-  ctx.api = createApiHandlers(ctx)
   ctx.hookServer = new HookServer({
-    onHook: (nodeId, event) => board.applyHook(nodeId, event),
-    onExternalHook: (event) => board.applyExternalHook(event),
-    api: ctx.api
+    onHook: (nodeId, event) => routeHook(ctx, nodeId, event),
+    onExternalHook: (event) => routeExternalHook(ctx, event),
+    // A caller identifies its window by its own card id; unscoped calls go to the current window.
+    resolveApi: (selfId) => (selfId ? ctx.windows.forNode(selfId) : undefined)?.api ?? ctx.windows.current()?.api
   })
   await ctx.hookServer.start()
   registerIpc(ctx)
 
-  mainWindow = createWindow(ctx)
+  createWindow(ctx, initialProjectArg())
   createTray(ctx)
 
-  app.on('second-instance', () => {
-    if (!mainWindow) mainWindow = createWindow(ctx)
-    mainWindow.show()
-    mainWindow.focus()
+  app.on('second-instance', (_e, argv, cwd) => {
+    // `Ouroboros.exe <folder>` while running: open that folder in its own window.
+    const root = projectFromArgv(argv, cwd, app.isPackaged)
+    if (root) ctx.openProjectWindow(root)
+    else showAll(ctx)
   })
   app.on('activate', () => {
-    if (!mainWindow) mainWindow = createWindow(ctx)
+    if (ctx.windows.size === 0) createWindow(ctx)
   })
   app.on('before-quit', () => {
     quitting = true

@@ -133,3 +133,6 @@ textarea { resize: vertical; font-family: Consolas, monospace; font-size: 12px; 
 .bookmarks li button { width: 100%; display: flex; justify-content: space-between; gap: 8px; background: none; border: none; text-align: left; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
 .bookmarks li button:hover { background: var(--panel-2); }
 .bookmarks li .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.welcome .recent-row { display: flex; align-items: center; gap: 4px; }
+.welcome .recent-row .link { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

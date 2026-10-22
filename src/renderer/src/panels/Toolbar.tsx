@@ -34,16 +34,22 @@ export function Toolbar() {
   const needs = nodes.filter((n) => n.data.status === 'needs-you').length
   const working = nodes.filter((n) => n.data.status === 'working').length
 
+  // A window holds one project: picking another folder while one is open opens it in a new window.
   const pick = async (): Promise<void> => {
     const root = await window.ouroboros.workspace.openProject()
-    if (root) await openProject(root)
+    if (!root) return
+    if (projectRoot) await window.ouroboros.window.open(root)
+    else await openProject(root)
   }
 
   return (
     <div className="toolbar">
       <span className="brand">◎ Ouroboros</span>
-      <button className="btn" onClick={() => void pick()} title={projectRoot}>
+      <button className="btn" onClick={() => void pick()} title={projectRoot ? `${projectRoot} — pick another folder to open it in a new window` : 'Open a project folder'}>
         📁 {projectRoot ? basename(projectRoot) : 'Open project'}
+      </button>
+      <button className="btn" title="New window (another project side by side)" onClick={() => void window.ouroboros.window.open()}>
+        ⧉
       </button>
       <span className="sep" />
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('claude')}>

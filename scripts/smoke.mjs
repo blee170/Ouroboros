@@ -38,8 +38,8 @@ check(true, 'app window shows the canvas for the initial project')
 
 const info = await page.evaluate(() => window.ouroboros.app.info())
 const base = `http://127.0.0.1:${info.hookPort}`
-const api = async (method, path, body) => {
-  const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN }, body: body ? JSON.stringify(body) : undefined })
+const api = async (method, path, body, self) => {
+  const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN, ...(self ? { 'x-ouroboros-self': self } : {}) }, body: body ? JSON.stringify(body) : undefined })
   return { status: r.status, json: await r.json().catch(() => ({})) }
 }
 check((await api('GET', '/api/agents')).status === 200, 'api authenticates with token')
@@ -212,6 +212,43 @@ const shot = await api('POST', `/api/browsers/${bid}/screenshot`, {})
 const shotOk = typeof shot.json.path === 'string' && (await import('node:fs')).existsSync(shot.json.path)
 check(shotOk || /timed out/.test(String(shot.json.error)), `browser_screenshot writes a png or times out cleanly without a compositor (${shotOk ? 'png' : shot.json.error})`)
 check((await api('GET', '/api/browsers')).json.browsers.some((b) => b.id === bid && b.ready), 'browser_list shows the card as ready')
+
+// --- a second window is a second project, fully separated from the first ---
+const project2 = mkdtempSync(join(tmpdir(), 'ouro-smoke2-'))
+await page.evaluate((p) => window.ouroboros.window.open(p), project2)
+let win2page = null
+for (let i = 0; i < 40 && !win2page; i++) { await sleep(250); win2page = app.windows().find((w) => w !== page && w.url() === page.url()) ?? null } // webviews are windows too
+check(Boolean(win2page), 'window.open creates a second window')
+await win2page.waitForSelector('.react-flow', { timeout: 20000 })
+await sleep(500)
+const title2 = await win2page.title()
+check(title2.startsWith(project2.split('/').pop()), `second window is titled after its project (${title2})`)
+await win2page.click('text=+ Terminal')
+await sleep(1500)
+const ids2 = await win2page.evaluate(() => window.__board.getState().nodes.map((n) => n.id))
+check(ids2.length === 1, `second window has its own board (${ids2.length} card)`)
+const card2 = ids2[0]
+const scoped2 = (await api('GET', '/api/agents', undefined, card2)).json.agents.map((x) => x.id)
+const scoped1 = (await api('GET', '/api/agents', undefined, a)).json.agents.map((x) => x.id)
+check(scoped2.length === 1 && scoped2[0] === card2 && !scoped1.includes(card2) && scoped1.includes(a), 'api calls are scoped to the window of the calling card')
+const made2 = await api('POST', '/api/agents', { kind: 'terminal', title: 'win2' }, card2)
+await sleep(1500)
+const in2 = await win2page.evaluate((id) => window.__board.getState().nodes.some((n) => n.id === id), made2.json.id)
+const in1 = await page.evaluate((id) => window.__board.getState().nodes.some((n) => n.id === id), made2.json.id)
+check(in2 && !in1, 'create_agent from a window-2 card lands on window 2 only')
+await fetch(`${base}/hook/${card2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Edit' }) })
+await sleep(400)
+check((await win2page.textContent(`.react-flow__node[data-id="${card2}"] .status-text`)).includes('Working'), 'hooks reach the card in its own window')
+await page.evaluate((p) => window.ouroboros.window.open(p), project2)
+await sleep(800)
+const realWindows = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+check((await realWindows()) === 2, 'opening an already-open project focuses its window instead of duplicating it')
+await app.evaluate(({ BrowserWindow }, t) => BrowserWindow.getAllWindows().find((w) => w.getTitle().startsWith(t))?.close(), project2.split('/').pop())
+await sleep(1500)
+check((await realWindows()) === 1, 'closing the second window leaves the first')
+check((await api('GET', `/api/agents/${card2}/output`)).status === 404, 'cards of the closed window are gone')
+check((await api('GET', '/api/agents', undefined, a)).json.agents.some((x) => x.id === a), 'first window keeps its cards')
+rmSync(project2, { recursive: true, force: true })
 
 await app.close()
 rmSync(claudeCfg, { recursive: true, force: true })

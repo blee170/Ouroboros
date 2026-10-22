@@ -112,6 +112,9 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         <button className="icon-btn nodrag" title="Chrome / Edge bookmarks" onClick={() => void openBookmarks()}>
           ★
         </button>
+        <button className="icon-btn nodrag" title="Open this page in your system browser (sites that refuse embedded sign-in)" onClick={() => void window.ouroboros.shell.openExternal(ref.current?.getURL() || address)}>
+          ↗
+        </button>
         <input
           className="address nodrag"
           value={address}

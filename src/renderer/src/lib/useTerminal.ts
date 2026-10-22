@@ -57,6 +57,33 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       if (id === nodeId) term.write(data)
     })
     const inputSub = term.onData((d) => api.pty.write(nodeId, d))
+    // Screenshots pasted or files dropped onto the card are saved/resolved and their path typed into
+    // the prompt (Claude Code reads image paths), so feedback screenshots can be handed to an agent.
+    const quote = (p: string): string => (/[\s"']/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)
+    const typePaths = (paths: string[]): void => {
+      if (paths.length) api.pty.write(nodeId, paths.map(quote).join(' ') + ' ')
+    }
+    const onPaste = (e: ClipboardEvent): void => {
+      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'))
+      if (!files.length) return
+      e.preventDefault()
+      e.stopPropagation()
+      void Promise.all(files.map(async (f) => api.files.saveImage(new Uint8Array(await f.arrayBuffer()), f.type.split('/')[1] || 'png'))).then(typePaths)
+    }
+    const onDrop = (e: DragEvent): void => {
+      const files = [...(e.dataTransfer?.files ?? [])]
+      if (!files.length) return
+      e.preventDefault()
+      e.stopPropagation()
+      typePaths(files.map((f) => api.files.pathFor(f)).filter(Boolean))
+      term.focus()
+    }
+    const onDragOver = (e: DragEvent): void => {
+      if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+    }
+    el.addEventListener('paste', onPaste, true)
+    el.addEventListener('drop', onDrop)
+    el.addEventListener('dragover', onDragOver)
     let resizeTimer: ReturnType<typeof setTimeout> | null = null
     const doFit = (): void => {
       try {
@@ -83,6 +110,9 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     setHandle(h)
     return () => {
       ro.disconnect()
+      el.removeEventListener('paste', onPaste, true)
+      el.removeEventListener('drop', onDrop)
+      el.removeEventListener('dragover', onDragOver)
       offData()
       inputSub.dispose()
       term.dispose()

@@ -14,6 +14,9 @@ export const IPC = {
   projectOpen: 'project:open',
   projectRecent: 'project:recent',
   dialogFolder: 'dialog:folder',
+  windowOpen: 'window:open',
+  shellOpenExternal: 'shell:openExternal',
+  filesSaveImage: 'files:saveImage',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   worktreeCreate: 'worktree:create',
@@ -157,6 +160,8 @@ export interface FolderInfo {
 export interface WorkspaceLoadResult {
   workspace: Workspace | null
   projectRoot: string
+  /** The folder is already open in another window (which was focused instead). */
+  alreadyOpen?: boolean
 }
 
 /** The API exposed to the renderer through contextBridge. */
@@ -205,6 +210,19 @@ export interface OuroborosApi {
   }
   app: {
     info(): Promise<AppInfo>
+  }
+  window: {
+    /** Open the project in a new window (or focus the window that has it); no folder = empty window. */
+    open(projectRoot?: string): Promise<void>
+  }
+  shell: {
+    openExternal(url: string): Promise<void>
+  }
+  files: {
+    /** Absolute path of a File dropped from the OS (empty for in-browser files). */
+    pathFor(file: File): string
+    /** Save pasted image bytes under the app's temp folder; returns the path. */
+    saveImage(bytes: Uint8Array, ext: string): Promise<string>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

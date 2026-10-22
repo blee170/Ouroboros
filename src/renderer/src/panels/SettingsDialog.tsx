@@ -48,6 +48,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <input type="checkbox" checked={settings.trackExternalSessions} onChange={(e) => void toggleExternal(e.target.checked)} /> Track Claude Code sessions started outside Ouroboros (writes a hook into your user settings)
         </label>
         <label className="row">
+          <input type="checkbox" checked={settings.claudeLinksExternal ?? true} onChange={(e) => void setSettings({ claudeLinksExternal: e.target.checked })} /> Open claude.ai briefs in your system browser (claude.ai blocks sign-in inside embedded browsers)
+        </label>
+        <label className="row">
           Browser home
           <input className="text" placeholder="https://www.google.com" defaultValue={settings.browserHome ?? ''} onBlur={(e) => void setSettings({ browserHome: e.target.value.trim() || undefined })} />
         </label>

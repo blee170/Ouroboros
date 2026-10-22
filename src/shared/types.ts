@@ -169,6 +169,8 @@ export interface AppSettings {
   githubTokenEnc?: string
   /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
   autoTidyMinutes?: number
+  /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default true. */
+  claudeLinksExternal?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

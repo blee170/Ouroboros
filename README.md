@@ -26,6 +26,8 @@ npm run dist:win            # ~2–5 min; produces release\Ouroboros-Setup-<vers
 - **Portable** (`Ouroboros-<version>-portable.exe`): a single exe you can keep anywhere and pin to the taskbar.
 - The build is unsigned, so the first launch shows SmartScreen: click *More info → Run anyway* once.
 - `Ouroboros.exe <folder>` opens that project directly (handy as a shortcut target).
+- **Several windows**: one window = one project folder. Open another folder with 📁 while a project is open (or ⧉, or `Ouroboros.exe <folder>`) and it gets its own window and board; a Conductor only sees and creates cards in its own window. Closing a window ends its cards; the last window hides to the tray if that option is on.
+- **Feedback screenshots**: paste an image (Ctrl+V) or drop files onto a card's terminal and the file path is typed into the prompt, so a Claude card can look at it.
 - **Updating**: Settings (⚙) → *Check for updates* downloads the latest GitHub Release and installs it on restart. Releases are built automatically by GitHub Actions when a `v*` tag is pushed. Because the repository is private, paste a fine-grained GitHub token (Contents: read on `blee170/Ouroboros`) into Settings once; it is stored encrypted.
 - Without a token (or to build locally), `git pull && npm run dist:win` and re-run the installer still works.
 

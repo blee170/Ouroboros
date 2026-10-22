@@ -1,10 +1,10 @@
-import { BrowserWindow, Notification, app, dialog, ipcMain } from 'electron'
-import { existsSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { BrowserWindow, Notification, app, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
-import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions } from '@shared/protocol'
+import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
-import type { AppSettings, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
+import type { AppSettings, HookEvent, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
@@ -22,13 +22,28 @@ import { listBookmarks } from './bookmarks'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
+import type { SessionRegistry } from './windows'
+
+/** One window: its BrowserWindow, its own Board and the API scoped to that board. */
+export interface WindowSession {
+  /** webContents id */
+  id: number
+  win: BrowserWindow
+  board: Board
+  /** Project folder this window opened with (command line / "open in new window"). */
+  initialProject?: string
+  api: ApiHandlers
+  fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
+  hasNode(nodeId: string): boolean
+  readonly projectRoot: string
+  /** Kill this window's processes and detach its listeners. */
+  dispose(): void
+}
 
 export interface MainContext {
-  /** Set by index.ts after createApiHandlers. */
-  api?: ApiHandlers
-  /** Set by installHandoffRunner; fires an edge now (manual = ignore cooldown). */
-  fireHandoff?: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
-  board: Board
+  windows: SessionRegistry<WindowSession>
+  /** Open (or focus) a window for a project folder; no folder = a fresh empty window. */
+  openProjectWindow(projectRoot?: string): WindowSession
   ptys: PtyManager
   hookServer: HookServer
   store: UserStore
@@ -36,30 +51,32 @@ export interface MainContext {
   updater: Updater
   tmpDir: string
   mcpScriptPath: string
-  getWindow(): BrowserWindow | null
 }
 
 const EDGE_COOLDOWN_MS = 8_000
 const EDGE_MAX_PER_WINDOW = 6
 const EDGE_WINDOW_MS = 5 * 60_000
 
-function sendToRenderer(ctx: MainContext, channel: string, payload: unknown): void {
-  const win = ctx.getWindow()
-  if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+function sendToRenderer(s: WindowSession | undefined, channel: string, payload: unknown): void {
+  if (s && !s.win.isDestroyed()) s.win.webContents.send(channel, payload)
+}
+
+function broadcast(ctx: MainContext, channel: string, payload: unknown): void {
+  for (const s of ctx.windows.all()) sendToRenderer(s, channel, payload)
 }
 
 const running = new Map<string, RunningCommand>()
 
 /** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
-export function sendPrompt(ctx: MainContext, nodeId: string, text: string): boolean {
+export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
-  const n = ctx.board.nodes.get(nodeId)
+  const n = s.board.nodes.get(nodeId)
   if (n?.data.kind === 'command') {
     if (running.has(nodeId)) return false // busy: one command at a time
     const shell = n.data.shell || ctx.store.getSettings().defaultShell || defaultShell()
     const { line, nonce } = buildCommandLine(n.data.commandTemplate || 'echo {{prompt}}', text, { shell, tmpDir: join(ctx.tmpDir, 'prompts'), nodeId })
     running.set(nodeId, { nonce, startedAt: Date.now(), buffer: '' })
-    ctx.board.setStatus(nodeId, { status: 'working', statusDetail: 'running command' })
+    s.board.setStatus(nodeId, { status: 'working', statusDetail: 'running command' })
     ctx.ptys.write(nodeId, line + '\r')
     return true
   }
@@ -69,7 +86,7 @@ export function sendPrompt(ctx: MainContext, nodeId: string, text: string): bool
 }
 
 /** Watch a command card's output for the completion sentinel; completion behaves like a Claude Stop. */
-function watchCommandOutput(ctx: MainContext, nodeId: string, data: string): void {
+function watchCommandOutput(s: WindowSession, nodeId: string, data: string): void {
   const r = running.get(nodeId)
   if (!r) return
   r.buffer += data
@@ -77,17 +94,17 @@ function watchCommandOutput(ctx: MainContext, nodeId: string, data: string): voi
   const out = extractCompleted(r.buffer, r.nonce)
   if (out === null) return
   running.delete(nodeId)
-  ctx.board.setStatus(nodeId, { status: 'done', statusDetail: `command finished (${Math.round((Date.now() - r.startedAt) / 1000)}s)`, lastAssistantMessage: out })
-  ctx.board.emit('stop', nodeId, out)
+  s.board.setStatus(nodeId, { status: 'done', statusDetail: `command finished (${Math.round((Date.now() - r.startedAt) / 1000)}s)`, lastAssistantMessage: out })
+  s.board.emit('stop', nodeId, out)
 }
 
 /** Create a handoff line in main and push it to the canvas. */
 export function createHandoffEdge(
-  ctx: MainContext,
+  s: WindowSession,
   input: { source: string; target: string; mode?: 'auto' | 'manual'; template?: string; condition?: string }
 ): { id: string } | { error: string } {
-  const src = ctx.board.nodes.get(input.source)
-  const dst = ctx.board.nodes.get(input.target)
+  const src = s.board.nodes.get(input.source)
+  const dst = s.board.nodes.get(input.target)
   if (!src || !dst) return { error: 'unknown source or target agent id' }
   if (input.source === input.target) return { error: 'source and target must differ' }
   if (src.data.kind === 'note' || src.data.kind === 'browser' || dst.data.kind === 'note' || dst.data.kind === 'browser') return { error: 'handoffs connect agent cards only' }
@@ -97,68 +114,80 @@ export function createHandoffEdge(
     target: input.target,
     data: { mode: input.mode === 'manual' ? 'manual' : 'auto', template: input.template?.trim() || DEFAULT_HANDOFF_TEMPLATE, condition: input.condition?.trim() || undefined }
   }
-  ctx.board.edges = [...ctx.board.edges.filter((e) => e.id !== edge.id), edge]
-  sendToRenderer(ctx, IPC.boardAddEdge, edge)
+  s.board.edges = [...s.board.edges.filter((e) => e.id !== edge.id), edge]
+  sendToRenderer(s, IPC.boardAddEdge, edge)
   return { id: edge.id }
 }
 
-export function createApiHandlers(ctx: MainContext): ApiHandlers {
+function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
+  ctx.ptys.kill(id)
+  s.board.setPtyAlive(id, false)
+  s.board.nodes.delete(id)
+  ctx.windows.unbindNode(id)
+  running.delete(id)
+  sendToRenderer(s, IPC.boardRemoveNode, id)
+}
+
+/** The JSON API (MCP server, tests) scoped to one window's board. */
+export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandlers {
+  const board = s.board
   const pendingPrompts = new Map<string, string>()
-  ctx.board.on('status', (p: AgentStatusPayload) => {
+  board.on('status', (p: AgentStatusPayload) => {
     const pending = pendingPrompts.get(p.nodeId)
     if (pending && p.status === 'idle') {
       pendingPrompts.delete(p.nodeId)
-      setTimeout(() => sendPrompt(ctx, p.nodeId, pending), 800)
+      setTimeout(() => sendPrompt(ctx, s, p.nodeId, pending), 800)
     }
   })
   return {
-    listAgents: () => ctx.board.snapshot(),
-    readOutput: (nodeId, lines) => (ctx.board.nodes.has(nodeId) ? tailLines(ctx.board.getOutput(nodeId), lines) : null),
-    sendPrompt: (nodeId, text) => sendPrompt(ctx, nodeId, text),
+    listAgents: () => board.snapshot(),
+    readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
+    sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
     setNote: (nodeId, note) => {
-      const n = ctx.board.nodes.get(nodeId)
+      const n = board.nodes.get(nodeId)
       if (!n || n.data.kind !== 'note') return false
       n.data.note = note
-      sendToRenderer(ctx, IPC.boardSetNote, { nodeId, note })
+      sendToRenderer(s, IPC.boardSetNote, { nodeId, note })
       return true
     },
     listHandoffs: () =>
-      ctx.board.edges.map((e) => ({
+      board.edges.map((e) => ({
         id: e.id,
         source: e.source,
-        sourceTitle: ctx.board.nodes.get(e.source)?.data.title,
+        sourceTitle: board.nodes.get(e.source)?.data.title,
         target: e.target,
-        targetTitle: ctx.board.nodes.get(e.target)?.data.title,
+        targetTitle: board.nodes.get(e.target)?.data.title,
         mode: e.data.mode,
         condition: e.data.condition,
         template: e.data.template,
         lastFiredAt: e.data.lastFiredAt
       })),
-    createHandoff: (input) => createHandoffEdge(ctx, input),
+    createHandoff: (input) => createHandoffEdge(s, input),
     removeHandoff: (id) => {
-      const before = ctx.board.edges.length
-      ctx.board.edges = ctx.board.edges.filter((e) => e.id !== id)
-      sendToRenderer(ctx, IPC.boardRemoveEdge, id)
-      return ctx.board.edges.length < before
+      const before = board.edges.length
+      board.edges = board.edges.filter((e) => e.id !== id)
+      sendToRenderer(s, IPC.boardRemoveEdge, id)
+      return board.edges.length < before
     },
-    fireHandoff: (id) => ctx.fireHandoff?.(id, true) ?? { ok: false, error: 'not ready' },
+    fireHandoff: (id) => s.fireHandoff(id, true),
     bookmarks: (query) => listBookmarks(query, 500),
     browser: {
       list: () =>
-        [...ctx.board.nodes.values()]
+        [...board.nodes.values()]
           .filter((n) => n.data.kind === 'browser')
           .map((n) => ({ id: n.id, title: n.data.title, url: n.data.url, ready: ctx.browsers.has(n.id) })),
       create: async (input) => {
         const id = nanoid(10)
-        const count = ctx.board.nodes.size
+        const count = board.nodes.size
         const node: WorkspaceNode = {
           id,
           position: { x: 80 + (count % 4) * 560, y: 80 + Math.floor(count / 4) * 420 },
           width: 640,
           height: 480,
-          data: { kind: 'browser', title: input.title || 'Browser', cwd: ctx.board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' }
+          data: { kind: 'browser', title: input.title || 'Browser', cwd: board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' }
         }
-        sendToRenderer(ctx, IPC.boardAddNode, node)
+        ctx.windows.bindNode(id, s.id)
+        sendToRenderer(s, IPC.boardAddNode, node)
         // wait (bounded) for the webview to register so the caller can act right away
         for (let i = 0; i < 40 && !ctx.browsers.has(id); i++) await new Promise((r) => setTimeout(r, 250))
         return { id }
@@ -172,7 +201,7 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
     },
     createAgent: async (input) => {
       const id = nanoid(10)
-      let cwd = input.cwd || ctx.board.projectRoot || app.getPath('home')
+      let cwd = input.cwd || board.projectRoot || app.getPath('home')
       const title = input.title || basename(cwd)
       let worktree: WorkspaceNode['data']['worktree']
       if (input.worktree) {
@@ -180,11 +209,11 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
         worktree = wt
         cwd = wt.path
       }
-      const count = ctx.board.nodes.size
+      const count = board.nodes.size
       // Guard: --continue in a folder where a conductor already lives would clone the conductor's own
       // conversation (and re-run whatever it was doing). Start fresh there instead.
       const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
-      const conductorHere = [...ctx.board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
+      const conductorHere = [...board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
       const wantContinue = Boolean(input.continue) && !conductorHere
       const claude: WorkspaceNode['data']['claude'] =
         input.kind === 'terminal' || input.kind === 'command'
@@ -204,44 +233,39 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
         data: {
           kind: input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude',
           title,
-          cwd: input.worktree ? input.cwd || ctx.board.projectRoot : cwd,
+          cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
           worktree,
           claude,
           commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined
         }
       }
       if (input.prompt) pendingPrompts.set(id, input.prompt)
-      sendToRenderer(ctx, IPC.boardAddNode, node)
+      ctx.windows.bindNode(id, s.id)
+      sendToRenderer(s, IPC.boardAddNode, node)
       // register in main right away so a report line can be attached before the renderer echoes the node
-      ctx.board.nodes.set(id, { id, data: { ...node.data } })
-      if (input.report_to && ctx.board.nodes.has(input.report_to)) {
-        createHandoffEdge(ctx, { source: id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
+      board.nodes.set(id, { id, data: { ...node.data } })
+      if (input.report_to && board.nodes.has(input.report_to)) {
+        createHandoffEdge(s, { source: id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
       }
       return { id, cwd, worktree: worktree?.path }
     },
     removeAgent: async (id) => {
-      if (!ctx.board.nodes.has(id)) return false
-      ctx.ptys.kill(id)
-      ctx.board.setPtyAlive(id, false)
-      ctx.board.nodes.delete(id)
-      sendToRenderer(ctx, IPC.boardRemoveNode, id)
+      if (!board.nodes.has(id)) return false
+      removeCard(ctx, s, id)
       return true
     },
     tidy: async (olderThanMinutes, dryRun) => {
       // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
       const protect = new Set<string>()
-      for (const e of ctx.board.edges) {
-        const src = ctx.board.nodes.get(e.source)
+      for (const e of board.edges) {
+        const src = board.nodes.get(e.source)
         if (src?.data.status === 'working') protect.add(e.target)
       }
-      const candidates = selectTidyCandidates(ctx.board.snapshot(), { olderThanMinutes, protect })
+      const candidates = selectTidyCandidates(board.snapshot(), { olderThanMinutes, protect })
       let removed = 0
       if (!dryRun) {
         for (const c of candidates) {
-          ctx.ptys.kill(c.id)
-          ctx.board.setPtyAlive(c.id, false)
-          ctx.board.nodes.delete(c.id)
-          sendToRenderer(ctx, IPC.boardRemoveNode, c.id)
+          removeCard(ctx, s, c.id)
           removed++
         }
       }
@@ -250,15 +274,15 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
     waitForAgents: (ids, statuses, timeoutMs) =>
       new Promise((resolve) => {
         const wanted = new Set(statuses)
-        const targets = ids.length ? ids : [...ctx.board.nodes.keys()].filter((k) => ctx.board.nodes.get(k)?.data.kind === 'claude')
+        const targets = ids.length ? ids : [...board.nodes.keys()].filter((k) => board.nodes.get(k)?.data.kind === 'claude')
         const done = (): Array<{ id: string; status: string; lastAssistantMessage?: string }> =>
           targets
-            .map((t) => ctx.board.nodes.get(t))
+            .map((t) => board.nodes.get(t))
             .filter((n): n is NonNullable<typeof n> => Boolean(n))
             .filter((n) => wanted.has(n.data.status ?? ''))
             .map((n) => ({ id: n.id, status: n.data.status ?? '', lastAssistantMessage: n.data.lastAssistantMessage }))
         const finish = (timedOut: boolean): void => {
-          ctx.board.off('status', onStatus)
+          board.off('status', onStatus)
           clearTimeout(timer)
           resolve({ timedOut, ready: done(), pending: targets.filter((t) => !done().some((d) => d.id === t)) })
         }
@@ -267,37 +291,36 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
         }
         const timer = setTimeout(() => finish(true), timeoutMs)
         if (done().length > 0) return finish(false)
-        ctx.board.on('status', onStatus)
+        board.on('status', onStatus)
       })
   }
 }
 
-function notifyNeedsYou(ctx: MainContext, p: AgentStatusPayload): void {
+function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayload): void {
   const settings = ctx.store.getSettings()
   if (!settings.notifications) return
-  const n = ctx.board.nodes.get(p.nodeId)
+  const n = s.board.nodes.get(p.nodeId)
   const title = n?.data.title ?? p.nodeId
   if (Notification.isSupported()) {
     const note = new Notification({ title: `${title} needs you`, body: p.statusDetail ?? 'Waiting for your input' })
     note.on('click', () => {
-      const win = ctx.getWindow()
-      if (win) {
-        win.show()
-        win.focus()
+      if (!s.win.isDestroyed()) {
+        s.win.show()
+        s.win.focus()
       }
     })
     note.show()
   }
-  const win = ctx.getWindow()
-  if (win && !win.isFocused()) win.flashFrame(true)
+  if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
 }
 
-function installHandoffRunner(ctx: MainContext): void {
-  const api = ctx.api!
+/** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
+function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession['fireHandoff'] {
+  const board = s.board
   const fired = new Map<string, number[]>()
   const fire = (edge: WorkspaceEdge, message: string, manual: boolean): { ok: boolean; error?: string } => {
-    const src = ctx.board.nodes.get(edge.source)
-    const dst = ctx.board.nodes.get(edge.target)
+    const src = board.nodes.get(edge.source)
+    const dst = board.nodes.get(edge.target)
     if (!src || !dst) return { ok: false, error: 'edge endpoints missing' }
     if (!manual) {
       const now = Date.now()
@@ -313,67 +336,129 @@ function installHandoffRunner(ctx: MainContext): void {
       source_cwd: src.data.cwd,
       target_title: dst.data.title
     })
-    if (!sendPrompt(ctx, edge.target, prompt)) return { ok: false, error: 'target terminal is not running' }
+    if (!sendPrompt(ctx, s, edge.target, prompt)) return { ok: false, error: 'target terminal is not running' }
     edge.data.lastFiredAt = Date.now()
     const payload: HandoffFiredPayload = { edgeId: edge.id, sourceId: edge.source, targetId: edge.target, prompt, at: edge.data.lastFiredAt }
-    sendToRenderer(ctx, IPC.handoffFired, payload)
+    sendToRenderer(s, IPC.handoffFired, payload)
     return { ok: true }
   }
-  ctx.board.on('stop', (nodeId: string, message: string) => {
-    for (const edge of selectHandoffs(ctx.board.edges, nodeId, message)) fire(edge, message, false)
+  board.on('stop', (nodeId: string, message: string) => {
+    for (const edge of selectHandoffs(board.edges, nodeId, message)) fire(edge, message, false)
   })
   // A reply that publishes something for the owner (claude.ai artifact or any https URL in a conductor's reply)
   // is opened in a "📄 Briefs" browser card so it can be read on the canvas.
   const lastOpened = new Map<string, number>()
-  ctx.board.on('stop', (nodeId: string, message: string) => {
-    const src = ctx.board.nodes.get(nodeId)
+  board.on('stop', (nodeId: string, message: string) => {
+    const src = board.nodes.get(nodeId)
     if (!src || src.data.kind !== 'conductor') return
     const m = /https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9_\-/.]+|https?:\/\/[^\s)>\]"'`]+/.exec(message)
     if (!m) return
     const url = m[0].replace(/[.,;:!?]+$/, '')
     if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
     lastOpened.set(url, Date.now())
+    // claude.ai refuses sign-in inside embedded browsers (Google OAuth + bot check), so by default
+    // its links go to the system browser where the owner is already signed in.
+    if (/^https:\/\/claude\.ai\//.test(url) && (ctx.store.getSettings().claudeLinksExternal ?? true)) {
+      void shell.openExternal(url)
+      return
+    }
     void (async () => {
-      const existing = [...ctx.board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
+      const existing = [...board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
       if (existing && ctx.browsers.has(existing.id)) {
         await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
       } else {
-        await api.browser.create({ url, title: '📄 Briefs' })
+        await s.api.browser.create({ url, title: '📄 Briefs' })
       }
     })()
   })
 
   // A card that needs a human (permission prompt, question) tells every conductor it reports to.
   const noticed = new Map<string, number>()
-  ctx.board.on('status', (p: AgentStatusPayload) => {
+  board.on('status', (p: AgentStatusPayload) => {
     if (p.status !== 'needs-you') return
     const now = Date.now()
     if (now - (noticed.get(p.nodeId) ?? 0) < 60_000) return
-    const src = ctx.board.nodes.get(p.nodeId)
-    for (const edge of ctx.board.edges) {
+    const src = board.nodes.get(p.nodeId)
+    for (const edge of board.edges) {
       if (edge.source !== p.nodeId || edge.data.mode !== 'auto') continue
-      const dst = ctx.board.nodes.get(edge.target)
+      const dst = board.nodes.get(edge.target)
       if (!dst || dst.data.kind !== 'conductor') continue
       noticed.set(p.nodeId, now)
-      sendPrompt(ctx, edge.target, `[${src?.data.title ?? p.nodeId} needs input] ${p.statusDetail ?? 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
+      sendPrompt(ctx, s, edge.target, `[${src?.data.title ?? p.nodeId} needs input] ${p.statusDetail ?? 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
     }
   })
-  ctx.fireHandoff = (edgeId, manual) => {
-    const edge = ctx.board.edges.find((e) => e.id === edgeId)
+  return (edgeId, manual) => {
+    const edge = board.edges.find((e) => e.id === edgeId)
     if (!edge) return { ok: false, error: 'unknown edge' }
-    const src = ctx.board.nodes.get(edge.source)
+    const src = board.nodes.get(edge.source)
     return fire(edge, src?.data.lastAssistantMessage ?? '', manual)
   }
-  ipcMain.handle(IPC.handoffFire, (_e, edgeId: string) => ctx.fireHandoff!(edgeId, true))
 }
 
+/**
+ * Build the per-window session: board listeners, scoped API and handoff runner.
+ * Called by index.ts for every new window; `dispose` is run when the window closes.
+ */
+export function createSession(ctx: MainContext, win: BrowserWindow, board: Board, initialProject?: string): WindowSession {
+  const s: WindowSession = {
+    id: win.webContents.id,
+    win,
+    board,
+    initialProject,
+    api: null as unknown as ApiHandlers,
+    fireHandoff: () => ({ ok: false, error: 'not ready' }),
+    hasNode: (nodeId) => board.nodes.has(nodeId),
+    get projectRoot() {
+      return board.projectRoot
+    },
+    dispose() {
+      for (const id of board.nodes.keys()) {
+        ctx.ptys.kill(id)
+        ctx.browsers.unregister(id)
+        running.delete(id)
+      }
+      board.removeAllListeners()
+    }
+  }
+  s.api = createApiHandlers(ctx, s)
+  s.fireHandoff = installHandoffRunner(ctx, s)
+  board.on('status', (p: AgentStatusPayload) => {
+    sendToRenderer(s, IPC.agentStatus, p)
+    if (p.status === 'needs-you') notifyNeedsYou(ctx, s, p)
+  })
+  board.on('hook', (p) => sendToRenderer(s, IPC.hookEvent, p))
+  board.on('external', (p) => sendToRenderer(s, IPC.externalSession, p))
+  return s
+}
+
+/** Route a Claude Code hook for a card to the window that owns it. */
+export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): void {
+  ctx.windows.forNode(nodeId)?.board.applyHook(nodeId, event)
+}
+
+/** Global (external) hook: ignore sessions any window launched; show the card in the window whose project contains its cwd. */
+export function routeExternalHook(ctx: MainContext, event: HookEvent): void {
+  const sessionId = typeof event.session_id === 'string' ? event.session_id : undefined
+  if (!sessionId) return
+  if (ctx.windows.all().some((s) => s.board.nodeForSession(sessionId))) return
+  const cwd = typeof event.cwd === 'string' ? event.cwd : ''
+  const known = ctx.windows.all().find((s) => s.board.externalSessions.has(sessionId))
+  const target = known ?? (cwd ? ctx.windows.forCwd(cwd) : undefined) ?? ctx.windows.current()
+  target?.board.applyExternalHook(event)
+}
+
+/** Process-wide IPC handlers; each one resolves the calling window's session from the sender. */
 export function registerIpc(ctx: MainContext): void {
-  const { board, ptys, hookServer, store } = ctx
+  const { ptys, hookServer, store } = ctx
+  const sessionOf = (e: IpcMainInvokeEvent | IpcMainEvent): WindowSession | undefined => ctx.windows.get(e.sender.id)
 
   ptys.on('data', (nodeId: string, data: string) => {
+    const s = ctx.windows.forNode(nodeId)
+    if (!s) return
+    const board = s.board
     board.appendOutput(nodeId, data)
-    sendToRenderer(ctx, IPC.ptyData, { nodeId, data })
-    watchCommandOutput(ctx, nodeId, data)
+    sendToRenderer(s, IPC.ptyData, { nodeId, data })
+    watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
     if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting' && detectClaudeReady(data)) {
       board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
@@ -381,23 +466,21 @@ export function registerIpc(ctx: MainContext): void {
   })
   ptys.on('exit', (nodeId: string, code: number) => {
     running.delete(nodeId)
-    board.setPtyAlive(nodeId, false)
-    if (board.nodes.has(nodeId)) board.setStatus(nodeId, { status: 'ended', statusDetail: `exited (${code})` })
-    sendToRenderer(ctx, IPC.ptyExit, { nodeId, code })
+    const s = ctx.windows.forNode(nodeId)
+    if (!s) return
+    s.board.setPtyAlive(nodeId, false)
+    if (s.board.nodes.has(nodeId)) s.board.setStatus(nodeId, { status: 'ended', statusDetail: `exited (${code})` })
+    sendToRenderer(s, IPC.ptyExit, { nodeId, code })
   })
-  board.on('status', (p: AgentStatusPayload) => {
-    sendToRenderer(ctx, IPC.agentStatus, p)
-    if (p.status === 'needs-you') notifyNeedsYou(ctx, p)
-  })
-  board.on('hook', (p) => sendToRenderer(ctx, IPC.hookEvent, p))
-  board.on('external', (p) => sendToRenderer(ctx, IPC.externalSession, p))
-  installHandoffRunner(ctx)
 
-  ipcMain.handle(IPC.ptySpawn, (_e, opts: PtySpawnOptions) => {
+  ipcMain.handle(IPC.ptySpawn, (e, opts: PtySpawnOptions) => {
+    const s = sessionOf(e)
+    if (!s) return { ok: false, error: 'no window' }
     try {
+      ctx.windows.bindNode(opts.nodeId, s.id)
       ptys.spawn(opts)
-      board.setPtyAlive(opts.nodeId, true)
-      board.setStatus(opts.nodeId, { status: 'idle', statusDetail: 'shell' })
+      s.board.setPtyAlive(opts.nodeId, true)
+      s.board.setStatus(opts.nodeId, { status: 'idle', statusDetail: 'shell' })
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -405,12 +488,14 @@ export function registerIpc(ctx: MainContext): void {
   })
   ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => void ptys.write(nodeId, data))
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
-  ipcMain.handle(IPC.ptyKill, (_e, nodeId: string) => {
+  ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
     ptys.kill(nodeId)
-    board.setPtyAlive(nodeId, false)
+    sessionOf(e)?.board.setPtyAlive(nodeId, false)
   })
 
-  ipcMain.handle(IPC.claudeLaunch, (_e, opts: ClaudeLaunchOptions) => {
+  ipcMain.handle(IPC.claudeLaunch, (e, opts: ClaudeLaunchOptions) => {
+    const s = sessionOf(e)
+    if (!s) return { ok: false, error: 'no window' }
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const prepared = prepareLaunch({
@@ -426,36 +511,62 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         title: opts.title
       })
+      ctx.windows.bindNode(opts.nodeId, s.id)
       ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command })
-      board.setPtyAlive(opts.nodeId, true)
-      board.setStatus(opts.nodeId, { status: 'starting', statusDetail: 'launching claude' })
+      s.board.setPtyAlive(opts.nodeId, true)
+      s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: 'launching claude' })
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
   })
 
-  ipcMain.on(IPC.boardSync, (_e, payload: BoardSyncPayload) => board.sync(payload))
-  ipcMain.handle(IPC.agentsList, () => board.snapshot())
+  ipcMain.on(IPC.boardSync, (e, payload: BoardSyncPayload) => sessionOf(e)?.board.sync(payload))
+  ipcMain.handle(IPC.agentsList, (e) => sessionOf(e)?.board.snapshot() ?? [])
+  ipcMain.handle(IPC.handoffFire, (e, edgeId: string) => sessionOf(e)?.fireHandoff(edgeId, true) ?? { ok: false, error: 'no window' })
 
-  ipcMain.handle(IPC.workspaceLoad, (_e, projectRoot: string) => {
+  ipcMain.handle(IPC.workspaceLoad, (e, projectRoot: string): WorkspaceLoadResult => {
+    const s = sessionOf(e)
+    // The same folder in two windows would fight over .ouroboros.json: focus the window that has it.
+    const other = ctx.windows.forProject(projectRoot)
+    if (other && other !== s) {
+      other.win.show()
+      other.win.focus()
+      return { workspace: null, projectRoot, alreadyOpen: true }
+    }
+    if (s) s.board.projectRoot = projectRoot
     store.pushRecent(projectRoot)
     return { workspace: loadWorkspace(projectRoot), projectRoot }
   })
   ipcMain.handle(IPC.workspaceSave, (_e, ws: Workspace) => saveWorkspace(ws))
-  ipcMain.handle(IPC.projectOpen, async () => {
-    const win = ctx.getWindow()
+  ipcMain.handle(IPC.projectOpen, async (e) => {
+    const win = sessionOf(e)?.win
     const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Open project folder' }
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (r.canceled || !r.filePaths[0]) return null
     return r.filePaths[0]
   })
   ipcMain.handle(IPC.projectRecent, () => store.getRecent())
-  ipcMain.handle(IPC.dialogFolder, async () => {
-    const win = ctx.getWindow()
+  ipcMain.handle(IPC.dialogFolder, async (e) => {
+    const win = sessionOf(e)?.win
     const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'] }
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     return r.canceled ? null : (r.filePaths[0] ?? null)
+  })
+  ipcMain.handle(IPC.windowOpen, (_e, projectRoot?: string) => {
+    ctx.openProjectWindow(projectRoot || undefined)
+  })
+  ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => {
+    const dir = join(ctx.tmpDir, 'pasted')
+    mkdirSync(dir, { recursive: true })
+    const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase().replace('jpeg', 'jpg') : 'png'
+    const file = join(dir, `paste-${new Date().toISOString().replace(/[:.]/g, '-')}-${nanoid(4)}.${safeExt}`)
+    writeFileSync(file, Buffer.from(bytes))
+    return file
+  })
+  ipcMain.handle(IPC.shellOpenExternal, (_e, url: string) => {
+    if (/^https?:\/\//.test(url)) return shell.openExternal(url)
+    return undefined
   })
 
   ipcMain.handle(IPC.settingsGet, () => store.getSettings())
@@ -488,18 +599,22 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
 
-  ipcMain.on(IPC.browserRegister, (_e, nodeId: string, wcId: number) => ctx.browsers.register(nodeId, wcId))
+  ipcMain.on(IPC.browserRegister, (e, nodeId: string, wcId: number) => {
+    const s = sessionOf(e)
+    if (s) ctx.windows.bindNode(nodeId, s.id)
+    ctx.browsers.register(nodeId, wcId)
+  })
   ipcMain.on(IPC.browserUnregister, (_e, nodeId: string) => ctx.browsers.unregister(nodeId))
 
   ipcMain.handle(IPC.historyList, (_e, rootFilter?: string) => listClaudeSessions(undefined, { rootFilter: rootFilter || undefined }))
   ipcMain.handle(IPC.foldersList, (_e, root: string) => listSubfolders(root))
 
-  ipcMain.handle(IPC.appInfo, () => ({
+  ipcMain.handle(IPC.appInfo, (e) => ({
     platform: process.platform,
     version: app.getVersion(),
     hookPort: hookServer.port,
     userData: app.getPath('userData'),
-    initialProject: initialProjectArg(),
+    initialProject: sessionOf(e)?.initialProject,
     mcpRunner: findNodeBinary() ?? `${process.execPath} (ELECTRON_RUN_AS_NODE)`,
     mcpScript: ctx.mcpScriptPath,
     hasUpdateToken: Boolean(decryptToken(store.getSettings().githubTokenEnc)),
@@ -507,19 +622,20 @@ export function registerIpc(ctx: MainContext): void {
   }))
 
   ipcMain.handle(IPC.bookmarksList, (_e, query?: string) => listBookmarks(query))
-  ipcMain.handle(IPC.tidyCandidates, async (_e, minutes: number) => (await ctx.api!.tidy(minutes, true)).candidates)
-  ipcMain.handle(IPC.tidyApply, async (_e, ids: string[]) => {
+  ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number) => (await sessionOf(e)?.api.tidy(minutes, true))?.candidates ?? [])
+  ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
+    const s = sessionOf(e)
     let removed = 0
-    for (const id of ids) if (await ctx.api!.removeAgent(id)) removed++
+    if (s) for (const id of ids) if (await s.api.removeAgent(id)) removed++
     return { removed }
   })
-  // optional auto-tidy
+  // optional auto-tidy, every window
   setInterval(() => {
     const minutes = store.getSettings().autoTidyMinutes ?? 0
-    if (minutes > 0) void ctx.api!.tidy(minutes, false)
+    if (minutes > 0) for (const s of ctx.windows.all()) void s.api.tidy(minutes, false)
   }, 60_000)
 
-  ctx.updater.on('status', (st) => sendToRenderer(ctx, IPC.updateStatus, st))
+  ctx.updater.on('status', (st) => broadcast(ctx, IPC.updateStatus, st))
   ipcMain.handle(IPC.updateCheck, () => ctx.updater.check())
   ipcMain.handle(IPC.updateDownload, () => ctx.updater.download())
   ipcMain.handle(IPC.updateInstall, () => ctx.updater.install())
@@ -530,14 +646,21 @@ export function registerIpc(ctx: MainContext): void {
   })
 }
 
+/** A project folder from a command line (`Ouroboros.exe <folder>`), resolved against `cwd`. */
+export function projectFromArgv(argv: string[], cwd: string, packaged: boolean): string | undefined {
+  const args = argv.slice(packaged ? 1 : 2).filter((a) => !a.startsWith('-'))
+  const candidate = args[args.length - 1]
+  if (!candidate) return undefined
+  const full = isAbsolute(candidate) ? candidate : resolve(cwd, candidate)
+  if (existsSync(full) && statSync(full).isDirectory()) return full
+  return undefined
+}
+
 /** `Ouroboros.exe <folder>` or OUROBOROS_PROJECT=<folder> opens that project on start. */
 export function initialProjectArg(): string | undefined {
   const fromEnv = process.env.OUROBOROS_PROJECT
   if (fromEnv && existsSync(fromEnv)) return fromEnv
-  const args = process.argv.slice(app.isPackaged ? 1 : 2).filter((a) => !a.startsWith('-'))
-  const candidate = args[args.length - 1]
-  if (candidate && existsSync(candidate) && statSync(candidate).isDirectory()) return candidate
-  return undefined
+  return projectFromArgv(process.argv, process.cwd(), app.isPackaged)
 }
 
 export function resolveMcpScriptPath(): string {

@@ -107,7 +107,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   async openProject(root) {
-    const { workspace } = await api().workspace.load(root)
+    const { workspace, alreadyOpen } = await api().workspace.load(root)
+    if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
     set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null })

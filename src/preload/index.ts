@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC, type OuroborosApi } from '@shared/protocol'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -52,6 +52,22 @@ const api: OuroborosApi = {
   },
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo)
+  },
+  window: {
+    open: (projectRoot) => ipcRenderer.invoke(IPC.windowOpen, projectRoot)
+  },
+  shell: {
+    openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url)
+  },
+  files: {
+    pathFor: (file) => {
+      try {
+        return webUtils.getPathForFile(file)
+      } catch {
+        return ''
+      }
+    },
+    saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext)
   },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)

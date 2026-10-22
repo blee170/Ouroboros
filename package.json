@@ -1,7 +1,7 @@
 {
   "name": "ouroboros",
   "productName": "Ouroboros",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Personal infinite-canvas cockpit for running and conducting multiple Claude Code sessions on Windows",
   "main": "./out/main/index.js",
   "author": "blee170",

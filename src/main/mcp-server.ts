@@ -152,6 +152,49 @@ server.registerTool(
 )
 
 server.registerTool(
+  'create_checkpoint',
+  {
+    title: "Git snapshot of a card's folder",
+    description:
+      "Take a git snapshot of the card's folder (its worktree if it has one): every non-gitignored file, committed or not. Changes nothing on disk. Take one before a risky stage (Implement, Bug fix, anything that edits files) so the stage can be rolled back with restore_checkpoint. label: a short name for the stage.",
+    inputSchema: { agent_id: z.string(), label: z.string().optional() }
+  },
+  async ({ agent_id, label }) => text(await api('POST', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints`, { label }))
+)
+
+server.registerTool(
+  'list_checkpoints',
+  {
+    title: "Git snapshots of a card's folder",
+    description: "The snapshots taken in the card's folder, newest first. headMoved=true means commits were made since that snapshot: restoring it needs move_head.",
+    inputSchema: { agent_id: z.string() }
+  },
+  async ({ agent_id }) => text(await api('GET', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints`))
+)
+
+server.registerTool(
+  'restore_checkpoint',
+  {
+    title: 'Restore a git snapshot',
+    description:
+      "Put the card's folder back exactly as it was in the snapshot (gitignored files and the board file are left alone). The current state is saved first as a \"before restore\" snapshot, so a restore can be undone. Refused while a card is working in that folder, and when HEAD moved since the snapshot unless move_head=true, which also moves the branch back to the commit of that time — destructive git: propose it and wait for APPROVED BY OWNER.",
+    inputSchema: { agent_id: z.string(), checkpoint_id: z.string(), move_head: z.boolean().optional() }
+  },
+  async ({ agent_id, checkpoint_id, move_head }) =>
+    text(await api('POST', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints/${encodeURIComponent(checkpoint_id)}/restore`, { move_head: Boolean(move_head) }))
+)
+
+server.registerTool(
+  'delete_checkpoint',
+  {
+    title: 'Delete a git snapshot',
+    description: 'Forget a snapshot of the card\'s folder (its ref is removed; git keeps the objects until it prunes them).',
+    inputSchema: { agent_id: z.string(), checkpoint_id: z.string() }
+  },
+  async ({ agent_id, checkpoint_id }) => text(await api('DELETE', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints/${encodeURIComponent(checkpoint_id)}`))
+)
+
+server.registerTool(
   'wait_for_agents',
   {
     title: 'Wait until agents finish',

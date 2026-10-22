@@ -56,12 +56,13 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Cards** | Real PTY terminals (PowerShell / cmd / Git Bash / WSL / any shell) or agent sessions on an infinite canvas with zoom, minimap, Ctrl+1…9 jumps, Ctrl+F search. |
 | **Status** | Starting / Idle / Working / Needs you / Done / Ended per card, with desktop toasts and taskbar flashing when a card needs a human. |
 | **Lines** | Drag port to port. Auto (fires on the source's finished reply) or manual (▶). Template with `{{last_assistant_message}}`, `{{source_title}}`, … Condition as substring or `/regex/`. 8 s cooldown, max 6 fires / 5 min per line. A line flashes when it fires and glows while the card it feeds is working on that handoff. |
-| **Conductor** | A card with the board MCP server: `list_agents`, `read_output`, `send_prompt`, `create_agent`, `remove_agent`, `wait_for_agents`, `connect_agents` / `fire_handoff` / `remove_handoff`, `set_note`, `tidy_board`, `get_changes`, `set_board_tools`, `browser_*`. Ships with an operating procedure (intake → setup → run → report), a default pipeline and human gates (`APPROVED BY OWNER`). |
+| **Conductor** | A card with the board MCP server: `list_agents`, `read_output`, `send_prompt`, `create_agent`, `remove_agent`, `wait_for_agents`, `connect_agents` / `fire_handoff` / `remove_handoff`, `set_note`, `tidy_board`, `get_changes`, `create_checkpoint` / `restore_checkpoint`, `set_board_tools`, `browser_*`. Ships with an operating procedure (intake → setup → run → report), a default pipeline and human gates (`APPROVED BY OWNER`). |
 | **Engines** | Each agent card runs **Claude Code** (default), **OpenAI Codex CLI** or **Gemini CLI**. Same status, lines, reports and board tools for all three. |
 | **Team leads** | `create_agent board_tools=true` / `set_board_tools` give a worker the same tools so it runs its own sub-cards. |
 | **Reports** | Every card the Conductor creates gets an automatic report line back; "needs input" notices are relayed too. |
 | **Build board** | Scans a root folder and your Claude Code history and generates Conductor + Implementer / Tester / Reviewer / Ops cards, lines and a pipeline note. |
 | **Changes** | `+n −m` badge per card (uncommitted git changes in its folder or worktree), per-file diff, revert, "ask the card to review its diff". |
+| **Checkpoints** | Git snapshots of a card's folder (every non-gitignored file, committed or not; taking one changes nothing on disk), from the Inspector or the Conductor's `create_checkpoint` before a risky stage. Restore puts the files back and saves a "before restore" snapshot first, so it can be undone. |
 | **Context meter** | Claude cards show how full their context window is (read from the session transcript); orange past 70 %. |
 | **Browser cards** | Chromium inside the canvas with a shared persistent profile; agents drive it via `browser_*` tools; ★ Chrome/Edge bookmarks; ↗ to the system browser. claude.ai briefs published by the Conductor open in your system browser by default. |
 | **Command cards** | Any CLI as a card (`aside exec {{prompt}}`, `codex exec {{prompt}}` …): its output is its reply, so lines work the same. |
@@ -137,7 +138,7 @@ A Conductor is a Claude (or Codex / Gemini) card launched with the board MCP ser
 - set up first (reuse idle cards, create the missing ones with role prompts and markers, draw lines, write a Pipeline note), then run, then report in five lines;
 - markers every worker must end with: `RESULT:`, `SCORE: n/10`, `ISSUES:`, `PASS` / `FAIL`, `APPROVED` / `CHANGES REQUESTED`, `SAFE TO DEPLOY` / `BLOCKED`;
 - human gates: production deploys, destructive git, spending money, messages outside the machine — proposed, never done, unless the owner replies `APPROVED BY OWNER`;
-- `get_changes` to review a worker's diff before accepting it; `tidy_board` to keep the board readable.
+- `get_changes` to review a worker's diff before accepting it; `create_checkpoint` before a stage that edits files and `restore_checkpoint` when it fails review (undoable; moving the branch back with `move_head` is a human gate); `tidy_board` to keep the board readable.
 
 Any plain Claude card can get the same tools with *Board & browser tools* in the Inspector; the Conductor can grant them with `set_board_tools` (team leads).
 
@@ -242,6 +243,7 @@ src/main/        Electron main process
   mcp-server.ts    the board MCP server (bundled standalone)
   pty-manager.ts   node-pty wrapper
   git-changes.ts   status / diff / revert for the Changes panel and get_changes
+  checkpoints.ts   git snapshots of a folder (create / list / restore / delete) for the Inspector and the *_checkpoint tools; git.ts runs git for both
   claude-history.ts  reads ~/.claude transcripts (sessions list, context usage)
   bookmarks.ts, browser-manager.ts, command-runner.ts, updater.ts, worktree.ts, workspace-store.ts, windows.ts
 src/preload/     contextBridge (window.ouroboros)
@@ -272,7 +274,8 @@ Bump `version` in `package.json` and push. `.github/workflows/release.yml` creat
 - Windows is the target; Linux builds are for tests; macOS untested.
 - Unsigned binaries (SmartScreen warning on first run).
 - Codex: no "needs approval" signal; readiness is inferred from output.
-- Not yet: checkpoints (git snapshots before risky stages), Discord/Telegram bot cards that feed messenger feedback into the Conductor, scheduled runs, PR monitoring.
+- Checkpoints restore files, not staging state (everything comes back unstaged); their snapshot commits show up in `git log --all`.
+- Not yet: Discord/Telegram bot cards that feed messenger feedback into the Conductor, scheduled runs, PR monitoring.
 
 ## License
 
@@ -292,7 +295,7 @@ MIT — see `LICENSE`.
 1. 프로젝트 폴더 열기 → 캔버스 우클릭으로 카드 추가.
 2. 카드 오른쪽 포트에서 다른 카드 왼쪽 포트로 드래그하면 선. 인스펙터에서 자동/수동, 조건(`SCORE: 9/10`, `PASS`, `/정규식/`), 템플릿 편집.
 3. 총괄 카드를 하나 두고 목표를 말하면 필요한 카드와 선을 스스로 만들고 돌린 뒤 5줄로 보고합니다. 배포·파괴적 git·돈 쓰는 일은 `APPROVED BY OWNER`라고 답할 때까지 제안만 합니다.
-4. 카드의 `+n −m` 배지로 변경 내용(diff)을 검토하고, 로스터에서 "Needs you"를 먼저 처리합니다.
+4. 카드의 `+n −m` 배지로 변경 내용(diff)을 검토하고, 로스터에서 "Needs you"를 먼저 처리합니다. 위험한 단계 전에는 인스펙터의 체크포인트(git 스냅샷)를 찍어 두면 잘못됐을 때 되돌릴 수 있습니다(되돌리기 자체도 취소 가능). 총괄은 이걸 스스로 합니다.
 
 **작동 원리 요약**: 카드마다 CLI를 실제 터미널(PTY)에서 실행하고, CLI의 라이프사이클 훅(HTTP, 127.0.0.1)으로 상태를 받습니다. 선은 원본 카드의 답이 끝나는 순간 템플릿을 대상 카드에 타이핑합니다. 총괄은 앱이 제공하는 MCP 서버(`list_agents`, `create_agent`, `connect_agents`, `get_changes` …)로 보드를 조작합니다. 자세한 내용은 위 영문 [How it works](#how-it-works).
 

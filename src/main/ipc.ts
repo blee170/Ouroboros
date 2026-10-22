@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
-import { normalizeEngine, type AppSettings, type HookEvent, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
+import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
@@ -26,7 +26,8 @@ import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
-import type { SessionRegistry } from './windows'
+import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
+import { normalizePath, type SessionRegistry } from './windows'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -150,6 +151,23 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.windows.unbindNode(id)
   running.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
+}
+
+/** The folder a card's git operations apply to: its worktree, else its cwd, else the project. */
+function folderOf(board: Board, n: { data: NodeData }): string {
+  return n.data.worktree?.path || n.data.cwd || board.projectRoot
+}
+
+/** A card still editing `folder` (or a folder inside / around it). Conductors and team leads only orchestrate, so they do not count. */
+function workingCardIn(board: Board, folder: string): { id: string; data: NodeData } | undefined {
+  const f = normalizePath(folder)
+  for (const o of board.nodes.values()) {
+    const d = o.data
+    if (d.status !== 'working' || d.kind === 'conductor' || d.kind === 'note' || d.kind === 'browser' || d.claude?.boardTools) continue
+    const g = normalizePath(folderOf(board, o))
+    if (g === f || g.startsWith(f + '/') || f.startsWith(g + '/')) return o
+  }
+  return undefined
 }
 
 /** The JSON API (MCP server, tests) scoped to one window's board. */
@@ -300,10 +318,36 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     changes: async (id, opts) => {
       const n = board.nodes.get(id)
       if (!n) return null
-      const cwd = n.data.worktree?.path || n.data.cwd || board.projectRoot
+      const cwd = folderOf(board, n)
       const summary = await getChanges(cwd)
       const diff = summary.repo && (opts.diff || opts.file) ? await getDiff(cwd, opts.file, 120_000) : undefined
       return { cwd, ...summary, diff }
+    },
+    listCheckpoints: async (id) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      return { folder, ...(await listCheckpoints(folder)) }
+    },
+    createCheckpoint: async (id, label) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      return { folder, ...(await createCheckpoint(folder, { label, cardId: id })) }
+    },
+    restoreCheckpoint: async (id, checkpointId, moveHead) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      const busy = workingCardIn(board, folder)
+      if (busy) return { folder, ok: false, error: `card "${busy.data.title}" (${busy.id}) is working in that folder; wait for it or stop it first` }
+      return { folder, ...(await restoreCheckpoint(folder, checkpointId, { moveHead, cardId: id })) }
+    },
+    deleteCheckpoint: async (id, checkpointId) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      return { folder, ...(await deleteCheckpoint(folder, checkpointId)) }
     },
     tidy: async (olderThanMinutes, dryRun) => {
       // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
@@ -708,6 +752,15 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.bookmarksList, (_e, query?: string) => listBookmarks(query))
   ipcMain.handle(IPC.changesSummary, (_e, cwd: string) => getChanges(cwd))
   ipcMain.handle(IPC.changesDiff, (_e, cwd: string, file?: string) => getDiff(cwd, file))
+  ipcMain.handle(IPC.checkpointsList, (_e, cwd: string) => listCheckpoints(cwd))
+  ipcMain.handle(IPC.checkpointsCreate, (_e, cwd: string, label?: string) => createCheckpoint(cwd, { label }))
+  ipcMain.handle(IPC.checkpointsRestore, (e, cwd: string, id: string, moveHead?: boolean) => {
+    const board = sessionOf(e)?.board
+    const busy = board && workingCardIn(board, cwd)
+    if (busy) return { ok: false, error: `card "${busy.data.title}" is working in that folder; wait for it or stop it first` }
+    return restoreCheckpoint(cwd, id, { moveHead: Boolean(moveHead) })
+  })
+  ipcMain.handle(IPC.checkpointsDelete, (_e, cwd: string, id: string) => deleteCheckpoint(cwd, id))
   ipcMain.handle(IPC.changesRevert, async (_e, cwd: string, file: string) => {
     try {
       await revertFile(cwd, file)

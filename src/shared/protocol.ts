@@ -20,6 +20,10 @@ export const IPC = {
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
+  checkpointsList: 'checkpoints:list',
+  checkpointsCreate: 'checkpoints:create',
+  checkpointsRestore: 'checkpoints:restore',
+  checkpointsDelete: 'checkpoints:delete',
   sessionUsage: 'session:usage',
   enginesDetect: 'engines:detect',
   settingsGet: 'settings:get',
@@ -183,6 +187,26 @@ export interface ChangesSummary {
   deleted: number
 }
 
+/** A git snapshot of a folder (every non-gitignored file, committed or not), kept under refs/ouroboros/checkpoints/<id>. */
+export interface Checkpoint {
+  /** `<unix ms>-<4 hex>`; also the ref name's last segment */
+  id: string
+  label: string
+  createdAt: number
+  /** the snapshot commit and its tree */
+  commit: string
+  tree: string
+  /** HEAD when the snapshot was taken (null before the first commit) */
+  head: string | null
+  branch: string | null
+  cardId?: string
+  /** HEAD is no longer `head`: restoring needs move_head to put the branch back too */
+  headMoved: boolean
+}
+
+export type CheckpointResult<T> = ({ ok: true } & T) | { ok: false; error: string }
+export type CheckpointRestoreResult = CheckpointResult<{ restored: Checkpoint; safety: Checkpoint; movedHead: boolean }> & { ahead?: number; behind?: number; safety?: Checkpoint }
+
 export interface SessionUsage {
   /** tokens in the context window at the last assistant turn (input + cache read + cache write) */
   contextTokens: number
@@ -274,6 +298,13 @@ export interface OuroborosApi {
     summary(cwd: string): Promise<ChangesSummary>
     diff(cwd: string, file?: string): Promise<string>
     revert(cwd: string, file: string): Promise<{ ok: boolean; error?: string }>
+  }
+  /** Git snapshots of a folder; see Checkpoint. */
+  checkpoints: {
+    list(cwd: string): Promise<CheckpointResult<{ checkpoints: Checkpoint[] }>>
+    create(cwd: string, label?: string): Promise<CheckpointResult<{ checkpoint: Checkpoint }>>
+    restore(cwd: string, id: string, moveHead?: boolean): Promise<CheckpointRestoreResult>
+    delete(cwd: string, id: string): Promise<CheckpointResult<{ id: string }>>
   }
   session: {
     /** Context usage of the last turn, read from the Claude Code transcript. */

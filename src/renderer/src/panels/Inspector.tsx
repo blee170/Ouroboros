@@ -2,6 +2,7 @@ import { useBoard } from '@/store/board'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 import { MCP_PRESETS, normalizeEngine, type ClaudeOptions, type McpServerSpec } from '@shared/types'
 import { ChangesPanel } from './ChangesPanel'
+import { CheckpointsPanel } from './CheckpointsPanel'
 
 export function Inspector() {
   const nodeId = useBoard((s) => s.selectedNodeId)
@@ -106,6 +107,7 @@ export function Inspector() {
         </>
       )}
       {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <ChangesPanel nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />}
+      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <CheckpointsPanel cwd={d.worktree?.path || d.cwd} />}
       {d.kind !== 'note' && d.kind !== 'browser' && (
         <label>
           Folder

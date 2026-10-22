@@ -1,11 +1,9 @@
-import { execFile } from 'node:child_process'
 import { readFile, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import type { ChangeFile, ChangesSummary } from '@shared/protocol'
+import { git, hasHead } from './git'
 export type { ChangeFile, ChangesSummary }
 
-const execFileP = promisify(execFile)
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 /** untracked files whose lines are counted (the rest show 0) */
 const MAX_COUNTED_UNTRACKED = 30
@@ -13,17 +11,6 @@ const MAX_COUNTED_BYTES = 512 * 1024
 /** one summary per folder is shared by every card and panel polling it */
 const SUMMARY_TTL_MS = 2_000
 const summaryCache = new Map<string, { at: number; promise: Promise<ChangesSummary> }>()
-
-async function git(cwd: string, args: string[], okCodes: number[] = [0]): Promise<string> {
-  try {
-    const { stdout } = await execFileP('git', args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
-    return stdout
-  } catch (err) {
-    const e = err as { code?: number; stdout?: string }
-    if (typeof e.code === 'number' && okCodes.includes(e.code)) return e.stdout ?? ''
-    throw err
-  }
-}
 
 /** Parse `git status --porcelain=v1 -z` output (pure). */
 export function parseStatus(raw: string): Array<{ path: string; status: ChangeFile['status'] }> {
@@ -85,10 +72,6 @@ async function countLines(file: string): Promise<number> {
   } catch {
     return 0
   }
-}
-
-async function hasHead(cwd: string): Promise<boolean> {
-  return (await git(cwd, ['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])).trim() !== ''
 }
 
 async function computeChanges(cwd: string): Promise<ChangesSummary> {

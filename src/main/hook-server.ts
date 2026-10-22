@@ -4,6 +4,8 @@ import type { AgentEngine, HookEvent } from '@shared/types'
 
 export const PREFERRED_HOOK_PORT = 47821
 
+export type CheckpointApiResult = ({ ok: boolean; error?: string } & Record<string, unknown>) | null
+
 export interface ApiHandlers {
   listAgents(): unknown
   readOutput(nodeId: string, lines: number): string | null
@@ -33,6 +35,11 @@ export interface ApiHandlers {
   updateAgent(id: string, patch: { board_tools?: boolean; title?: string; restart?: boolean }): boolean
   /** Uncommitted git changes in the card's folder; with diff=true (or a file) the unified diff too. */
   changes(id: string, opts: { file?: string; diff?: boolean }): Promise<unknown>
+  /** Git snapshots of the card's folder (its worktree if it has one). null = unknown card; ok=false carries the reason. */
+  listCheckpoints(id: string): Promise<CheckpointApiResult>
+  createCheckpoint(id: string, label?: string): Promise<CheckpointApiResult>
+  restoreCheckpoint(id: string, checkpointId: string, moveHead: boolean): Promise<CheckpointApiResult>
+  deleteCheckpoint(id: string, checkpointId: string): Promise<CheckpointApiResult>
   tidy(olderThanMinutes: number, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
@@ -190,6 +197,22 @@ export class HookServer {
       if (m && method === 'GET' && m[2] === 'changes') {
         const r = await api.changes(decodeURIComponent(m[1]), { file: url.searchParams.get('file') ?? undefined, diff: url.searchParams.get('diff') === '1' })
         return send(res, r === null ? 404 : 200, r ?? { error: 'unknown agent' })
+      }
+      const cp = /^\/api\/agents\/([^/]+)\/checkpoints(?:\/([^/]+)(?:\/(restore))?)?$/.exec(path)
+      if (cp) {
+        const id = decodeURIComponent(cp[1])
+        const cpId = cp[2] ? decodeURIComponent(cp[2]) : undefined
+        let r: CheckpointApiResult
+        if (method === 'GET' && !cpId) r = await api.listCheckpoints(id)
+        else if (method === 'POST' && !cpId) {
+          const body = ((await readJson(req)) ?? {}) as { label?: unknown }
+          r = await api.createCheckpoint(id, typeof body.label === 'string' ? body.label : undefined)
+        } else if (method === 'POST' && cpId && cp[3] === 'restore') {
+          const body = ((await readJson(req)) ?? {}) as { move_head?: unknown }
+          r = await api.restoreCheckpoint(id, cpId, body.move_head === true)
+        } else if (method === 'DELETE' && cpId && !cp[3]) r = await api.deleteCheckpoint(id, cpId)
+        else return send(res, 404, { error: 'not found' })
+        return send(res, r === null ? 404 : r.ok ? 200 : 400, r ?? { error: 'unknown agent' })
       }
       if (method === 'GET' && path === '/api/handoffs') return send(res, 200, { handoffs: api.listHandoffs() })
       if (method === 'POST' && path === '/api/handoffs') {

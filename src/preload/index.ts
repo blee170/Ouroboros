@@ -65,6 +65,12 @@ const api: OuroborosApi = {
     diff: (cwd, file) => ipcRenderer.invoke(IPC.changesDiff, cwd, file),
     revert: (cwd, file) => ipcRenderer.invoke(IPC.changesRevert, cwd, file)
   },
+  checkpoints: {
+    list: (cwd) => ipcRenderer.invoke(IPC.checkpointsList, cwd),
+    create: (cwd, label) => ipcRenderer.invoke(IPC.checkpointsCreate, cwd, label),
+    restore: (cwd, id, moveHead) => ipcRenderer.invoke(IPC.checkpointsRestore, cwd, id, moveHead),
+    delete: (cwd, id) => ipcRenderer.invoke(IPC.checkpointsDelete, cwd, id)
+  },
   session: {
     usage: (sessionId) => ipcRenderer.invoke(IPC.sessionUsage, sessionId)
   },

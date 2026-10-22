@@ -4,28 +4,32 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
+import { BASE_FONT_SIZE, applyScale, isAtBottom, renderScale, styleHost } from './terminalScale'
 
 export interface TerminalHandle {
   term: Terminal
   fit: FitAddon
   search: SearchAddon
-  /** Scale the font with the canvas zoom (the DOM itself is kept unscaled so mouse mapping stays exact). */
+  /** Redraw at the canvas zoom (font and host scale only: the grid and the PTY size stay as they are). */
   setZoom(zoom: number): void
 }
 
-export const BASE_FONT_SIZE = 13
+export { BASE_FONT_SIZE }
 
 /**
  * Mounts an xterm.js terminal into `containerRef`, pipes it to the PTY of `nodeId`
  * and keeps the PTY size in sync with the DOM size. Returns the handle once ready.
  */
-export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDivElement | null>): TerminalHandle | null {
+export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDivElement | null>, initialZoom = 1): TerminalHandle | null {
   const [handle, setHandle] = useState<TerminalHandle | null>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
 
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
+    // drawn at the zoom the card mounts with (doFit below fits the grid at scale 1, then applies this)
+    let scale = renderScale(initialZoom)
+    styleHost(el, 1)
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
@@ -109,10 +113,20 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     el.addEventListener('drop', onDrop)
     el.addEventListener('dragover', onDragOver)
     let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    // The grid follows the card's size only. The wrapper is laid out in canvas units, so observing it (not the
+    // counter-scaled host) keeps zooming from resizing the PTY, which made the CLI redraw on every zoom step.
+    // The grid is always fitted at scale 1 (13px font, host = card), then drawn at the current scale: fitting at
+    // the current zoom let the padding, scrollbar and per-pixel cell rounding of a small font change the grid.
     const doFit = (): void => {
       try {
+        const bottom = isAtBottom(term)
+        const before = `${term.cols}x${term.rows}`
+        styleHost(el, 1)
+        term.options.fontSize = BASE_FONT_SIZE
         fit.fit()
-        api.pty.resize(nodeId, term.cols, term.rows)
+        if (`${term.cols}x${term.rows}` !== before) api.pty.resize(nodeId, term.cols, term.rows)
+        applyScale(term, fit, el, scale)
+        if (bottom) term.scrollToBottom()
       } catch {
         /* ignore */
       }
@@ -121,13 +135,13 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       if (resizeTimer) clearTimeout(resizeTimer)
       resizeTimer = setTimeout(doFit, 60)
     })
-    ro.observe(el)
+    ro.observe(el.parentElement ?? el)
     doFit()
     const setZoom = (zoom: number): void => {
-      const size = Math.max(6, Math.round(BASE_FONT_SIZE * zoom * 10) / 10)
-      if (term.options.fontSize === size) return
-      term.options.fontSize = size
-      requestAnimationFrame(doFit)
+      const next = renderScale(zoom)
+      if (next === scale) return
+      scale = next
+      applyScale(term, fit, el, scale)
     }
     const h: TerminalHandle = { term, fit, search, setZoom }
     handleRef.current = h

@@ -1,0 +1,193 @@
+/** Which CLI a Claude/Conductor card runs. Codex and Gemini get the same hooks, lines and board tools. */
+export type AgentEngine = 'claude' | 'codex' | 'gemini'
+
+/** Stored engine value: claude is the implicit default and is kept as undefined. */
+export function normalizeEngine(e: string | undefined | null): 'codex' | 'gemini' | undefined {
+  return e === 'codex' || e === 'gemini' ? e : undefined
+}
+
+/** Node kinds shown on the canvas. */
+export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external' | 'browser' | 'command'
+
+/** Lifecycle status of an agent/terminal node, derived from Claude Code hooks (or PTY exit). */
+export type AgentStatus = 'starting' | 'idle' | 'working' | 'needs-you' | 'done' | 'ended'
+
+export interface ClaudeOptions {
+  /** `claude --continue` on launch (resume most recent conversation in cwd). */
+  continue?: boolean
+  /** `claude --resume <id>` on launch. */
+  resume?: string
+  model?: string
+  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk' | 'auto'
+  /** Extra text appended to the system prompt (conductor preset uses this). */
+  appendSystemPrompt?: string
+  /** Free-form extra CLI args. */
+  extraArgs?: string[]
+  /** Extra MCP servers attached to this card via --mcp-config (same shape as .mcp.json "mcpServers"). */
+  mcpServers?: Record<string, McpServerSpec>
+  /** Attach the board's own MCP server (agents + browser cards) to a plain Claude card. Conductors always have it. */
+  boardTools?: boolean
+}
+
+export interface McpServerSpec {
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  /** For remote servers */
+  type?: 'stdio' | 'http' | 'sse'
+  url?: string
+  headers?: Record<string, string>
+}
+
+/** Ready-made MCP server entries the Inspector can add with one click. */
+export const MCP_PRESETS: Record<string, { label: string; hint: string; spec: McpServerSpec }> = {
+  aside: {
+    label: 'Aside browser',
+    hint: 'Requires the Aside app + CLI (aside.com → Developer settings). Gives the card a logged-in browser it can drive.',
+    spec: { command: 'aside', args: ['mcp'] }
+  },
+  'ego-lite': {
+    label: 'ego lite browser',
+    hint: 'Requires ego lite (citrolabs/ego-lite). The ego-browser CLI must be on PATH; this runs its MCP mode if available.',
+    spec: { command: 'ego-browser', args: ['mcp'] }
+  },
+  playwright: {
+    label: 'Playwright MCP',
+    hint: 'Microsoft Playwright MCP (needs Node). Drives a separate Chromium profile; add --extension to attach to your Chrome/Edge tabs.',
+    spec: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] }
+  }
+}
+
+export interface WorktreeInfo {
+  path: string
+  branch: string
+}
+
+/** Data carried by every canvas node (serialised into the workspace file). */
+export interface NodeData {
+  kind: NodeKind
+  /** claude (default) | codex | gemini — for claude/conductor cards */
+  engine?: AgentEngine
+  title: string
+  /** Working directory the shell/claude is started in. */
+  cwd: string
+  /** Shell executable for terminal nodes; undefined = platform default. */
+  shell?: string
+  /** A command to type into the shell right after spawn (terminal nodes). */
+  initialCommand?: string
+  claude?: ClaudeOptions
+  worktree?: WorktreeInfo
+  /** Markdown body for note nodes. */
+  note?: string
+  /** Browser cards: last/home URL. */
+  url?: string
+  /**
+   * Command cards: shell command run for every prompt the card receives (send_prompt / handoff lines).
+   * Placeholders: {{prompt}} (shell-quoted, single line), {{prompt_file}} (path to a temp file holding the full prompt).
+   * The command's output until it exits becomes the card's "reply", so outgoing lines fire when it finishes.
+   */
+  commandTemplate?: string
+  /** Sent once to the card's Claude session as soon as it is ready, then cleared. */
+  initialPrompt?: string
+  /** Claude Code session id once known (SessionStart hook). */
+  sessionId?: string
+  // --- runtime-only fields (not persisted) ---
+  status?: AgentStatus
+  statusDetail?: string
+  lastAssistantMessage?: string
+  lastEventAt?: number
+  ptyAlive?: boolean
+  [key: string]: unknown
+}
+
+export type HandoffMode = 'auto' | 'manual'
+
+/** Data carried by a handoff edge (A -> B). */
+export interface HandoffEdgeData {
+  mode: HandoffMode
+  /** Prompt template; `{{last_assistant_message}}`, `{{source_title}}`, `{{source_cwd}}` are substituted. */
+  template: string
+  /** Optional condition: fire only if the source's last message matches (substring, or /regex/flags). */
+  condition?: string
+  lastFiredAt?: number
+  [key: string]: unknown
+}
+
+export interface WorkspaceNode {
+  id: string
+  position: { x: number; y: number }
+  width?: number
+  height?: number
+  data: NodeData
+}
+
+export interface WorkspaceEdge {
+  id: string
+  source: string
+  target: string
+  data: HandoffEdgeData
+}
+
+export interface Workspace {
+  version: 1
+  projectRoot: string
+  viewport?: { x: number; y: number; zoom: number }
+  nodes: WorkspaceNode[]
+  edges: WorkspaceEdge[]
+}
+
+/** Subset of a Claude Code hook payload that we care about. */
+export interface HookEvent {
+  hook_event_name: string
+  session_id?: string
+  cwd?: string
+  transcript_path?: string
+  tool_name?: string
+  tool_input?: unknown
+  /** Notification hook: permission_prompt | idle_prompt | agent_needs_input | ... */
+  notification_type?: string
+  message?: string
+  /** Stop hook */
+  last_assistant_message?: string
+  /** SessionStart */
+  source?: string
+  [key: string]: unknown
+}
+
+/** Snapshot of one agent as seen by the roster / MCP server. */
+export interface AgentSnapshot {
+  id: string
+  kind: NodeKind
+  engine?: AgentEngine
+  title: string
+  cwd: string
+  status: AgentStatus
+  statusDetail?: string
+  sessionId?: string
+  lastAssistantMessage?: string
+  lastEventAt?: number
+  ptyAlive: boolean
+}
+
+export interface AppSettings {
+  notifications: boolean
+  minimizeToTray: boolean
+  trackExternalSessions: boolean
+  defaultShell?: string
+  /** Home page for new browser cards. */
+  browserHome?: string
+  /** Optional GitHub token (stored encrypted) for update downloads from a private fork. */
+  githubTokenEnc?: string
+  /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
+  autoTidyMinutes?: number
+  /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default true. */
+  claudeLinksExternal?: boolean
+  /** Engine new agent/conductor cards use when none is chosen (claude by default). */
+  defaultEngine?: AgentEngine
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  notifications: true,
+  minimizeToTray: true,
+  trackExternalSessions: false
+}

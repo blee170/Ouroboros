@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest'
+import { buildCodexLaunch, buildGeminiLaunch, buildGeminiSettings, quoteWinCrt, tomlString, type EngineLaunchInput } from '../src/main/agent-launcher'
+
+const base: EngineLaunchInput = {
+  nodeId: 'n1',
+  claude: {},
+  boardTools: false,
+  baseUrl: 'http://127.0.0.1:47821',
+  token: 'tok',
+  nodeBin: 'C:\\Program Files\\nodejs\\node.exe',
+  hookScriptPath: 'C:\\App\\resources\\app.asar.unpacked\\out\\main\\agent-hook.js',
+  mcpScriptPath: 'C:\\App\\resources\\app.asar.unpacked\\out\\main\\mcp-server.js',
+  shell: 'powershell'
+}
+
+describe('quoteWinCrt', () => {
+  it('escapes quotes and the backslashes before them the way the Windows C runtime expects', () => {
+    expect(quoteWinCrt('plain')).toBe('"plain"')
+    expect(quoteWinCrt('a "b" c')).toBe('"a \\"b\\" c"')
+    expect(quoteWinCrt('C:\\dir\\')).toBe('"C:\\dir\\\\"') // trailing backslash doubled so the closing quote survives
+    expect(quoteWinCrt('x\\"y')).toBe('"x\\\\\\"y"') // backslash + quote → 3 backslashes + quote
+  })
+})
+
+describe('buildCodexLaunch', () => {
+  it('passes notify, mcp server, instructions and permissions as -c overrides (PowerShell: verbatim after --%)', () => {
+    const l = buildCodexLaunch({ ...base, boardTools: true, rolePrompt: 'Be "brief".\nEnd with RESULT:', claude: { model: 'gpt-5-codex', permissionMode: 'acceptEdits' } })
+    expect(l.command.startsWith('& codex --% -c "notify=[')).toBe(true)
+    expect(l.command).toContain('agent-hook.js')
+    expect(l.command).toContain('codex\\",\\"--url\\",\\"http://127.0.0.1:47821\\",\\"--node\\",\\"n1\\"]"')
+    expect(l.command).toContain('mcp_servers.ouroboros.command=')
+    expect(l.command).toContain('mcp_servers.ouroboros.env={OUROBOROS_URL=')
+    expect(l.command).toContain('OUROBOROS_SELF_ID=\\"n1\\"')
+    expect(l.command).toContain(' -m gpt-5-codex --full-auto')
+    // Windows: the role is typed as the first message (cmd.exe/npm shim would mangle it on the line)
+    expect(l.command).not.toContain('developer_instructions')
+    expect(l.initialPrompt).toContain('Be "brief".')
+    const posix = buildCodexLaunch({ ...base, shell: 'posix', rolePrompt: 'Be "brief".\nEnd with RESULT:' })
+    expect(posix.command).toContain(`-c 'developer_instructions="Be \\"brief\\".\\nEnd with RESULT:"'`)
+    expect(posix.initialPrompt).toBeUndefined()
+  })
+  it('resumes by thread id or --last and falls back to a typed prompt when the role is too long for cmd.exe', () => {
+    const r = buildCodexLaunch({ ...base, shell: 'posix', claude: { resume: 'thr-1', permissionMode: 'plan' } })
+    expect(r.command.startsWith('codex -c ')).toBe(true)
+    expect(r.command.endsWith(' -s read-only resume thr-1')).toBe(true)
+    expect(r.command).toContain("'notify=[")
+    const c = buildCodexLaunch({ ...base, shell: 'posix', claude: { continue: true } })
+    expect(c.command.endsWith(' resume --last')).toBe(true)
+    const long = buildCodexLaunch({ ...base, shell: 'posix', rolePrompt: 'x'.repeat(120_000) })
+    expect(long.command).not.toContain('developer_instructions')
+    expect(long.command.endsWith(`"--node","n1"]'`)).toBe(true)
+    expect(long.initialPrompt).toContain('x'.repeat(120_000))
+  })
+})
+
+describe('buildGeminiSettings / buildGeminiLaunch', () => {
+  it('writes hooks with the card id in their env and the board MCP server when board tools are on', () => {
+    const s = buildGeminiSettings({ ...base, boardTools: true, shell: 'posix', nodeBin: '/usr/bin/node', hookScriptPath: '/app/agent-hook.js', mcpScriptPath: '/app/mcp-server.js', claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } }) as {
+      hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; env: Record<string, string>; type: string }> }>>
+      mcpServers: Record<string, { command: string; env?: Record<string, string>; trust?: boolean }>
+      hooksConfig: { enabled: boolean }
+    }
+    expect(s.hooksConfig.enabled).toBe(true)
+    expect(Object.keys(s.hooks).sort()).toEqual(['AfterAgent', 'BeforeAgent', 'BeforeTool', 'Notification', 'SessionEnd', 'SessionStart'])
+    expect(s.hooks.BeforeTool[0].matcher).toBe('*')
+    expect(s.hooks.AfterAgent[0].hooks[0]).toMatchObject({ type: 'command', command: '/usr/bin/node /app/agent-hook.js gemini', env: { OUROBOROS_URL: 'http://127.0.0.1:47821', OUROBOROS_NODE_ID: 'n1' } })
+    expect(s.mcpServers.ouroboros).toMatchObject({ command: '/usr/bin/node', trust: true, env: { OUROBOROS_SELF_ID: 'n1', OUROBOROS_TOKEN: 'tok' } })
+    expect(s.mcpServers.aside.command).toBe('aside')
+    expect(s.hooks.AfterAgent[0].hooks[0].env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    const asNode = buildGeminiSettings({ ...base, boardTools: true, electronAsNode: true }) as { hooks: Record<string, Array<{ hooks: Array<{ env: Record<string, string> }> }>>; mcpServers: Record<string, { env: Record<string, string> }> }
+    expect(asNode.hooks.SessionStart[0].hooks[0].env.ELECTRON_RUN_AS_NODE).toBe('1')
+    expect(asNode.mcpServers.ouroboros.env.ELECTRON_RUN_AS_NODE).toBe('1')
+  })
+  it('builds the gemini command, points the system settings env at the per-card file and types the role prompt', () => {
+    const l = buildGeminiLaunch({ ...base, rolePrompt: 'You review.', claude: { model: 'pro', permissionMode: 'auto', resume: 'abc' } }, 'C:\\tmp\\n1.gemini.json')
+    expect(l.command).toBe('& gemini -m pro --approval-mode yolo -r abc')
+    expect(l.env).toEqual({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: 'C:\\tmp\\n1.gemini.json' })
+    expect(l.initialPrompt).toContain('You review.')
+    expect(Object.keys(l.files ?? {})).toEqual(['C:\\tmp\\n1.gemini.json'])
+    expect(tomlString('a"b')).toBe('"a\\"b"')
+  })
+})

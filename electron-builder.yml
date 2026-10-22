@@ -1,0 +1,51 @@
+appId: dev.blee170.ouroboros
+productName: Ouroboros
+publish:
+  provider: github
+  owner: blee170
+  repo: Ouroboros
+  releaseType: release
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - "**/node_modules/node-pty/**"
+  - out/main/mcp-server.js
+  - out/main/agent-hook.js
+npmRebuild: false   # node-pty ships N-API prebuilds (win32-x64/arm64); no Electron rebuild needed
+win:
+  icon: resources/icon.ico
+  requestedExecutionLevel: asInvoker
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.exe
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Ouroboros
+  runAfterFinish: true
+  artifactName: ${productName}-Setup-${version}.${ext}
+linux:
+  target: [AppImage]
+  category: Development
+  # node-pty publishes prebuilds only for win32/darwin; on Linux it is compiled by npm into build/Release,
+  # which node-pty's package.json "files" whitelist leaves out of the package, so copy it in explicitly.
+  extraResources:
+    - from: node_modules/node-pty/build/Release/pty.node
+      to: app.asar.unpacked/node_modules/node-pty/build/Release/pty.node
+    - from: node_modules/node-pty/build/Release/spawn-helper
+      to: app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper
+extraResources:
+  - from: resources/icon.png
+    to: icon.png

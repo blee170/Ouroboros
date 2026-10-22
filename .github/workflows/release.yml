@@ -1,0 +1,90 @@
+name: release
+# Builds and publishes a Windows release whenever the version in package.json changes
+# (or on a v* tag / manual run). The workflow creates the vX.Y.Z tag itself if missing,
+# so no local tag push is required.
+on:
+  push:
+    tags: ['v*']
+    branches: ['**']
+    paths: ['package.json', '.github/workflows/release.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Resolve version and tag
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1 && [[ "$GITHUB_REF" != "refs/tags/v$VERSION" ]]; then
+            # Complete only when the release carries latest.yml (the updater manifest).
+            if gh release view "v$VERSION" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx 'latest.yml'; then
+              echo "release v$VERSION already exists; nothing to do"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create tag if missing
+        if: steps.ver.outputs.skip != 'true' && !startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          V="v${{ steps.ver.outputs.version }}"
+          if ! git ls-remote --exit-code --tags origin "$V" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$V" -m "Ouroboros ${{ steps.ver.outputs.version }}"
+            git push origin "$V"
+          fi
+      - if: steps.ver.outputs.skip != 'true'
+        run: npm ci
+      - if: steps.ver.outputs.skip != 'true'
+        run: npm run typecheck
+      - if: steps.ver.outputs.skip != 'true'
+        run: node scripts/gen-icon.mjs && npm run build
+      # after build: the tests of the bundled helper scripts (mcp-server.js, agent-hook.js) need out/
+      - if: steps.ver.outputs.skip != 'true'
+        run: npm test
+      - name: Package
+        if: steps.ver.outputs.skip != 'true'
+        # electron-builder still writes latest.yml (the updater manifest) because
+        # electron-builder.yml has a publish provider. Uploading is done below in one
+        # step: with --publish always the nsis and portable targets raced and created
+        # two releases for the same tag, splitting the files between them.
+        run: npx electron-builder --win --x64 --publish never
+      - name: Publish to GitHub Releases
+        if: steps.ver.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          TAG="v$VERSION"
+          FILES=("release/Ouroboros-Setup-$VERSION.exe" "release/Ouroboros-Setup-$VERSION.exe.blockmap"
+                 "release/Ouroboros-$VERSION-portable.exe" "release/latest.yml")
+          ls -l release
+          for f in "${FILES[@]}"; do [[ -f "$f" ]] || { echo "missing $f"; exit 1; }; done
+          # A previous run may have left partial releases for this same tag; replace them.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .id" \
+            | while read -r id; do
+                echo "deleting incomplete release $id for $TAG"
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+              done
+          gh release create "$TAG" --title "$VERSION" --notes "Ouroboros $VERSION" "${FILES[@]}"
+          gh release view "$TAG" --json assets --jq '.assets[].name'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

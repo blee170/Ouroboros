@@ -167,6 +167,8 @@ export interface AppSettings {
   browserHome?: string
   /** GitHub token (stored encrypted) used to download updates from the private repository. */
   githubTokenEnc?: string
+  /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
+  autoTidyMinutes?: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

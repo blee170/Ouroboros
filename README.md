@@ -9,6 +9,7 @@ Personal infinite-canvas cockpit for running and **conducting** many Claude Code
 - **✨ Build board**: scans a root folder and your Claude Code history (`~/.claude/projects`), then generates a board — Conductor (continuing that folder's latest conversation), Implementer / Tester / Reviewer / Ops role cards with role prompts, handoff lines between them, and cards resuming other folders' latest sessions.
 - **🌐 Browser cards**: a real Chromium view *inside the canvas* (shared persistent profile, so you log in once). Agents drive it through MCP tools (`browser_open/navigate/read/links/click/type/screenshot`); the Conductor has them, and any Claude card can enable *Board & browser tools* in the Inspector. This is the in-canvas alternative to external AI browsers like Aside, whose windows cannot be embedded.
 - **Browser & other tools per card**: Inspector → *MCP servers* → one-click presets for **Aside** (`aside mcp`), **ego lite** and **Playwright MCP**, or any custom server; the card's `claude` gets them via `--mcp-config`.
+- **🧹 Tidy**: close cards whose process exited or that have been done/idle for N minutes (dialog with a checklist, optional auto-tidy, and a `tidy_board` tool for the Conductor). Conductors, working and waiting cards are never touched.
 - **Roster + broadcast**, git **worktree per card**, workspace saved to `<project>/.ouroboros.json`, external Claude Code sessions (e.g. the Windows Claude app's Code tab) shown as cards and pullable into the canvas via `--resume`.
 
 ## Install as a normal program (Windows)

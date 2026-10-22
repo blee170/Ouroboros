@@ -63,6 +63,10 @@ const api: OuroborosApi = {
     register: (nodeId, webContentsId) => ipcRenderer.send(IPC.browserRegister, nodeId, webContentsId),
     unregister: (nodeId) => ipcRenderer.send(IPC.browserUnregister, nodeId)
   },
+  tidy: {
+    candidates: (olderThanMinutes) => ipcRenderer.invoke(IPC.tidyCandidates, olderThanMinutes),
+    apply: (ids) => ipcRenderer.invoke(IPC.tidyApply, ids)
+  },
   update: {
     check: () => ipcRenderer.invoke(IPC.updateCheck),
     download: () => ipcRenderer.invoke(IPC.updateDownload),

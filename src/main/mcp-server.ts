@@ -148,6 +148,16 @@ server.registerTool(
   }
 )
 
+server.registerTool(
+  'tidy_board',
+  {
+    title: 'Close finished cards',
+    description: 'Close cards whose process exited or that have been done/idle longer than older_than_minutes (default 30). Never touches conductors, working or needs-you cards, or targets of a line from a working card. dry_run=true only lists candidates.',
+    inputSchema: { older_than_minutes: z.number().int().min(1).max(1440).optional(), dry_run: z.boolean().optional() }
+  },
+  async ({ older_than_minutes, dry_run }) => text(await api(dry_run ? 'GET' : 'POST', `/api/tidy?minutes=${older_than_minutes ?? 30}${dry_run ? '&dry_run=1' : ''}`, dry_run ? undefined : {}))
+)
+
 // ---- handoff lines ---------------------------------------------------------
 server.registerTool(
   'list_handoffs',

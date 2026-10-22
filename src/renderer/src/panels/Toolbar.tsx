@@ -3,6 +3,7 @@ import type { UpdateStatus } from '@shared/protocol'
 import { useBoard } from '@/store/board'
 import { SettingsDialog } from './SettingsDialog'
 import { BoardBuilder } from './BoardBuilder'
+import { TidyDialog } from './TidyDialog'
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -18,6 +19,7 @@ export function Toolbar() {
   const toggleInspector = useBoard((s) => s.toggleInspector)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [builderOpen, setBuilderOpen] = useState(false)
+  const [tidyOpen, setTidyOpen] = useState(false)
   const [upd, setUpd] = useState<UpdateStatus | null>(null)
   useEffect(() => {
     const off = window.ouroboros.update.onStatus(setUpd)
@@ -76,6 +78,9 @@ export function Toolbar() {
       <button className="btn" onClick={persist} disabled={!projectRoot}>
         💾 Save
       </button>
+      <button className="btn" disabled={!projectRoot} title="Close finished or idle cards" onClick={() => setTidyOpen(true)}>
+        🧹 Tidy
+      </button>
       <button className="btn" onClick={toggleRoster}>
         Roster
       </button>
@@ -92,6 +97,7 @@ export function Toolbar() {
       </button>
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {builderOpen && <BoardBuilder onClose={() => setBuilderOpen(false)} />}
+      {tidyOpen && <TidyDialog onClose={() => setTidyOpen(false)} />}
     </div>
   )
 }

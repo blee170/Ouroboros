@@ -17,6 +17,7 @@ import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
+import { selectTidyCandidates } from '@shared/tidy'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
@@ -220,8 +221,29 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
       if (!ctx.board.nodes.has(id)) return false
       ctx.ptys.kill(id)
       ctx.board.setPtyAlive(id, false)
+      ctx.board.nodes.delete(id)
       sendToRenderer(ctx, IPC.boardRemoveNode, id)
       return true
+    },
+    tidy: async (olderThanMinutes, dryRun) => {
+      // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
+      const protect = new Set<string>()
+      for (const e of ctx.board.edges) {
+        const src = ctx.board.nodes.get(e.source)
+        if (src?.data.status === 'working') protect.add(e.target)
+      }
+      const candidates = selectTidyCandidates(ctx.board.snapshot(), { olderThanMinutes, protect })
+      let removed = 0
+      if (!dryRun) {
+        for (const c of candidates) {
+          ctx.ptys.kill(c.id)
+          ctx.board.setPtyAlive(c.id, false)
+          ctx.board.nodes.delete(c.id)
+          sendToRenderer(ctx, IPC.boardRemoveNode, c.id)
+          removed++
+        }
+      }
+      return { candidates, removed }
     },
     waitForAgents: (ids, statuses, timeoutMs) =>
       new Promise((resolve) => {
@@ -481,6 +503,18 @@ export function registerIpc(ctx: MainContext): void {
     hasUpdateToken: Boolean(decryptToken(store.getSettings().githubTokenEnc)),
     packaged: app.isPackaged
   }))
+
+  ipcMain.handle(IPC.tidyCandidates, async (_e, minutes: number) => (await ctx.api!.tidy(minutes, true)).candidates)
+  ipcMain.handle(IPC.tidyApply, async (_e, ids: string[]) => {
+    let removed = 0
+    for (const id of ids) if (await ctx.api!.removeAgent(id)) removed++
+    return { removed }
+  })
+  // optional auto-tidy
+  setInterval(() => {
+    const minutes = store.getSettings().autoTidyMinutes ?? 0
+    if (minutes > 0) void ctx.api!.tidy(minutes, false)
+  }, 60_000)
 
   ctx.updater.on('status', (st) => sendToRenderer(ctx, IPC.updateStatus, st))
   ipcMain.handle(IPC.updateCheck, () => ctx.updater.check())

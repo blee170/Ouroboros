@@ -176,6 +176,17 @@ check((await api('DELETE', `/api/agents/${rc.json.id}`)).status === 200, 'remove
 await sleep(500)
 check((await page.evaluate(() => window.__board.getState().nodes.length)) === nBefore - 1, 'removed agent disappears from the canvas')
 
+// tidy: the removed terminal is gone; an exited card shows up as a candidate and is closed by POST
+const tc = await api('POST', '/api/agents', { cwd: project, title: 'tidy-me', kind: 'terminal' })
+await sleep(1000)
+await page.evaluate((id) => window.ouroboros.pty.write(id, 'exit\r'), tc.json.id)
+await sleep(800)
+const dry = await api('GET', '/api/tidy?minutes=30')
+check(dry.json.candidates.some((c) => c.id === tc.json.id), `tidy dry-run lists the exited card (${dry.json.candidates.map((c) => c.title).join(',')})`)
+const wet = await api('POST', '/api/tidy?minutes=30', {})
+await sleep(500)
+check(wet.json.removed >= 1 && !(await page.evaluate((id) => window.__board.getState().nodes.some((n) => n.id === id), tc.json.id)), 'tidy closes the exited card')
+
 // browser card: create via api, navigate to the hook server, read, type+click on a data: page
 const bcreated = await api('POST', '/api/browsers', { url: `${base}/health`, title: 'smoke browser' })
 check(typeof bcreated.json.id === 'string', 'browser card created through the api')

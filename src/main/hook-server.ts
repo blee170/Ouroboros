@@ -25,6 +25,7 @@ export interface ApiHandlers {
     report_to?: string
   }): Promise<{ id: string; cwd: string; worktree?: string }>
   removeAgent(id: string): Promise<boolean>
+  tidy(olderThanMinutes: number, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
   listHandoffs(): unknown
@@ -156,6 +157,11 @@ export class HookServer {
       const api = this.deps.api
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
+      if (path === '/api/tidy' && (method === 'GET' || method === 'POST')) {
+        const minutes = Number(url.searchParams.get('minutes') ?? 30) | 0 || 30
+        const dry = method === 'GET' || url.searchParams.get('dry_run') === '1'
+        return send(res, 200, await api.tidy(minutes, dry))
+      }
       if (method === 'GET' && path === '/api/agents-wait') {
         const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean)
         const statuses = (url.searchParams.get('status') ?? 'done,needs-you,ended').split(',').filter(Boolean)

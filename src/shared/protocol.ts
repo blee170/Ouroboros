@@ -30,6 +30,8 @@ export const IPC = {
   updateInstall: 'update:install',
   updateSetToken: 'update:setToken',
   updateStatus: 'update:status',
+  tidyCandidates: 'tidy:candidates',
+  tidyApply: 'tidy:apply',
   browserUnregister: 'browser:unregister',
   // main -> renderer (send)
   ptyData: 'pty:data',
@@ -214,6 +216,10 @@ export interface OuroborosApi {
     /** Called by a browser card once its <webview> is ready. */
     register(nodeId: string, webContentsId: number): void
     unregister(nodeId: string): void
+  }
+  tidy: {
+    candidates(olderThanMinutes: number): Promise<Array<{ id: string; title: string; reason: string }>>
+    apply(ids: string[]): Promise<{ removed: number }>
   }
   update: {
     check(): Promise<UpdateStatus>

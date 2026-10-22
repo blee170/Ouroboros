@@ -8,7 +8,20 @@ export interface ApiHandlers {
   listAgents(): unknown
   readOutput(nodeId: string, lines: number): string | null
   sendPrompt(nodeId: string, text: string): boolean
-  createAgent(input: { cwd?: string; title?: string; prompt?: string; kind?: 'claude' | 'terminal' }): Promise<{ id: string }>
+  createAgent(input: {
+    cwd?: string
+    title?: string
+    prompt?: string
+    kind?: 'claude' | 'terminal'
+    role_prompt?: string
+    permission_mode?: string
+    model?: string
+    worktree?: boolean
+    continue?: boolean
+    resume?: string
+  }): Promise<{ id: string; cwd: string; worktree?: string }>
+  removeAgent(id: string): Promise<boolean>
+  waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
   listHandoffs(): unknown
   createHandoff(input: { source: string; target: string; mode?: 'auto' | 'manual'; template?: string; condition?: string }): { id: string } | { error: string }
@@ -139,6 +152,13 @@ export class HookServer {
       const api = this.deps.api
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
+      if (method === 'GET' && path === '/api/agents-wait') {
+        const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean)
+        const statuses = (url.searchParams.get('status') ?? 'done,needs-you,ended').split(',').filter(Boolean)
+        const timeout = Math.min(25_000, Math.max(1_000, Number(url.searchParams.get('timeout') ?? 20) * 1000))
+        return send(res, 200, await api.waitForAgents(ids, statuses, timeout))
+      }
+      if (m && method === 'DELETE' && !m[2]) return send(res, (await api.removeAgent(decodeURIComponent(m[1]))) ? 200 : 404, { ok: true })
       if (method === 'GET' && path === '/api/handoffs') return send(res, 200, { handoffs: api.listHandoffs() })
       if (method === 'POST' && path === '/api/handoffs') {
         const body = (await readJson(req)) as Parameters<ApiHandlers['createHandoff']>[0]

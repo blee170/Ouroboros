@@ -139,6 +139,23 @@ check((await api('DELETE', `/api/handoffs/${hc.json.id}`)).status === 200, 'remo
 await sleep(300)
 check((await page.evaluate(() => window.__board.getState().edges.length)) === edgeCount, 'deleted line disappears from the canvas')
 
+// wait_for_agents + remove_agent
+const w1 = await api('GET', `/api/agents-wait?ids=${a}&status=done&timeout=2`)
+check(w1.json.timedOut === false && w1.json.ready.some((r) => r.id === a), 'wait_for_agents returns immediately for an already-done agent')
+await fetch(`${base}/hook/${b}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hook_event_name: 'UserPromptSubmit' }) })
+await sleep(300)
+const waitP = api('GET', `/api/agents-wait?ids=${b}&status=done&timeout=10`)
+await sleep(500)
+await fetch(`${base}/hook/${b}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'b finished' }) })
+const w2 = await waitP
+check(w2.json.timedOut === false && w2.json.ready[0]?.lastAssistantMessage === 'b finished', 'wait_for_agents wakes up on a Stop hook')
+const rc = await api('POST', '/api/agents', { cwd: project, title: 'temp', kind: 'terminal' })
+await sleep(800)
+const nBefore = await page.evaluate(() => window.__board.getState().nodes.length)
+check((await api('DELETE', `/api/agents/${rc.json.id}`)).status === 200, 'remove_agent accepts a known id')
+await sleep(500)
+check((await page.evaluate(() => window.__board.getState().nodes.length)) === nBefore - 1, 'removed agent disappears from the canvas')
+
 // browser card: create via api, navigate to the hook server, read, type+click on a data: page
 const bcreated = await api('POST', '/api/browsers', { url: `${base}/health`, title: 'smoke browser' })
 check(typeof bcreated.json.id === 'string', 'browser card created through the api')

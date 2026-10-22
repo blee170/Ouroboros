@@ -24,6 +24,7 @@ export default function App() {
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),
       api.board.onSetNote((p) => useBoard.getState().updateNodeData(p.nodeId, { note: p.note })),
       api.board.onAddEdge((e) => useBoard.getState().addEdgeFromMain(e)),
+      api.board.onRemoveNode((id) => void useBoard.getState().removeNode(id)),
       api.board.onRemoveEdge((id) => useBoard.getState().removeEdge(id)),
       api.board.onAddNode((n) => {
         useBoard.getState().addNode(n.data.kind, { ...n.data, id: n.id, position: n.position })

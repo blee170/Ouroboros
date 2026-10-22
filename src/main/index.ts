@@ -89,7 +89,8 @@ async function main(): Promise<void> {
     app.quit()
     return
   }
-  app.setAppUserModelId('dev.blee170.ouroboros')
+  // Separate ids: toasts left in Action Center by a dev run must not COM-activate node_modules\electron.exe later.
+  app.setAppUserModelId(isDev ? 'dev.blee170.ouroboros.dev' : 'dev.blee170.ouroboros')
   await app.whenReady()
 
   const board = new Board()

@@ -134,24 +134,65 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
     },
     createAgent: async (input) => {
       const id = nanoid(10)
-      const cwd = input.cwd || ctx.board.projectRoot || app.getPath('home')
+      let cwd = input.cwd || ctx.board.projectRoot || app.getPath('home')
+      const title = input.title || basename(cwd)
+      let worktree: WorkspaceNode['data']['worktree']
+      if (input.worktree) {
+        const wt = await createWorktree(cwd, title)
+        worktree = wt
+        cwd = wt.path
+      }
       const count = ctx.board.nodes.size
+      const claude: WorkspaceNode['data']['claude'] =
+        input.kind === 'terminal'
+          ? undefined
+          : {
+              appendSystemPrompt: input.role_prompt?.trim() || undefined,
+              permissionMode: input.permission_mode as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
+              model: input.model || undefined,
+              continue: input.continue || undefined,
+              resume: input.resume || undefined
+            }
       const node: WorkspaceNode = {
         id,
-        position: { x: 80 + (count % 4) * 560, y: 80 + Math.floor(count / 4) * 420 },
-        width: 520,
-        height: 380,
-        data: {
-          kind: input.kind === 'terminal' ? 'terminal' : 'claude',
-          title: input.title || basename(cwd),
-          cwd,
-          claude: input.kind === 'terminal' ? undefined : {}
-        }
+        position: { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 },
+        width: 560,
+        height: 400,
+        data: { kind: input.kind === 'terminal' ? 'terminal' : 'claude', title, cwd: input.worktree ? input.cwd || ctx.board.projectRoot : cwd, worktree, claude }
       }
       if (input.prompt) pendingPrompts.set(id, input.prompt)
       sendToRenderer(ctx, IPC.boardAddNode, node)
-      return { id }
-    }
+      return { id, cwd, worktree: worktree?.path }
+    },
+    removeAgent: async (id) => {
+      if (!ctx.board.nodes.has(id)) return false
+      ctx.ptys.kill(id)
+      ctx.board.setPtyAlive(id, false)
+      sendToRenderer(ctx, IPC.boardRemoveNode, id)
+      return true
+    },
+    waitForAgents: (ids, statuses, timeoutMs) =>
+      new Promise((resolve) => {
+        const wanted = new Set(statuses)
+        const targets = ids.length ? ids : [...ctx.board.nodes.keys()].filter((k) => ctx.board.nodes.get(k)?.data.kind === 'claude')
+        const done = (): Array<{ id: string; status: string; lastAssistantMessage?: string }> =>
+          targets
+            .map((t) => ctx.board.nodes.get(t))
+            .filter((n): n is NonNullable<typeof n> => Boolean(n))
+            .filter((n) => wanted.has(n.data.status ?? ''))
+            .map((n) => ({ id: n.id, status: n.data.status ?? '', lastAssistantMessage: n.data.lastAssistantMessage }))
+        const finish = (timedOut: boolean): void => {
+          ctx.board.off('status', onStatus)
+          clearTimeout(timer)
+          resolve({ timedOut, ready: done(), pending: targets.filter((t) => !done().some((d) => d.id === t)) })
+        }
+        const onStatus = (): void => {
+          if (done().length > 0) finish(false)
+        }
+        const timer = setTimeout(() => finish(true), timeoutMs)
+        if (done().length > 0) return finish(false)
+        ctx.board.on('status', onStatus)
+      })
   }
 }
 

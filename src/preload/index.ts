@@ -26,6 +26,7 @@ const api: OuroborosApi = {
     onHandoffFired: (cb) => on(IPC.handoffFired, cb),
     onAddNode: (cb) => on(IPC.boardAddNode, cb),
     onAddEdge: (cb) => on(IPC.boardAddEdge, cb),
+    onRemoveNode: (cb) => on(IPC.boardRemoveNode, cb),
     onRemoveEdge: (cb) => on(IPC.boardRemoveEdge, cb),
     onSetNote: (cb) => on(IPC.boardSetNote, cb),
     onExternalSession: (cb) => on(IPC.externalSession, cb),

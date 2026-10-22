@@ -88,13 +88,47 @@ server.registerTool(
 server.registerTool(
   'create_agent',
   {
-    title: 'Create a new Claude Code agent',
-    description: 'Add a Claude Code agent card to the board in the given folder and optionally send it a first prompt.',
-    inputSchema: { cwd: z.string().optional(), title: z.string().optional(), prompt: z.string().optional() }
+    title: 'Create a new Claude Code agent card',
+    description:
+      'Add a Claude Code card to the board. role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt).',
+    inputSchema: {
+      cwd: z.string().optional(),
+      title: z.string().optional(),
+      prompt: z.string().optional(),
+      role_prompt: z.string().optional(),
+      permission_mode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions']).optional(),
+      model: z.string().optional(),
+      worktree: z.boolean().optional(),
+      continue: z.boolean().optional(),
+      resume: z.string().optional()
+    }
   },
-  async (input) => {
-    const r = (await api('POST', '/api/agents', { ...input, kind: 'claude' })) as { id: string }
-    return text(r)
+  async (input) => text(await api('POST', '/api/agents', { ...input, kind: 'claude' }))
+)
+
+server.registerTool(
+  'remove_agent',
+  { title: 'Close an agent card', description: 'Stop the card\'s process and remove it from the board (its worktree stays on disk).', inputSchema: { agent_id: z.string() } },
+  async ({ agent_id }) => {
+    if (agent_id === SELF) throw new Error('refusing to remove yourself')
+    return text(await api('DELETE', `/api/agents/${encodeURIComponent(agent_id)}`))
+  }
+)
+
+server.registerTool(
+  'wait_for_agents',
+  {
+    title: 'Wait until agents finish',
+    description:
+      'Block up to timeout_seconds (max 25) until at least one of the given agents reaches one of the statuses (default: done, needs-you, ended). Returns ready/pending lists with last messages. Call it in a loop instead of polling list_agents.',
+    inputSchema: { agent_ids: z.array(z.string()).optional(), statuses: z.array(z.enum(['idle', 'working', 'needs-you', 'done', 'ended'])).optional(), timeout_seconds: z.number().int().min(1).max(25).optional() }
+  },
+  async ({ agent_ids, statuses, timeout_seconds }) => {
+    const q = new URLSearchParams()
+    if (agent_ids?.length) q.set('ids', agent_ids.join(','))
+    if (statuses?.length) q.set('status', statuses.join(','))
+    q.set('timeout', String(timeout_seconds ?? 20))
+    return text(await api('GET', `/api/agents-wait?${q.toString()}`))
   }
 )
 

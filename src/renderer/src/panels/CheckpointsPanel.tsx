@@ -31,7 +31,9 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
     if (!error || error === 'not a git repository') return null
     return (
       <div className="changes">
-        <div className="cp-label">Checkpoints: {error}</div>
+        <div className="muted small" style={{ overflowWrap: 'anywhere' }}>
+          Checkpoints: {error}
+        </div>
       </div>
     )
   }
@@ -95,7 +97,9 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
               {items.map((c) => (
                 <li key={c.id}>
                   <span className="change-file cp-row" title={`${c.id} · ${c.commit.slice(0, 7)}${c.branch ? ` on ${c.branch}` : ''}`}>
-                    <span className="cp-label">{c.label}</span>
+                    <span className="cp-label" title={c.label}>
+                      {c.label}
+                    </span>
                     <span className="muted small">
                       {when(c.createdAt)}
                       {c.headMoved ? ' · HEAD moved' : ''}

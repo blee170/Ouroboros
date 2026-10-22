@@ -99,7 +99,9 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
         <div className="row">
           <span className="muted small">Root</span>
           <input className="text" value={root} onChange={(e) => setRoot(e.target.value)} />
-          <button className="btn" onClick={() => void pickRoot()}>…</button>
+          <button className="btn" title="Choose a folder" onClick={() => void pickRoot()}>
+            …
+          </button>
           <input className="text" style={{ maxWidth: 180 }} placeholder="filter (e.g. badminton)" value={filter} onChange={(e) => setFilter(e.target.value)} />
         </div>
         <div className="builder-grid">

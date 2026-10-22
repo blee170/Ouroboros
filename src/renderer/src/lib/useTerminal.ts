@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 
@@ -44,6 +45,10 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     const search = new SearchAddon()
     term.loadAddon(fit)
     term.loadAddon(search)
+    // the CLIs lay out emoji as 2 columns (Unicode 11 widths); xterm's built-in table is Unicode 6, which
+    // drifts the cursor and box borders on every ✅ 📄 in a reply
+    term.loadAddon(new Unicode11Addon())
+    term.unicode.activeVersion = '11'
     term.open(el)
     try {
       const webgl = new WebglAddon()

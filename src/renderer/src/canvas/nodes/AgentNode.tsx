@@ -77,7 +77,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             }}
           />
         ) : (
-          <span className="title" onDoubleClick={() => setEditing(true)} title={data.cwd}>
+          <span className="title" onDoubleClick={() => setEditing(true)} title={`${data.title}\n${data.cwd}`}>
             {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? (data.engine === 'codex' ? '◎ ' : data.engine === 'gemini' ? '✧ ' : '✦ ') : kind === 'command' ? '⚡ ' : '▣ '}
             {data.title}
           </span>

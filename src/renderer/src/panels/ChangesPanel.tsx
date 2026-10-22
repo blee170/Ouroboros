@@ -55,7 +55,9 @@ export function ChangesPanel({ nodeId, cwd }: { nodeId: string; cwd: string }) {
               <li key={f.path} className={file === f.path ? 'active' : ''}>
                 <button className="change-file" title={f.path} onClick={() => setFile(file === f.path ? null : f.path)}>
                   <span className={`st st-${f.status}`}>{f.status}</span>
-                  <span className="path">{f.path}</span>
+                  <span className="path">
+                    <bdi>{f.path}</bdi>
+                  </span>
                   <span className="add">+{f.added}</span>
                   <span className="del">−{f.deleted}</span>
                 </button>

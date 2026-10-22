@@ -29,7 +29,7 @@ export function Welcome() {
             <div className="muted small">Recent</div>
             {recent.map((r) => (
               <div key={r} className="recent-row">
-                <button className="link" title="Open here (Ctrl+click: new window)" onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? void window.ouroboros.window.open(r) : void openProject(r))}>
+                <button className="link" title={`${r}\nOpen here (Ctrl+click: new window)`} onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? void window.ouroboros.window.open(r) : void openProject(r))}>
                   {r}
                 </button>
                 <button className="icon-btn" title="Open in a new window" onClick={() => void window.ouroboros.window.open(r)}>

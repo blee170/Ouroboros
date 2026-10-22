@@ -107,7 +107,7 @@ export function Toolbar() {
           ⬆ {upd.state === 'ready' ? `Restart for v${upd.version}` : upd.state === 'downloading' ? `${upd.percent ?? 0}%` : `v${upd.version} available`}
         </button>
       )}
-      <button className="btn" onClick={() => setSettingsOpen(true)}>
+      <button className="btn" title="Settings" onClick={() => setSettingsOpen(true)}>
         ⚙
       </button>
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}

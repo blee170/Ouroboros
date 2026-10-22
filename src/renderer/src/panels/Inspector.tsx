@@ -113,7 +113,9 @@ export function Inspector() {
           Folder
           <div className="row">
             <input className="text" value={d.cwd} onChange={(e) => updateNodeData(nodeId, { cwd: e.target.value })} />
-            <button className="btn" onClick={() => void pickCwd()}>…</button>
+            <button className="btn" title="Choose a folder" onClick={() => void pickCwd()}>
+              …
+            </button>
           </div>
         </label>
       )}

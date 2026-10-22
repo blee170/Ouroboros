@@ -150,7 +150,9 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           }}
           placeholder="URL or search"
         />
-        <span className="status-text">{ready ? pageTitle.slice(0, 40) : 'loading…'}</span>
+        <span className="status-text" title={pageTitle}>
+          {ready ? pageTitle : 'loading…'}
+        </span>
         <button className="icon-btn nodrag" title="Close" onClick={() => void removeNode(id)}>
           ✕
         </button>

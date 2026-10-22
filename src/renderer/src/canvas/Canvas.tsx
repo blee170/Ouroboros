@@ -136,7 +136,7 @@ export function Canvas() {
         <Controls showInteractive={false} />
       </ReactFlow>
       {menu && (
-        <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
+        <div className="context-menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 290) }}>
           <button onClick={() => add('claude', 'claude')}>✦ Claude agent</button>
           <button onClick={() => add('claude', 'codex')}>◎ Codex agent</button>
           <button onClick={() => add('claude', 'gemini')}>✧ Gemini agent</button>

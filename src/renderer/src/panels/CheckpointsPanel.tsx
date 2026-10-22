@@ -8,6 +8,7 @@ function when(ms: number): string {
 /** Git snapshots of a card's folder: take one, restore one (undoable through its "before restore" snapshot), delete one. */
 export function CheckpointsPanel({ cwd }: { cwd: string }) {
   const [items, setItems] = useState<Checkpoint[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [label, setLabel] = useState('')
   const [open, setOpen] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -15,20 +16,32 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
     try {
       const r = await window.ouroboros.checkpoints.list(cwd)
       setItems(r.ok ? r.checkpoints : null)
-    } catch {
+      setError(r.ok ? null : r.error)
+    } catch (err) {
       setItems(null)
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd])
-  if (!items) return null // not a git repository
+  if (!items) {
+    // not a git repository: nothing to show; any other trouble (git missing, folder gone) must not hide silently
+    if (!error || error === 'not a git repository') return null
+    return (
+      <div className="changes">
+        <div className="cp-label">Checkpoints: {error}</div>
+      </div>
+    )
+  }
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>): Promise<void> => {
     setBusy(true)
     try {
       const r = await fn()
       if (!r.ok) alert(r.error)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
       await load()
@@ -42,7 +55,7 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
     })
   const restore = (c: Checkpoint): void => {
     if (!confirm(`Restore "${c.label}" (${when(c.createdAt)})?\n\nEvery file in this folder goes back to that snapshot (gitignored files stay). The current state is saved first as "before restore: ${c.label}", so this can be undone.`)) return
-    const moveHead = c.headMoved && confirm('Commits were made since this snapshot.\n\nOK: also move the branch back to where it was then (the newer commits stay in the reflog and in the "before restore" snapshot).\nCancel: keep the commits — the restore is then refused.')
+    const moveHead = c.headMoved && confirm('Commits were made since this snapshot.\n\nOK: also move the branch back to where it was then (the newer commits stay in the reflog and in the "before restore" snapshot). This acts on the whole repository: everything in it is unstaged, while only this folder\'s files are restored.\nCancel: keep the commits — the restore is then refused.')
     void run(() => window.ouroboros.checkpoints.restore(cwd, c.id, moveHead))
   }
   const remove = (c: Checkpoint): void => {

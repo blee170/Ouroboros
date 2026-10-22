@@ -177,7 +177,7 @@ server.registerTool(
   {
     title: 'Restore a git snapshot',
     description:
-      "Put the card's folder back exactly as it was in the snapshot (gitignored files and the board file are left alone). The current state is saved first as a \"before restore\" snapshot, so a restore can be undone. Refused while a card is working in that folder, and when HEAD moved since the snapshot unless move_head=true, which also moves the branch back to the commit of that time — destructive git: propose it and wait for APPROVED BY OWNER.",
+      "Put the card's folder back exactly as it was in the snapshot (gitignored files and the board file are left alone). The current state is saved first as a \"before restore\" snapshot, so a restore can be undone. Refused while a card is working (or waiting for the owner) in that folder, and when HEAD moved since the snapshot unless move_head=true, which also moves the branch back to the commit of that time (for the whole repository: everything in it is unstaged, only this card's folder is restored) — destructive git: propose it and wait for APPROVED BY OWNER.",
     inputSchema: { agent_id: z.string(), checkpoint_id: z.string(), move_head: z.boolean().optional() }
   },
   async ({ agent_id, checkpoint_id, move_head }) =>

@@ -81,7 +81,8 @@ async function computeChanges(cwd: string): Promise<ChangesSummary> {
     return { repo: false, files: [], added: 0, deleted: 0 }
   }
   const branch = (await git(cwd, ['branch', '--show-current'], [0, 128])).trim() || undefined
-  const status = parseStatus(await git(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']))
+  // no optional locks: this polling must not hold index.lock against the agents' own git commands or a checkpoint restore
+  const status = parseStatus(await git(cwd, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all']))
   const numstat = (await hasHead(cwd)) ? parseNumstat(await git(cwd, ['diff', 'HEAD', '--numstat', '-z', '-M'])) : new Map()
   let counted = 0
   const files: ChangeFile[] = []

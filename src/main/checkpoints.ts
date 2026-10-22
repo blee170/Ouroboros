@@ -13,9 +13,9 @@
  */
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdtemp, rm, rmdir, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdtemp, rm, rmdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { Checkpoint, CheckpointRestoreResult, CheckpointResult } from '@shared/protocol'
 import { git, headCommit } from './git'
 import { invalidateChanges } from './git-changes'
@@ -58,7 +58,9 @@ export function parseCheckpointRefs(raw: string): CheckpointRecord[] {
     const id = refname.slice(REF_PREFIX.length)
     if (!ID_RE.test(id)) continue
     const lines = contents.split(/\r?\n/)
-    const trailer = (key: string): string | undefined => lines.find((l) => l.startsWith(key + ': '))?.slice(key.length + 2).trim()
+    // trailers live in the body: the label (line 0) must not be able to spoof one
+    const body = lines.slice(1)
+    const trailer = (key: string): string | undefined => body.find((l) => l.startsWith(key + ': '))?.slice(key.length + 2).trim()
     if (trailer(MARKER) !== '1') continue
     const folder = trailer('Ouroboros-Folder')
     if (!folder) continue
@@ -89,15 +91,76 @@ function cleanLabel(label: string | undefined): string {
   return s || 'checkpoint'
 }
 
-async function folderKey(folder: string): Promise<FolderKey | null> {
+async function repoKey(folder: string): Promise<FolderKey | Fail> {
+  if (!existsSync(folder)) return fail(`folder does not exist: ${folder}`)
   try {
     const [top = '', prefix = ''] = (await git(folder, ['rev-parse', '--show-toplevel', '--show-prefix'])).split(/\r?\n/)
-    if (!top) return null
+    if (!top) return fail('not a git repository')
     const sub = prefix.trim().replace(/\/+$/, '')
     return { top, key: sub ? `${top}/${sub}` : top }
-  } catch {
-    return null
+  } catch (err) {
+    // anything but "not a git repository" (git missing, dubious ownership, …) is passed on as it is
+    return fail(/not a git repository/i.test(errorText(err)) ? 'not a git repository' : errorText(err))
   }
+}
+
+const BOARD_FILE_RE = new RegExp(`(^|/)${WORKSPACE_FILE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+const isBoardFile = (p: string): boolean => BOARD_FILE_RE.test(p)
+
+/** Files git would put in a snapshot of the folder (tracked + untracked, not ignored), relative to the folder. */
+async function scopeFiles(folder: string): Promise<string[]> {
+  return (await git(folder, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...SCOPE])).split('\0').filter(Boolean)
+}
+
+/** Files of a snapshot under the folder, relative to it. */
+async function snapshotFiles(folder: string, commit: string): Promise<string[]> {
+  return (await git(folder, ['ls-tree', '-r', '-z', '--name-only', commit, '--', '.'])).split('\0').filter(Boolean)
+}
+
+/**
+ * The first directory between the folder and one of `files` that is a symlink or (on Windows) a junction,
+ * or null. Git for Windows follows junctions, so a snapshot would capture, and a restore delete, files
+ * outside the repository through it.
+ */
+async function linkedDirIn(folder: string, files: string[]): Promise<string | null> {
+  const seen = new Set<string>()
+  for (const file of files) {
+    const parts = file.split('/')
+    let dir = folder
+    for (let i = 0; i < parts.length - 1; i++) {
+      dir = join(dir, parts[i])
+      if (seen.has(dir)) continue
+      seen.add(dir)
+      const st = await lstat(dir).catch(() => null)
+      if (st?.isSymbolicLink()) return relative(folder, dir)
+    }
+  }
+  return null
+}
+
+const linkedDirError = (dir: string): Fail => fail(`"${dir}" is a junction or symlinked folder: a snapshot would follow it outside the repository. Remove it or add it to .gitignore first`)
+
+/**
+ * Gitignored files that restoring the snapshot paths `files` would overwrite or remove: a snapshot file that is
+ * an ignored file now, ignored files under a snapshot file that is a folder now, and an ignored file where the
+ * snapshot has a folder. No snapshot holds them, so the safety snapshot of a restore must take them along.
+ */
+async function ignoredInTheWay(folder: string, files: string[]): Promise<string[]> {
+  const dirs = new Set<string>()
+  for (const f of files) for (let i = f.indexOf('/'); i > 0; i = f.indexOf('/', i + 1)) dirs.add(f.slice(0, i))
+  const spec = [...files]
+  for (const d of dirs) if ((await lstat(join(folder, d)).catch(() => null))?.isFile()) spec.push(d)
+  const out: string[] = []
+  // the pathspecs go on the command line in chunks (Windows caps it near 32 K characters)
+  for (let i = 0; i < spec.length; ) {
+    const chunk: string[] = []
+    for (let n = 0; i < spec.length && n < 8000; i++) {
+      chunk.push(spec[i])
+      n += spec[i].length + 3
+    }
+    out.push(...(await git(folder, ['--literal-pathspecs', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', ...chunk])).split('\0').filter(Boolean))
+  }
+  return out
 }
 
 async function readRecords(folder: string, id?: string): Promise<CheckpointRecord[]> {
@@ -129,19 +192,30 @@ async function operationInProgress(folder: string): Promise<string | null> {
 /**
  * Write the snapshot commit and its ref. `tmp` receives `index` (a copy of the real index with the folder's
  * current files added) and `msg`; the caller removes it. The real index and the working tree are not touched.
+ * `alsoAdd`: gitignored files to force into the snapshot (what a restore is about to overwrite).
  */
-async function snapshot(folder: string, k: FolderKey, tmp: string, label: string, cardId?: string): Promise<CheckpointRecord> {
+async function snapshot(folder: string, k: FolderKey, tmp: string, label: string, cardId?: string, alsoAdd: string[] = []): Promise<CheckpointRecord> {
   const index = join(tmp, 'index')
   const realIndex = resolve(folder, (await git(folder, ['rev-parse', '--git-path', 'index'])).trim())
   // start from the real index: an empty one would lose tracked-but-ignored files, record wrong modes on
   // Windows (core.symlinks / core.filemode off) and re-hash every file instead of only the changed ones
   if (existsSync(realIndex)) await copyFile(realIndex, index)
   const env = { ...process.env, GIT_INDEX_FILE: index }
+  // `add -A` trusts the assume-unchanged bit (core.ignoreStat sets it on every file) and would miss edits to
+  // those files: clear it in the copy, so the real index keeps it
+  const assumed = (await git(folder, ['ls-files', '-v', '-z', '--', ...SCOPE], [0], { env })).split('\0').filter((l) => /^[a-z] /.test(l)).map((l) => l.slice(2))
+  if (assumed.length) await git(folder, ['update-index', '--no-assume-unchanged', '-z', '--stdin'], [0], { env, input: assumed.join('\0') + '\0' })
   try {
     await git(folder, ['-c', 'core.safecrlf=false', 'add', '-A', '--', ...SCOPE], [0], { env, timeout: SNAPSHOT_TIMEOUT_MS })
   } catch (err) {
-    // a folder with nothing but gitignored files (or one that is ignored itself) has nothing to add
-    if (!/ignored by one of your \.gitignore/.test(errorText(err))) throw err
+    // a folder with nothing but gitignored files (or one that is ignored itself) has nothing to add: exit 1 with a hint
+    const text = errorText(err)
+    if ((err as { code?: unknown }).code !== 1 || !/ignored by one of your \.gitignore/.test(text) || /fatal:/.test(text)) throw err
+  }
+  if (alsoAdd.length) {
+    const list = join(tmp, 'paths')
+    await writeFile(list, alsoAdd.join('\0'), 'utf8')
+    await git(folder, ['-c', 'core.safecrlf=false', 'add', '-f', `--pathspec-from-file=${list}`, '--pathspec-file-nul'], [0], { env, timeout: SNAPSHOT_TIMEOUT_MS })
   }
   const tree = (await git(folder, ['write-tree'], [0], { env })).trim()
   const head = await headCommit(folder)
@@ -155,11 +229,11 @@ async function snapshot(folder: string, k: FolderKey, tmp: string, label: string
   return { id, label, createdAt: Number(id.slice(0, 13)), commit, tree, head, branch, cardId, folder: k.key }
 }
 
-/** Remove the directories left empty once `file` is gone, up to (not including) `top`. */
-async function pruneEmptyDirs(top: string, file: string): Promise<void> {
+/** Remove the directories left empty once `file` is gone, up to (not including) the card's folder. */
+async function pruneEmptyDirs(folder: string, file: string): Promise<void> {
   const norm = (p: string): string => (CASE_INSENSITIVE ? resolve(p).toLowerCase() : resolve(p))
-  const stop = norm(top)
-  for (let dir = dirname(file); norm(dir) !== stop && norm(dir).startsWith(stop); dir = dirname(dir)) {
+  const stop = norm(folder)
+  for (let dir = dirname(file); norm(dir) !== stop && norm(dir).startsWith(stop + sep); dir = dirname(dir)) {
     try {
       await rmdir(dir)
     } catch {
@@ -168,23 +242,23 @@ async function pruneEmptyDirs(top: string, file: string): Promise<void> {
   }
 }
 
-/** `git reset` on the real index; the app's own `git status` polling may hold index.lock for a moment. */
+/** `git reset` on the real index; another git command (an agent's) may hold index.lock for a moment. */
 async function resetWithRetry(folder: string, args: string[]): Promise<void> {
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
-      await git(folder, ['reset', '-q', ...args], [0, 1])
+      await git(folder, ['reset', '-q', ...args])
       return
     } catch (err) {
-      if (attempt >= 3 || !/index\.lock/.test(errorText(err))) throw err
-      await new Promise((r) => setTimeout(r, 250))
+      if (attempt >= 5 || !/index\.lock/.test(errorText(err))) throw err
+      await new Promise((r) => setTimeout(r, 150 * 2 ** attempt))
     }
   }
 }
 
-/** One operation at a time per folder. */
+/** One operation at a time per repository (keyed on its top level, so subfolders and worktree spellings share it). */
 const locks = new Map<string, Promise<void>>()
-function locked<T>(folder: string, fn: () => Promise<T>): Promise<T> {
-  const key = folder.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+function locked<T>(top: string, fn: () => Promise<T>): Promise<T> {
+  const key = top.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
   const run = (locks.get(key) ?? Promise.resolve()).then(fn, fn)
   const tail = run.then(
     () => undefined,
@@ -198,12 +272,14 @@ function locked<T>(folder: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** Take a snapshot of `folder`. Changes nothing on disk besides the new ref and objects. */
-export function createCheckpoint(folder: string, o: { label?: string; cardId?: string } = {}): Promise<CheckpointResult<{ checkpoint: Checkpoint }>> {
-  return locked(folder, async () => {
+export async function createCheckpoint(folder: string, o: { label?: string; cardId?: string } = {}): Promise<CheckpointResult<{ checkpoint: Checkpoint }>> {
+  const k = await repoKey(folder)
+  if ('ok' in k) return k
+  return locked(k.top, async () => {
     let tmp: string | undefined
     try {
-      const k = await folderKey(folder)
-      if (!k) return fail('not a git repository')
+      const linked = await linkedDirIn(folder, await scopeFiles(folder))
+      if (linked) return linkedDirError(linked)
       tmp = await mkdtemp(join(tmpdir(), 'ouro-ckpt-'))
       const rec = await snapshot(folder, k, tmp, cleanLabel(o.label), o.cardId)
       return { ok: true, checkpoint: toCheckpoint(rec, rec.head) }
@@ -218,8 +294,8 @@ export function createCheckpoint(folder: string, o: { label?: string; cardId?: s
 /** Snapshots taken in this folder (other folders of the same repository are hidden), newest first. */
 export async function listCheckpoints(folder: string): Promise<CheckpointResult<{ checkpoints: Checkpoint[] }>> {
   try {
-    const k = await folderKey(folder)
-    if (!k) return fail('not a git repository')
+    const k = await repoKey(folder)
+    if ('ok' in k) return k
     const head = await headCommit(folder)
     const checkpoints = (await readRecords(folder)).filter((r) => sameKey(r.folder, k.key)).map((r) => toCheckpoint(r, head))
     return { ok: true, checkpoints }
@@ -232,19 +308,28 @@ export async function listCheckpoints(folder: string): Promise<CheckpointResult<
  * Put the folder's files back as they were in checkpoint `id`. Saves a "before restore" snapshot first.
  * Refuses when HEAD moved since the snapshot unless `moveHead` is set (then the branch is moved back too).
  */
-export function restoreCheckpoint(folder: string, id: string, o: { moveHead?: boolean; cardId?: string } = {}): Promise<CheckpointRestoreResult> {
-  return locked(folder, async () => {
+export async function restoreCheckpoint(folder: string, id: string, o: { moveHead?: boolean; cardId?: string } = {}): Promise<CheckpointRestoreResult> {
+  if (!ID_RE.test(id)) return fail('invalid checkpoint id')
+  const k = await repoKey(folder)
+  if ('ok' in k) return k
+  return locked(k.top, async () => {
     let tmp: string | undefined
+    let safety: CheckpointRecord | undefined
+    let head: string | null = null
+    let touched = false // files were changed: whatever happens next, the caller must hear about the safety snapshot
     try {
-      if (!ID_RE.test(id)) return fail('invalid checkpoint id')
-      const k = await folderKey(folder)
-      if (!k) return fail('not a git repository')
       const cp = (await readRecords(folder, id))[0]
       if (!cp) return fail(`no checkpoint ${id}`)
       if (!sameKey(cp.folder, k.key)) return fail('this checkpoint was taken in another folder')
       const busy = await operationInProgress(folder)
       if (busy) return fail(`a ${busy} is in progress; finish or abort it first`)
-      const head = await headCommit(folder)
+      // the real index is written last; a lock on it would otherwise surface only after the files were rewritten
+      if (existsSync(resolve(folder, (await git(folder, ['rev-parse', '--git-path', 'index.lock'])).trim()))) return fail('the repository index is locked: another git command is running, or a crashed one left .git/index.lock behind. Try again in a moment')
+      // a junction anywhere the restore would write or delete must stop it before anything is touched
+      const cpFiles = await snapshotFiles(folder, cp.commit)
+      const linked = await linkedDirIn(folder, [...(await scopeFiles(folder)), ...cpFiles])
+      if (linked) return linkedDirError(linked)
+      head = await headCommit(folder)
       const moved = head !== cp.head
       if (moved && !o.moveHead) {
         let ahead = 0
@@ -259,44 +344,60 @@ export function restoreCheckpoint(folder: string, id: string, o: { moveHead?: bo
         if (branch !== cp.branch) return fail(`the branch changed since the checkpoint (${cp.branch ?? 'detached'} → ${branch ?? 'detached'}); check it out first`)
       }
       tmp = await mkdtemp(join(tmpdir(), 'ouro-ckpt-'))
-      const safety = await snapshot(folder, k, tmp, `before restore: ${cp.label}`, o.cardId)
+      // gitignored files the restore is about to overwrite or remove are in no snapshot: the safety snapshot takes them along
+      safety = await snapshot(folder, k, tmp, `before restore: ${cp.label}`, o.cardId, await ignoredInTheWay(folder, cpFiles))
       // the safety snapshot's index is the index of the current state: the restore works against it, so
       // the real index stays untouched until the files are in place
       const env = { ...process.env, GIT_INDEX_FILE: join(tmp, 'index') }
       // files that exist now but not in the snapshot go first (also makes case-only renames come out right)
       const extra = (await git(folder, ['diff-index', '--cached', '--no-renames', '--name-only', '-z', '--diff-filter=A', cp.commit, '--', ...SCOPE], [0], { env })).split('\0').filter(Boolean)
+      touched = true
+      // a file another program holds open, or a repository of its own, survives this; it is reported at the end
+      // (checked now, before the restore writes the snapshot's own files to such paths)
       for (const p of extra) await rm(resolve(k.top, p), { force: true }).catch(() => undefined)
+      const left = (await Promise.all(extra.map(async (p) => ((await lstat(resolve(k.top, p)).catch(() => null)) ? p : null)))).filter((p): p is string => p !== null)
       try {
         // no-overlay (the default): files in the index but not in the source are removed too
         await git(folder, ['restore', '-q', `--source=${cp.commit}`, '--worktree', '--', ...SCOPE], [0], { env, timeout: RESTORE_TIMEOUT_MS })
       } catch (err) {
         // `restore` reports "did not match" when the scope is empty on both sides: nothing to do then
-        const inSnapshot = (await git(folder, ['ls-tree', '-r', '--name-only', cp.commit, '--', '.'])).trim()
-        const inIndex = (await git(folder, ['ls-files', '--', '.'], [0], { env })).trim()
-        if (inSnapshot || inIndex) return { ...fail(`${errorText(err)} (the state before this restore is saved as checkpoint ${safety.id})`), safety: toCheckpoint(safety, head) }
+        const inIndex = (await git(folder, ['ls-files', '-z', '--', '.'], [0], { env })).split('\0').filter((p) => p && !isBoardFile(p))
+        if (cpFiles.some((p) => !isBoardFile(p)) || inIndex.length) throw err
       }
       // git only removes directories it emptied itself; the files removed above may have left some behind
-      for (const p of extra) await pruneEmptyDirs(k.top, resolve(k.top, p))
+      for (const p of extra) await pruneEmptyDirs(folder, resolve(k.top, p))
       const movedHead = moved && Boolean(o.moveHead)
-      if (movedHead) await resetWithRetry(folder, [cp.head as string])
-      else await resetWithRetry(folder, ['--', ...SCOPE])
-      invalidateChanges(folder)
+      if (movedHead) {
+        // `reset <commit>` resets the index first and moves HEAD last; a lock on the branch fails only that last step
+        const err = await resetWithRetry(folder, [cp.head as string]).then(
+          () => undefined,
+          (e: unknown) => e
+        )
+        if ((await headCommit(folder)) !== cp.head) {
+          await resetWithRetry(folder, []).catch(() => undefined) // index back on HEAD: only the files differ now
+          throw new Error(`HEAD could not be moved back (${err ? errorText(err) : 'the branch did not move'}); the files are restored and the commits are kept`)
+        }
+      } else await resetWithRetry(folder, ['--', ...SCOPE])
+      if (left.length) throw new Error(`${left.slice(0, 3).join(', ')}${left.length > 3 ? ` and ${left.length - 3} more` : ''} could not be removed (held open by another program, or a repository of its own)`)
       const headAfter = await headCommit(folder)
       return { ok: true, restored: toCheckpoint(cp, headAfter), safety: toCheckpoint(safety, headAfter), movedHead }
     } catch (err) {
-      return fail(errorText(err))
+      // once the safety snapshot exists the caller must know its id: the folder may be half restored
+      if (!safety) return fail(errorText(err))
+      return { ...fail(`${errorText(err)} (${touched ? 'the folder may be partly restored; ' : ''}the state before this restore is saved as checkpoint ${safety.id})`), safety: toCheckpoint(safety, head) }
     } finally {
+      if (touched) invalidateChanges(folder)
       if (tmp) await rm(tmp, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined)
     }
   })
 }
 
-export function deleteCheckpoint(folder: string, id: string): Promise<CheckpointResult<{ id: string }>> {
-  return locked(folder, async () => {
+export async function deleteCheckpoint(folder: string, id: string): Promise<CheckpointResult<{ id: string }>> {
+  if (!ID_RE.test(id)) return fail('invalid checkpoint id')
+  const k = await repoKey(folder)
+  if ('ok' in k) return k
+  return locked(k.top, async () => {
     try {
-      if (!ID_RE.test(id)) return fail('invalid checkpoint id')
-      const k = await folderKey(folder)
-      if (!k) return fail('not a git repository')
       const cp = (await readRecords(folder, id))[0]
       if (!cp) return fail(`no checkpoint ${id}`)
       if (!sameKey(cp.folder, k.key)) return fail('this checkpoint was taken in another folder')

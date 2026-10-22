@@ -275,7 +275,7 @@ Bump `version` in `package.json` and push. `.github/workflows/release.yml` creat
 - Windows is the target; Linux builds are for tests; macOS untested.
 - Unsigned binaries (SmartScreen warning on first run).
 - Codex: no "needs approval" signal; readiness is inferred from output.
-- Checkpoints restore files, not staging state (everything comes back unstaged); their snapshot commits show up in `git log --all`.
+- Checkpoints restore files, not staging state: everything comes back unstaged, and a staged version that was edited further before the restore is not kept. Files that were gitignored when the snapshot was taken but are not any more count as new and are removed by a restore (the "before restore" snapshot has them). Submodule contents are not covered. Snapshot commits show up in `git log --all`. They hold every non-gitignored file, so an un-ignored `.env` lands in `.git/objects` exactly as `git add -A` would put it there. Folders that are junctions or symlinks are refused.
 - Not yet: Discord/Telegram bot cards that feed messenger feedback into the Conductor, scheduled runs, PR monitoring.
 
 ## License

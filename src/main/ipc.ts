@@ -158,14 +158,23 @@ function folderOf(board: Board, n: { data: NodeData }): string {
   return n.data.worktree?.path || n.data.cwd || board.projectRoot
 }
 
-/** A card still editing `folder` (or a folder inside / around it). Conductors and team leads only orchestrate, so they do not count. */
-function workingCardIn(board: Board, folder: string): { id: string; data: NodeData } | undefined {
+/**
+ * A card or external session in any window still editing `folder` (or a folder inside / around it): working, or
+ * stopped mid-turn at a permission prompt or a question. Conductors and team leads only orchestrate, so they do not count.
+ */
+function busyIn(ctx: MainContext, folder: string): { id: string; title: string } | undefined {
   const f = normalizePath(folder)
-  for (const o of board.nodes.values()) {
-    const d = o.data
-    if (d.status !== 'working' || d.kind === 'conductor' || d.kind === 'note' || d.kind === 'browser' || d.claude?.boardTools) continue
-    const g = normalizePath(folderOf(board, o))
-    if (g === f || g.startsWith(f + '/') || f.startsWith(g + '/')) return o
+  const overlaps = (g: string): boolean => g === f || g.startsWith(f + '/') || f.startsWith(g + '/')
+  const midTurn = (s: NodeData['status']): boolean => s === 'working' || s === 'needs-you'
+  for (const w of ctx.windows.all()) {
+    for (const o of w.board.nodes.values()) {
+      const d = o.data
+      if (!midTurn(d.status) || d.kind === 'conductor' || d.kind === 'note' || d.kind === 'browser' || d.claude?.boardTools) continue
+      if (overlaps(normalizePath(folderOf(w.board, o)))) return { id: o.id, title: d.title }
+    }
+    for (const x of w.board.externalSessions.values()) {
+      if (midTurn(x.status) && x.cwd && overlaps(normalizePath(x.cwd))) return { id: x.sessionId, title: `external session ${x.sessionId.slice(0, 8)}` }
+    }
   }
   return undefined
 }
@@ -368,8 +377,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const n = board.nodes.get(id)
       if (!n) return null
       const folder = folderOf(board, n)
-      const busy = workingCardIn(board, folder)
-      if (busy) return { folder, ok: false, error: `card "${busy.data.title}" (${busy.id}) is working in that folder; wait for it or stop it first` }
+      const busy = busyIn(ctx, folder)
+      if (busy) return { folder, ok: false, error: `"${busy.title}" (${busy.id}) is working or waiting for the owner in that folder; wait for it or stop it first` }
       return { folder, ...(await restoreCheckpoint(folder, checkpointId, { moveHead, cardId: id })) }
     },
     deleteCheckpoint: async (id, checkpointId) => {
@@ -790,10 +799,9 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.changesDiff, (_e, cwd: string, file?: string) => getDiff(cwd, file))
   ipcMain.handle(IPC.checkpointsList, (_e, cwd: string) => listCheckpoints(cwd))
   ipcMain.handle(IPC.checkpointsCreate, (_e, cwd: string, label?: string) => createCheckpoint(cwd, { label }))
-  ipcMain.handle(IPC.checkpointsRestore, (e, cwd: string, id: string, moveHead?: boolean) => {
-    const board = sessionOf(e)?.board
-    const busy = board && workingCardIn(board, cwd)
-    if (busy) return { ok: false, error: `card "${busy.data.title}" is working in that folder; wait for it or stop it first` }
+  ipcMain.handle(IPC.checkpointsRestore, (_e, cwd: string, id: string, moveHead?: boolean) => {
+    const busy = busyIn(ctx, cwd)
+    if (busy) return { ok: false, error: `"${busy.title}" is working or waiting for you in that folder; wait for it or stop it first` }
     return restoreCheckpoint(cwd, id, { moveHead: Boolean(moveHead) })
   })
   ipcMain.handle(IPC.checkpointsDelete, (_e, cwd: string, id: string) => deleteCheckpoint(cwd, id))

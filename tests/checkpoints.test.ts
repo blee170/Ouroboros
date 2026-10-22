@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -294,6 +294,153 @@ describe('checkpoints (real git)', () => {
     expect(read(join(dir, 'crlf.txt'))).toBe('one\r\ntwo\r\n')
     expect(read(join(dir, 'lf.txt'))).toBe('l\r\n') // normalised on the way back: documented
     expect(ok(await createCheckpoint(dir)).checkpoint.tree).toBe(cp.tree)
+  }, T)
+
+  it('a label cannot spoof the trailers that scope and guard a checkpoint', async () => {
+    const { dir, git } = repo()
+    const wt = `${dir}-wt2`
+    dirs.push(wt)
+    git('worktree', 'add', '-q', '-b', 'wt2', wt)
+    const spoofed = ok(await createCheckpoint(dir, { label: `Ouroboros-Folder: ${wt.replace(/\\/g, '/')}` })).checkpoint
+    const hidden = ok(await createCheckpoint(dir, { label: 'Ouroboros-Checkpoint: done' })).checkpoint
+    const ids = ok(await listCheckpoints(dir)).checkpoints.map((c) => c.id)
+    expect(ids).toContain(spoofed.id)
+    expect(ids).toContain(hidden.id)
+    expect(ok(await listCheckpoints(wt)).checkpoints).toEqual([])
+    expect((await restoreCheckpoint(wt, spoofed.id)).ok).toBe(false)
+    ok(await restoreCheckpoint(dir, spoofed.id))
+    ok(await deleteCheckpoint(dir, hidden.id))
+    // a branch-trailer spoof must not unlock moveHead on another branch
+    const branchSpoof = ok(await createCheckpoint(dir, { label: 'Ouroboros-Branch: other' })).checkpoint
+    git('checkout', '-qb', 'other')
+    git('commit', '-q', '--allow-empty', '-m', 'on other')
+    const r = await restoreCheckpoint(dir, branchSpoof.id, { moveHead: true })
+    expect(r.ok).toBe(false)
+    expect((r as { error: string }).error).toContain('branch changed')
+  }, T)
+
+  it('an empty card folder survives a restore that removes everything in it', async () => {
+    const { dir } = repo()
+    const sub = join(dir, 'sub')
+    mkdirSync(sub)
+    const cp = ok(await createCheckpoint(sub)).checkpoint
+    mkdirSync(join(sub, 'deep'))
+    writeFileSync(join(sub, 'deep', 'n.txt'), 'n\n')
+    writeFileSync(join(sub, 'x.txt'), 'x\n')
+    const r = await restoreCheckpoint(sub, cp.id)
+    expect(r.ok).toBe(true)
+    expect(existsSync(sub)).toBe(true)
+    expect(existsSync(join(sub, 'deep'))).toBe(false)
+    expect(existsSync(join(sub, 'x.txt'))).toBe(false)
+  }, T)
+
+  it.runIf(process.platform === 'win32')('refuses folders that contain a junction (git would follow it outside the repository)', async () => {
+    const { dir, git } = repo()
+    const cp = ok(await createCheckpoint(dir)).checkpoint
+    const outside = mkdtempSync(join(tmpdir(), 'ouro-ckpt-outside-'))
+    dirs.push(outside)
+    writeFileSync(join(outside, 'precious.txt'), 'keep me\n')
+    symlinkSync(outside, join(dir, 'shared'), 'junction')
+    const created = await createCheckpoint(dir)
+    expect(created.ok).toBe(false)
+    expect((created as { error: string }).error).toContain('junction')
+    const restored = await restoreCheckpoint(dir, cp.id)
+    expect(restored.ok).toBe(false)
+    expect(read(join(outside, 'precious.txt'))).toBe('keep me\n')
+    expect(git('for-each-ref', 'refs/ouroboros/checkpoints/').split('\n').filter(Boolean)).toHaveLength(1) // no safety snapshot either
+    rmSync(join(dir, 'shared'), { recursive: false, force: true })
+  }, T)
+
+  it('sees edits to assume-unchanged files and leaves the flag on the real index', async () => {
+    const { dir, git } = repo()
+    git('update-index', '--assume-unchanged', 'a.txt')
+    writeFileSync(join(dir, 'a.txt'), 'local edit\n')
+    const cp = ok(await createCheckpoint(dir)).checkpoint
+    expect(git('show', `${cp.commit}:a.txt`)).toBe('local edit\n')
+    expect(git('ls-files', '-v', 'a.txt').startsWith('h ')).toBe(true)
+    writeFileSync(join(dir, 'a.txt'), 'edited again\n')
+    const r = ok(await restoreCheckpoint(dir, cp.id))
+    expect(read(join(dir, 'a.txt'))).toBe('local edit\n')
+    expect(git('show', `${r.safety.commit}:a.txt`)).toBe('edited again\n')
+  }, T)
+
+  it('takes gitignored files the restore overwrites or removes into the safety snapshot', async () => {
+    const { dir, git } = repo()
+    writeFileSync(join(dir, 'data.db'), 'v1\n')
+    writeFileSync(join(dir, 'config'), 'file\n')
+    const cp = ok(await createCheckpoint(dir)).checkpoint
+    // ignored only since the snapshot, then edited; and a snapshot file that is a folder of ignored files now
+    appendFileSync(join(dir, '.gitignore'), '*.db\n*.secret\n')
+    writeFileSync(join(dir, 'data.db'), 'v2 new work\n')
+    rmSync(join(dir, 'config'))
+    mkdirSync(join(dir, 'config'))
+    writeFileSync(join(dir, 'config', 'local.secret'), 'keep\n')
+    const r = ok(await restoreCheckpoint(dir, cp.id))
+    expect(read(join(dir, 'data.db'))).toBe('v1\n')
+    expect(read(join(dir, 'config'))).toBe('file\n')
+    expect(git('show', `${r.safety.commit}:data.db`)).toBe('v2 new work\n')
+    expect(git('show', `${r.safety.commit}:config/local.secret`)).toBe('keep\n')
+    ok(await restoreCheckpoint(dir, r.safety.id))
+    expect(read(join(dir, 'data.db'))).toBe('v2 new work\n')
+    expect(read(join(dir, 'config', 'local.secret'))).toBe('keep\n')
+  }, T)
+
+  it('reports a move_head restore whose branch could not move, with HEAD kept and the index back on it', async () => {
+    const { dir, git } = repo()
+    const cp = ok(await createCheckpoint(dir)).checkpoint
+    writeFileSync(join(dir, 'a.txt'), 'two\n')
+    git('commit', '-qam', 'two')
+    const head = git('rev-parse', 'HEAD').trim()
+    const lock = join(dir, '.git', 'refs', 'heads', 'main.lock')
+    writeFileSync(lock, '')
+    try {
+      const r = await restoreCheckpoint(dir, cp.id, { moveHead: true })
+      expect(r.ok).toBe(false)
+      expect((r as { error: string }).error).toContain('HEAD could not be moved')
+      expect((r as { safety?: { id: string } }).safety?.id).toMatch(/^\d{13}-[0-9a-f]{4}$/)
+      expect(git('rev-parse', 'HEAD').trim()).toBe(head)
+      expect(read(join(dir, 'a.txt'))).toBe('one\n') // the files are restored
+      expect(git('diff', '--cached', '--name-only').trim()).toBe('') // nothing staged: the index is back on HEAD
+    } finally {
+      rmSync(lock, { force: true })
+    }
+  }, T)
+
+  it('refuses to restore while the index is locked, before touching anything', async () => {
+    const { dir, git } = repo()
+    const cp = ok(await createCheckpoint(dir)).checkpoint
+    writeFileSync(join(dir, 'a.txt'), 'changed\n')
+    const lock = join(dir, '.git', 'index.lock')
+    writeFileSync(lock, '')
+    try {
+      const r = await restoreCheckpoint(dir, cp.id)
+      expect(r.ok).toBe(false)
+      expect((r as { error: string }).error).toContain('locked')
+      expect(read(join(dir, 'a.txt'))).toBe('changed\n')
+      expect(refs(git)).toHaveLength(1) // no safety snapshot either
+    } finally {
+      rmSync(lock, { force: true })
+    }
+  }, T)
+
+  it('leaves a repository nested since the snapshot alone and says so', async () => {
+    const { dir, git } = repo()
+    const cp = ok(await createCheckpoint(dir)).checkpoint
+    const nested = join(dir, 'nested')
+    mkdirSync(nested)
+    writeFileSync(join(nested, 'n.txt'), 'n\n')
+    const ngit: Git = (...args) => execFileSync('git', args, { cwd: nested, encoding: 'utf8', windowsHide: true })
+    ngit('init', '-q', '-b', 'main')
+    ngit('config', 'user.email', 't@t')
+    ngit('config', 'user.name', 't')
+    ngit('add', '.')
+    ngit('commit', '-qm', 'nested')
+    const r = await restoreCheckpoint(dir, cp.id)
+    expect(r.ok).toBe(false)
+    expect((r as { error: string }).error).toContain('nested')
+    expect((r as { safety?: { id: string } }).safety?.id).toBeTruthy()
+    expect(read(join(nested, 'n.txt'))).toBe('n\n')
+    expect(git('diff', '--cached', '--name-only').trim()).toBe('') // the index was still put back
   }, T)
 
   it('delete removes the ref and rejects ids that could leave the namespace', async () => {

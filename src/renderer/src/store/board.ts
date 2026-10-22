@@ -118,7 +118,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null })
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {} })
     scheduleSync(get)
   },
 
@@ -243,10 +243,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   applyStatus(p) {
-    const prev = get().nodes.find((n) => n.id === p.nodeId)?.data.status
+    // when the turn started; a permission prompt or question (needs-you) pauses the turn without ending it
     let workingSince = get().workingSince
-    if (p.status === 'working' && prev !== 'working') workingSince = { ...workingSince, [p.nodeId]: p.at }
-    else if (p.status !== 'working' && prev === 'working') {
+    if (p.status === 'working' && !(p.nodeId in workingSince)) workingSince = { ...workingSince, [p.nodeId]: p.at }
+    else if (p.status !== 'working' && p.status !== 'needs-you' && p.nodeId in workingSince) {
       workingSince = { ...workingSince }
       delete workingSince[p.nodeId]
     }

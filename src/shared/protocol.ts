@@ -19,6 +19,7 @@ export const IPC = {
   briefOpen: 'brief:open',
   filesSaveImage: 'files:saveImage',
   filesPasteClipboard: 'files:pasteClipboard',
+  skillsList: 'skills:list',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -190,6 +191,13 @@ export interface ChangesSummary {
 }
 
 /** A git snapshot of a folder (every non-gitignored file, committed or not), kept under refs/ouroboros/checkpoints/<id>. */
+/** A slash command the composer can complete: `name` without the leading slash. */
+export interface SkillEntry {
+  name: string
+  description?: string
+  source: 'builtin' | 'user' | 'project' | 'plugin'
+}
+
 export interface Checkpoint {
   /** `<unix ms>-<4 hex>`; also the ref name's last segment */
   id: string
@@ -327,6 +335,10 @@ export interface OuroborosApi {
     saveImage(bytes: Uint8Array, ext: string): Promise<string>
     /** What Ctrl+V should paste: the clipboard image saved to a file (`path`), else its text. */
     pasteClipboard(): Promise<{ path?: string; text?: string }>
+  }
+  skills: {
+    /** Slash commands a Claude Code card in `cwd` offers (built-ins, user, project, plugins). */
+    list(cwd: string): Promise<SkillEntry[]>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

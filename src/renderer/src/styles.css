@@ -88,7 +88,8 @@ textarea { resize: vertical; font-family: Consolas, monospace; font-size: 12px; 
 .context-menu button { background: none; border: none; text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
 .context-menu button:hover { background: var(--panel-2); }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; width: 520px; max-width: 95vw; }
+/* long paths and URLs wrap instead of running out of the dialog; a tall dialog scrolls instead of leaving the screen */
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; width: 520px; max-width: 95vw; max-height: 92vh; overflow: auto; overflow-wrap: anywhere; }
 .modal h3 { margin: 0 0 10px; }
 .modal label.row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
 .welcome { flex: 1; display: flex; align-items: center; justify-content: center; }
@@ -179,6 +180,12 @@ body.ouro-dragging webview { pointer-events: none; }
 /* roster groups */
 .roster-group { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .roster-group .link.small { margin-left: auto; font-size: 11px; }
+/* slash-command picker under the composer */
+.skill-list { list-style: none; margin: 4px 0; padding: 2px 0; max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+.skill-item { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; cursor: pointer; font-size: 12px; min-width: 0; }
+.skill-item.active, .skill-item:hover { background: rgba(255,255,255,0.08); }
+.skill-item .name { white-space: nowrap; }
+.skill-item .desc { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* canvas find box */
 .find-box { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 20; width: 320px; padding: 8px 10px; border-radius: 8px; border: 1px solid #38bdf8; background: var(--panel); color: var(--text); font-size: 13px; outline: none; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
 .roster-main .hotkey { grid-column: 2; justify-self: start; font-size: 9px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; font-family: inherit; }

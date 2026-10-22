@@ -277,7 +277,7 @@ server.registerTool(
 )
 server.registerTool(
   'browser_open',
-  { title: 'Open a browser card', description: 'Add a new browser card to the canvas (optionally at a URL) and return its id.', inputSchema: { url: z.string().optional(), title: z.string().optional() } },
+  { title: 'Open a browser card', description: 'Add a browser card to the canvas (optionally at a URL) and return its id. A card that already shows that URL is returned instead of a second copy.', inputSchema: { url: z.string().optional(), title: z.string().optional() } },
   async (input) => text(await api('POST', '/api/browsers', input))
 )
 server.registerTool(

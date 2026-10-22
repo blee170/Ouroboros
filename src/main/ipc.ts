@@ -10,6 +10,7 @@ import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
 import { findBriefUrl } from './briefs'
+import { listSkills } from './skills'
 import { prepareLaunch } from './claude-launcher'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -230,6 +231,9 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           .filter((n) => n.data.kind === 'browser')
           .map((n) => ({ id: n.id, title: n.data.title, url: n.data.url, ready: ctx.browsers.has(n.id) })),
       create: async (input) => {
+        // the same page twice on the canvas helps nobody: hand back the card that already shows it
+        const dup = input.url ? browserShowing(ctx, board, input.url) : undefined
+        if (dup) return { id: dup }
         const id = nanoid(10)
         const count = board.nodes.size
         const node: WorkspaceNode = {
@@ -448,6 +452,19 @@ function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayloa
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
 }
 
+const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
+
+/** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
+function browserShowing(ctx: MainContext, board: Board, url: string): string | undefined {
+  const key = urlKey(url)
+  for (const n of board.nodes.values()) {
+    if (n.data.kind !== 'browser') continue
+    const live = ctx.browsers.get(n.id)?.getURL()
+    if (urlKey(live || n.data.url || '') === key) return n.id
+  }
+  return undefined
+}
+
 /** Show a brief (claude.ai artifact, report URL) in the window's "📄 Briefs" browser card, created on first use. */
 async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
   // Briefs stay on the canvas. Only when the owner turned the setting on (claude.ai refusing to sign in
@@ -456,6 +473,8 @@ async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promi
     void shell.openExternal(url)
     return
   }
+  // a card already on that page (the Conductor's own browser_open, say) is enough: no second copy
+  if (browserShowing(ctx, s.board, url)) return
   const existing = [...s.board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
   if (existing && ctx.browsers.has(existing.id)) await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
   else await s.api.browser.create({ url, title: '📄 Briefs' })
@@ -738,6 +757,7 @@ export function registerIpc(ctx: MainContext): void {
     return file
   }
   ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => savePasted(bytes, ext))
+  ipcMain.handle(IPC.skillsList, (_e, cwd: string) => listSkills(typeof cwd === 'string' ? cwd : ''))
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
   ipcMain.handle(IPC.filesPasteClipboard, async (): Promise<{ path?: string; text?: string }> => {

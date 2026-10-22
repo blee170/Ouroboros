@@ -91,6 +91,9 @@ const api: OuroborosApi = {
     saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext),
     pasteClipboard: () => ipcRenderer.invoke(IPC.filesPasteClipboard)
   },
+  skills: {
+    list: (cwd) => ipcRenderer.invoke(IPC.skillsList, cwd)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

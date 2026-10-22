@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { NodeResizer, useStore, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
+import { setDragShield } from '@/lib/dragShield'
 
 /** Minimal surface of Electron's <webview> element that we use. */
 interface WebviewEl extends HTMLElement {
@@ -87,6 +88,20 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
+  const resizeNode = useBoard((s) => s.resizeNode)
+  const SIZES: Array<[number, number]> = [
+    [640, 480],
+    [960, 720],
+    [1280, 900],
+    [1600, 1100]
+  ]
+  const cycleSize = (): void => {
+    const node = useBoard.getState().nodes.find((n) => n.id === id)
+    const w = node?.measured?.width ?? node?.width ?? 640
+    const idx = SIZES.findIndex(([sw]) => sw > w + 20)
+    const [nw, nh] = SIZES[idx === -1 ? 0 : idx]
+    resizeNode(id, nw, nh)
+  }
   const go = (): void => {
     const u = normalise(address)
     setAddress(u)
@@ -95,7 +110,15 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
 
   return (
     <div className={`browser-node${selected ? ' selected' : ''}`}>
-      <NodeResizer minWidth={360} minHeight={240} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8' }} />
+      <NodeResizer
+        minWidth={360}
+        minHeight={240}
+        isVisible={selected}
+        lineStyle={{ borderColor: '#38bdf8' }}
+        handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }}
+        onResizeStart={() => setDragShield(true)}
+        onResizeEnd={() => setDragShield(false)}
+      />
       <div className="node-header">
         <span className="title" title={pageTitle}>
           🌐 {data.title}
@@ -111,6 +134,9 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         </button>
         <button className="icon-btn nodrag" title="Chrome / Edge bookmarks" onClick={() => void openBookmarks()}>
           ★
+        </button>
+        <button className="icon-btn nodrag" title="Cycle size: 640×480 → 960×720 → 1280×900 → 1600×1100 (or drag any edge or corner)" onClick={() => cycleSize()}>
+          ⤢
         </button>
         <button className="icon-btn nodrag" title="Open this page in your system browser (sites that refuse embedded sign-in)" onClick={() => void window.ouroboros.shell.openExternal(ref.current?.getURL() || address)}>
           ↗

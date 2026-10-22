@@ -57,6 +57,8 @@ interface BoardState {
   /** Add a generated set of nodes/edges (Board Builder). `replace` closes every existing card first. */
   addGenerated(nodes: WorkspaceNode[], edges: WorkspaceEdge[], replace: boolean): Promise<void>
   updateNodeData(id: string, patch: Partial<NodeData>): void
+  /** Set a card's size (presets, ⤢ button). */
+  resizeNode(id: string, width: number, height: number): void
   updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
   removeNode(id: string): Promise<void>
   removeEdge(id: string): void
@@ -182,6 +184,10 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   updateNodeData(id, patch) {
     set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)) })
+    scheduleSync(get)
+  },
+  resizeNode(id, width, height) {
+    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, width, height, style: { ...(n.style ?? {}), width, height } } : n)) })
     scheduleSync(get)
   },
   updateEdgeData(id, patch) {

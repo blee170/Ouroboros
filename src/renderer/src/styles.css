@@ -105,7 +105,13 @@ textarea { resize: vertical; font-family: Consolas, monospace; font-size: 12px; 
 .react-flow__minimap { background: var(--panel) !important; border: 1px solid var(--border); border-radius: 8px; }
 .react-flow__controls button { background: var(--panel-2) !important; border-bottom: 1px solid var(--border) !important; color: var(--text) !important; }
 .react-flow__node { font-family: inherit; }
-.react-flow__resize-control.line { border-width: 1px; }
+.react-flow__resize-control { z-index: 30; }
+/* generous hit areas: the visible line stays 1px, the grab zone is 10px straddling the edge */
+.react-flow__resize-control.line.left, .react-flow__resize-control.line.right { width: 10px; }
+.react-flow__resize-control.line.top, .react-flow__resize-control.line.bottom { height: 10px; }
+.react-flow__resize-control.handle { width: 14px; height: 14px; }
+/* while resizing, dragging or connecting, webviews must not swallow the pointer */
+body.ouro-dragging webview { pointer-events: none; }
 
 /* board builder */
 .modal.wide { width: 980px; }

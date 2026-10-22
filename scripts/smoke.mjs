@@ -248,6 +248,17 @@ await sleep(400)
 const bt = await page.evaluate((id) => window.__board.getState().nodes.find((n) => n.id === id)?.data.claude?.boardTools, a)
 check(patched.status === 404 && bt !== true, `PATCH board_tools on a terminal card is refused (claude cards only) (${patched.status})`)
 
+// --- card size presets + webview drag shield ---
+const sizeBefore = await page.evaluate((id) => { const n = window.__board.getState().nodes.find((x) => x.id === id); return n.measured?.width ?? n.width }, bid)
+await page.evaluate((id) => window.__board.getState().resizeNode(id, 960, 720), bid)
+await sleep(500)
+const sizeAfter = await page.evaluate((id) => window.__board.getState().nodes.find((x) => x.id === id).width, bid)
+check(sizeBefore === 640 && sizeAfter === 960, `resizeNode applies a size preset (${sizeBefore} → ${sizeAfter})`)
+await page.evaluate(() => document.body.classList.add('ouro-dragging'))
+const shielded = await page.evaluate(() => getComputedStyle(document.querySelector('webview')).pointerEvents)
+await page.evaluate(() => document.body.classList.remove('ouro-dragging'))
+check(shielded === 'none', `webviews ignore the pointer while dragging (${shielded})`)
+
 // --- a second window is a second project, fully separated from the first ---
 const project2 = mkdtempSync(join(tmpdir(), 'ouro-smoke2-'))
 await page.evaluate((p) => window.ouroboros.window.open(p), project2)

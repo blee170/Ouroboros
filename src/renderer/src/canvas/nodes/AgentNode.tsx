@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
+import { setDragShield } from '@/lib/dragShield'
 import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow/react'
 import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
@@ -56,7 +57,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const color = STATUS_COLOR[status]
   return (
     <div className={`agent-node kind-${kind} status-${status}`} style={{ borderColor: selected ? '#38bdf8' : color }}>
-      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8' }} />
+      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <Handle type="target" position={Position.Left} className="port port-in" />
       <Handle type="source" position={Position.Right} className="port port-out" />
       <div className="node-header">

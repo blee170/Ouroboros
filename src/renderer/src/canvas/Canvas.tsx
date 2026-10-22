@@ -9,6 +9,7 @@ import { HandoffEdge } from './edges/HandoffEdge'
 import { STATUS_COLOR } from '@shared/status'
 import type { NodeKind } from '@shared/types'
 import { rosterOrder } from '@/lib/rosterOrder'
+import { setDragShield } from '@/lib/dragShield'
 
 const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode, browser: BrowserNode }
 const edgeTypes: EdgeTypes = { handoff: HandoffEdge }
@@ -118,6 +119,10 @@ export function Canvas() {
         onSelectionChange={onSelectionChange}
         onPaneContextMenu={onContextMenu}
         onMoveEnd={(_e, v) => setViewport(v)}
+        onNodeDragStart={() => setDragShield(true)}
+        onNodeDragStop={() => setDragShield(false)}
+        onConnectStart={() => setDragShield(true)}
+        onConnectEnd={() => setDragShield(false)}
         defaultViewport={defaultViewport}
         minZoom={0.15}
         maxZoom={2}

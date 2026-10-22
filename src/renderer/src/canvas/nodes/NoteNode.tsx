@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { setDragShield } from '@/lib/dragShield'
 import { NodeResizer, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
@@ -8,7 +9,7 @@ function NoteNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const removeNode = useBoard((s) => s.removeNode)
   return (
     <div className={`note-node${selected ? ' selected' : ''}`}>
-      <NodeResizer minWidth={200} minHeight={120} isVisible={selected} lineStyle={{ borderColor: '#facc15' }} handleStyle={{ background: '#facc15' }} />
+      <NodeResizer minWidth={200} minHeight={120} isVisible={selected} lineStyle={{ borderColor: '#facc15' }} handleStyle={{ background: '#facc15', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <div className="node-header">
         <span className="title">📝 {data.title}</span>
         <span className="spacer" />

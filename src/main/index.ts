@@ -1,4 +1,5 @@
-import { BrowserWindow, Menu, Tray, app, nativeImage, shell } from 'electron'
+import { BrowserWindow, Menu, Tray, app, crashReporter, nativeImage, shell } from 'electron'
+import { initDiagnostics, log } from './diagnostics'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Board } from './board'
@@ -105,6 +106,18 @@ async function main(): Promise<void> {
   }
   // Separate ids: toasts left in Action Center by a dev run must not COM-activate node_modules\electron.exe later.
   app.setAppUserModelId(isDev ? 'dev.blee170.ouroboros.dev' : 'dev.blee170.ouroboros')
+  // Local-only crash dumps (userData/Crashpad/reports) and a main.log trail: no upload anywhere.
+  try {
+    crashReporter.start({ submitURL: '', uploadToServer: false, compress: false, ignoreSystemCrashHandler: false })
+  } catch {
+    /* unsupported platform or already started */
+  }
+  initDiagnostics(app.getPath('userData'))
+  log(`start v${app.getVersion()} electron=${process.versions.electron} ${process.platform} ${process.arch}`)
+  process.on('uncaughtException', (err) => log(`uncaughtException: ${err?.stack ?? String(err)}`))
+  process.on('unhandledRejection', (err) => log(`unhandledRejection: ${(err as Error)?.stack ?? String(err)}`))
+  app.on('child-process-gone', (_e, d) => log(`child-process-gone type=${d.type} reason=${d.reason} exit=${d.exitCode} name=${d.name ?? ''}`))
+  app.on('render-process-gone', (_e, wc, d) => log(`render-process-gone wc=${wc.id} reason=${d.reason} exit=${d.exitCode}`))
   // Browser cards present a plain Chrome UA (consistently, client hints included): Google sign-in and
   // bot checks refuse anything that mentions Electron.
   app.userAgentFallback = app.userAgentFallback.replace(/\s?Electron\/[\d.]+/, '').replace(/\s?ouroboros\/[\d.]+/i, '')
@@ -157,6 +170,7 @@ async function main(): Promise<void> {
     quitting = true
   })
   app.on('will-quit', () => {
+    log('will-quit')
     ptys.killAll()
     ctx.hookServer.stop()
   })

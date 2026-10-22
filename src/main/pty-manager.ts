@@ -1,7 +1,20 @@
 import { EventEmitter } from 'node:events'
 import * as pty from 'node-pty'
 import { existsSync } from 'node:fs'
+import { release } from 'node:os'
 import type { PtySpawnOptions } from '@shared/protocol'
+import { log } from './diagnostics'
+
+/**
+ * Windows: prefer the ConPTY bundled with node-pty over the one shipped in the OS. The in-box
+ * ConPTY of older Windows 10 builds has known crashes on resize/close; the bundled DLL needs
+ * Windows 10 2004+ (build 19041).
+ */
+function useBundledConpty(): boolean {
+  if (process.platform !== 'win32') return false
+  const build = Number(release().split('.')[2] ?? 0)
+  return build >= 19041
+}
 
 export type ShellKind = 'powershell' | 'cmd' | 'posix'
 
@@ -27,6 +40,9 @@ function shellArgs(kind: ShellKind): string[] {
 interface Entry {
   proc: pty.IPty
   nodeId: string
+  cols: number
+  rows: number
+  exited: boolean
 }
 
 export interface PtyEvents {
@@ -49,18 +65,24 @@ export class PtyManager extends EventEmitter {
       OUROBOROS_NODE_ID: opts.nodeId,
       ...(opts.env ?? {})
     }
+    const cols = Math.max(10, opts.cols | 0)
+    const rows = Math.max(3, opts.rows | 0)
+    log(`pty spawn ${opts.nodeId} shell=${shell} ${cols}x${rows} cwd=${cwd}`)
     const proc = pty.spawn(shell, shellArgs(kind), {
       name: 'xterm-256color',
-      cols: Math.max(10, opts.cols | 0),
-      rows: Math.max(3, opts.rows | 0),
+      cols,
+      rows,
       cwd,
       env,
-      useConpty: true
+      useConpty: true,
+      useConptyDll: useBundledConpty()
     })
-    const entry: Entry = { proc, nodeId: opts.nodeId }
+    const entry: Entry = { proc, nodeId: opts.nodeId, cols, rows, exited: false }
     this.entries.set(opts.nodeId, entry)
     proc.onData((data) => this.emit('data', opts.nodeId, data))
     proc.onExit(({ exitCode }) => {
+      entry.exited = true
+      log(`pty exit ${opts.nodeId} code=${exitCode}`)
       if (this.entries.get(opts.nodeId) === entry) this.entries.delete(opts.nodeId)
       this.emit('exit', opts.nodeId, exitCode)
     })
@@ -72,18 +94,28 @@ export class PtyManager extends EventEmitter {
 
   write(nodeId: string, data: string): boolean {
     const e = this.entries.get(nodeId)
-    if (!e) return false
-    e.proc.write(data)
-    return true
+    if (!e || e.exited) return false
+    try {
+      e.proc.write(data)
+      return true
+    } catch (err) {
+      log(`pty write failed ${nodeId}: ${String((err as Error).message ?? err)}`)
+      return false
+    }
   }
 
   resize(nodeId: string, cols: number, rows: number): void {
     const e = this.entries.get(nodeId)
-    if (!e) return
+    if (!e || e.exited) return
+    const c = Math.max(10, cols | 0)
+    const r = Math.max(3, rows | 0)
+    if (c === e.cols && r === e.rows) return // nothing changed: never poke ConPTY for nothing
+    e.cols = c
+    e.rows = r
     try {
-      e.proc.resize(Math.max(10, cols | 0), Math.max(3, rows | 0))
-    } catch {
-      /* resizing a dead pty throws; ignore */
+      e.proc.resize(c, r)
+    } catch (err) {
+      log(`pty resize failed ${nodeId}: ${String((err as Error).message ?? err)}`)
     }
   }
 
@@ -91,10 +123,12 @@ export class PtyManager extends EventEmitter {
     const e = this.entries.get(nodeId)
     if (!e) return
     this.entries.delete(nodeId)
+    if (e.exited) return // already gone: closing a dead ConPTY twice is what crashes
+    log(`pty kill ${nodeId}`)
     try {
       e.proc.kill()
-    } catch {
-      /* ignore */
+    } catch (err) {
+      log(`pty kill failed ${nodeId}: ${String((err as Error).message ?? err)}`)
     }
   }
 

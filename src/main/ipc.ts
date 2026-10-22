@@ -20,6 +20,7 @@ import { decryptToken, encryptToken, type Updater } from './updater'
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
 import { selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
+import { logPath } from './diagnostics'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
@@ -678,7 +679,9 @@ export function registerIpc(ctx: MainContext): void {
     mcpRunner: findNodeBinary() ?? `${process.execPath} (ELECTRON_RUN_AS_NODE)`,
     mcpScript: ctx.mcpScriptPath,
     hasUpdateToken: Boolean(decryptToken(store.getSettings().githubTokenEnc)),
-    packaged: app.isPackaged
+    packaged: app.isPackaged,
+    logFile: logPath() ?? undefined,
+    crashDir: join(app.getPath('crashDumps'))
   }))
 
   ipcMain.handle(IPC.bookmarksList, (_e, query?: string) => listBookmarks(query))

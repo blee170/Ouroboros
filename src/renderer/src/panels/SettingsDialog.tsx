@@ -98,6 +98,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </button>
           </label>
           <div className="muted small">Releases are built by GitHub Actions on every version bump. The repository is public, so no token is needed; the field is for private forks (stored encrypted).</div>
+        <div className="muted small" style={{ marginTop: 8 }}>
+          Diagnostics: <code>{info?.logFile ?? 'main.log'}</code> (what the app was doing) · crash dumps in <code>{info?.crashDir ?? 'Crashpad'}</code>. Attach both when reporting a crash.
+        </div>
         </div>
         {msg && <div className="small">{msg}</div>}
         <div className="row right">

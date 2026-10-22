@@ -137,6 +137,10 @@ export interface AppInfo {
   mcpScript?: string
   hasUpdateToken?: boolean
   packaged?: boolean
+  /** userData/main.log — pty lifecycle, lost processes, uncaught errors */
+  logFile?: string
+  /** where Electron writes local crash dumps */
+  crashDir?: string
 }
 
 export interface ClaudeSessionInfo {

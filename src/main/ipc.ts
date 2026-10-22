@@ -69,6 +69,20 @@ function broadcast(ctx: MainContext, channel: string, payload: unknown): void {
 }
 
 const running = new Map<string, RunningCommand>()
+/**
+ * Terminal creation is serialised with a short gap: a Conductor can ask for six cards in one
+ * breath, and creating many ConPTYs in the same instant is where Windows terminals get fragile.
+ */
+let spawnGate: Promise<void> = Promise.resolve()
+const SPAWN_GAP_MS = 350
+function throttledSpawn<T>(fn: () => T): Promise<T> {
+  const turn = spawnGate.then(fn)
+  spawnGate = turn.then(
+    () => new Promise((r) => setTimeout(r, SPAWN_GAP_MS)),
+    () => new Promise((r) => setTimeout(r, SPAWN_GAP_MS))
+  )
+  return turn
+}
 const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** length of the launch command typed into each card's shell (its echo is not TUI output) */
 const launchLineLength = new Map<string, number>()
@@ -520,12 +534,12 @@ export function registerIpc(ctx: MainContext): void {
     sendToRenderer(s, IPC.ptyExit, { nodeId, code })
   })
 
-  ipcMain.handle(IPC.ptySpawn, (e, opts: PtySpawnOptions) => {
+  ipcMain.handle(IPC.ptySpawn, async (e, opts: PtySpawnOptions) => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
     try {
       ctx.windows.bindNode(opts.nodeId, s.id)
-      ptys.spawn(opts)
+      await throttledSpawn(() => ptys.spawn(opts))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'idle', statusDetail: 'shell' })
       return { ok: true }
@@ -540,7 +554,7 @@ export function registerIpc(ctx: MainContext): void {
     sessionOf(e)?.board.setPtyAlive(nodeId, false)
   })
 
-  ipcMain.handle(IPC.claudeLaunch, (e, opts: ClaudeLaunchOptions) => {
+  ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
     try {
@@ -562,7 +576,7 @@ export function registerIpc(ctx: MainContext): void {
         title: opts.title
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
-      ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env })
+      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
       if (prepared.initialPrompt) {

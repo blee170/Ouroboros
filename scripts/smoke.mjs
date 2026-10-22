@@ -126,6 +126,19 @@ const edgeCount = await page.evaluate(() => window.__board.getState().edges.leng
 check(edgeCount === 4, `Build board wired 3 role lines on top of the existing one (${edgeCount - 1})`)
 check((await api('GET', '/api/handoffs')).json.handoffs.length === edgeCount, 'generated lines synced to main')
 
+// handoff lines through the api (what connect_agents calls)
+const hc = await api('POST', '/api/handoffs', { source: b, target: a, mode: 'auto', template: 'LOOP {{last_assistant_message}}', condition: 'ship' })
+check(typeof hc.json.id === 'string', 'connect_agents creates a line')
+await sleep(400)
+check((await page.evaluate(() => window.__board.getState().edges.length)) === edgeCount + 1, 'created line appears on the canvas')
+await fetch(`${base}/hook/${b}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'ready to ship RETURN_PAYLOAD_9' }) })
+out = ''
+for (let i = 0; i < 30 && !out.includes('LOOP ready to ship RETURN_PAYLOAD_9'); i++) { await sleep(300); out = (await api('GET', `/api/agents/${a}/output?lines=80`)).json.output ?? '' }
+check(out.includes('LOOP ready to ship RETURN_PAYLOAD_9'), 'api-created line fires on a matching Stop')
+check((await api('DELETE', `/api/handoffs/${hc.json.id}`)).status === 200, 'remove_handoff deletes the line')
+await sleep(300)
+check((await page.evaluate(() => window.__board.getState().edges.length)) === edgeCount, 'deleted line disappears from the canvas')
+
 // browser card: create via api, navigate to the hook server, read, type+click on a data: page
 const bcreated = await api('POST', '/api/browsers', { url: `${base}/health`, title: 'smoke browser' })
 check(typeof bcreated.json.id === 'string', 'browser card created through the api')

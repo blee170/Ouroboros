@@ -27,7 +27,7 @@ const BASE = process.env.OUROBOROS_URL ?? 'http://127.0.0.1:47821'
 const TOKEN = process.env.OUROBOROS_TOKEN ?? ''
 const SELF = process.env.OUROBOROS_SELF_ID ?? ''
 
-async function api(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown> {
+async function api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(BASE + path, {
     method,
     headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN },
@@ -109,6 +109,39 @@ server.registerTool(
     await api('POST', `/api/notes/${encodeURIComponent(note_id)}`, { note })
     return text({ ok: true })
   }
+)
+
+// ---- handoff lines ---------------------------------------------------------
+server.registerTool(
+  'list_handoffs',
+  { title: 'List handoff lines', description: 'Lines between agent cards: id, source/target (ids and titles), mode (auto|manual), condition, template, lastFiredAt.', inputSchema: {} },
+  async () => text(await api('GET', '/api/handoffs'))
+)
+server.registerTool(
+  'connect_agents',
+  {
+    title: 'Draw a handoff line',
+    description:
+      'Create a line from one agent card to another. mode auto: whenever the source finishes a reply, the template is rendered and typed into the target ({{last_assistant_message}}, {{source_title}}, {{source_cwd}}, {{target_title}}); mode manual: only when fired. condition (optional) is a substring or /regex/ the source reply must match. Lines are visible on the canvas and the user can edit them.',
+    inputSchema: {
+      source_id: z.string(),
+      target_id: z.string(),
+      mode: z.enum(['auto', 'manual']).optional(),
+      template: z.string().optional(),
+      condition: z.string().optional()
+    }
+  },
+  async ({ source_id, target_id, mode, template, condition }) => text(await api('POST', '/api/handoffs', { source: source_id, target: target_id, mode, template, condition }))
+)
+server.registerTool(
+  'remove_handoff',
+  { title: 'Remove a handoff line', description: 'Delete a line by id.', inputSchema: { handoff_id: z.string() } },
+  async ({ handoff_id }) => text(await api('DELETE', `/api/handoffs/${encodeURIComponent(handoff_id)}`))
+)
+server.registerTool(
+  'fire_handoff',
+  { title: 'Fire a handoff line now', description: 'Send the line\'s rendered template to its target immediately, using the source\'s last reply.', inputSchema: { handoff_id: z.string() } },
+  async ({ handoff_id }) => text(await api('POST', `/api/handoffs/${encodeURIComponent(handoff_id)}/fire`, {}))
 )
 
 // ---- browser cards -------------------------------------------------------

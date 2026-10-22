@@ -58,6 +58,8 @@ interface BoardState {
   updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
   removeNode(id: string): Promise<void>
   removeEdge(id: string): void
+  /** Edge created by the main process (MCP connect_agents). */
+  addEdgeFromMain(edge: WorkspaceEdge): void
   restartNode(id: string): Promise<void>
   select(nodeId: string | null, edgeId: string | null): void
   toggleRoster(): void
@@ -192,6 +194,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
   removeEdge(id) {
     set({ edges: get().edges.filter((e) => e.id !== id), selectedEdgeId: null })
+    scheduleSync(get)
+  },
+  addEdgeFromMain(edge) {
+    if (get().edges.some((e) => e.id === edge.id)) return
+    set({ edges: [...get().edges, { id: edge.id, source: edge.source, target: edge.target, type: 'handoff', data: { ...edge.data } }] })
     scheduleSync(get)
   },
 

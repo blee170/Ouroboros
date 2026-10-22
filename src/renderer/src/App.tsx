@@ -23,6 +23,8 @@ export default function App() {
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),
       api.board.onSetNote((p) => useBoard.getState().updateNodeData(p.nodeId, { note: p.note })),
+      api.board.onAddEdge((e) => useBoard.getState().addEdgeFromMain(e)),
+      api.board.onRemoveEdge((id) => useBoard.getState().removeEdge(id)),
       api.board.onAddNode((n) => {
         useBoard.getState().addNode(n.data.kind, { ...n.data, id: n.id, position: n.position })
       }),

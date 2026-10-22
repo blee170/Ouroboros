@@ -33,6 +33,8 @@ export const IPC = {
   hookEvent: 'hook:event',
   handoffFired: 'handoff:fired',
   boardAddNode: 'board:addNode',
+  boardAddEdge: 'board:addEdge',
+  boardRemoveEdge: 'board:removeEdge',
   boardSetNote: 'board:setNote',
   externalSession: 'external:session'
 } as const
@@ -156,6 +158,8 @@ export interface OuroborosApi {
     onHookEvent(cb: (p: HookEventPayload) => void): () => void
     onHandoffFired(cb: (p: HandoffFiredPayload) => void): () => void
     onAddNode(cb: (node: WorkspaceNode) => void): () => void
+    onAddEdge(cb: (edge: WorkspaceEdge) => void): () => void
+    onRemoveEdge(cb: (edgeId: string) => void): () => void
     onSetNote(cb: (p: { nodeId: string; note: string }) => void): () => void
     onExternalSession(cb: (p: ExternalSessionPayload) => void): () => void
     fireHandoff(edgeId: string): Promise<{ ok: boolean; error?: string }>

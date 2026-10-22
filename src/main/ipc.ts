@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { AppSettings, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
-import { selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
+import { DEFAULT_HANDOFF_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
@@ -20,6 +20,8 @@ import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
 
 export interface MainContext {
+  /** Set by installHandoffRunner; fires an edge now (manual = ignore cooldown). */
+  fireHandoff?: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   board: Board
   ptys: PtyManager
   hookServer: HookServer
@@ -67,7 +69,42 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
       sendToRenderer(ctx, IPC.boardSetNote, { nodeId, note })
       return true
     },
-    listHandoffs: () => ctx.board.edges,
+    listHandoffs: () =>
+      ctx.board.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        sourceTitle: ctx.board.nodes.get(e.source)?.data.title,
+        target: e.target,
+        targetTitle: ctx.board.nodes.get(e.target)?.data.title,
+        mode: e.data.mode,
+        condition: e.data.condition,
+        template: e.data.template,
+        lastFiredAt: e.data.lastFiredAt
+      })),
+    createHandoff: (input) => {
+      const src = ctx.board.nodes.get(input.source)
+      const dst = ctx.board.nodes.get(input.target)
+      if (!src || !dst) return { error: 'unknown source or target agent id' }
+      if (input.source === input.target) return { error: 'source and target must differ' }
+      if (src.data.kind === 'note' || src.data.kind === 'browser' || dst.data.kind === 'note' || dst.data.kind === 'browser') return { error: 'handoffs connect agent cards only' }
+      const edge: WorkspaceEdge = {
+        id: nanoid(8),
+        source: input.source,
+        target: input.target,
+        data: { mode: input.mode === 'manual' ? 'manual' : 'auto', template: input.template?.trim() || DEFAULT_HANDOFF_TEMPLATE, condition: input.condition?.trim() || undefined }
+      }
+      // keep main authoritative immediately; the renderer will echo it back through board:sync
+      ctx.board.edges = [...ctx.board.edges.filter((e) => e.id !== edge.id), edge]
+      sendToRenderer(ctx, IPC.boardAddEdge, edge)
+      return { id: edge.id }
+    },
+    removeHandoff: (id) => {
+      const before = ctx.board.edges.length
+      ctx.board.edges = ctx.board.edges.filter((e) => e.id !== id)
+      sendToRenderer(ctx, IPC.boardRemoveEdge, id)
+      return ctx.board.edges.length < before
+    },
+    fireHandoff: (id) => ctx.fireHandoff?.(id, true) ?? { ok: false, error: 'not ready' },
     browser: {
       list: () =>
         [...ctx.board.nodes.values()]
@@ -167,12 +204,13 @@ function installHandoffRunner(ctx: MainContext): void {
   ctx.board.on('stop', (nodeId: string, message: string) => {
     for (const edge of selectHandoffs(ctx.board.edges, nodeId, message)) fire(edge, message, false)
   })
-  ipcMain.handle(IPC.handoffFire, (_e, edgeId: string) => {
+  ctx.fireHandoff = (edgeId, manual) => {
     const edge = ctx.board.edges.find((e) => e.id === edgeId)
     if (!edge) return { ok: false, error: 'unknown edge' }
     const src = ctx.board.nodes.get(edge.source)
-    return fire(edge, src?.data.lastAssistantMessage ?? '', true)
-  })
+    return fire(edge, src?.data.lastAssistantMessage ?? '', manual)
+  }
+  ipcMain.handle(IPC.handoffFire, (_e, edgeId: string) => ctx.fireHandoff!(edgeId, true))
 }
 
 export function registerIpc(ctx: MainContext): void {

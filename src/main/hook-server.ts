@@ -11,6 +11,9 @@ export interface ApiHandlers {
   createAgent(input: { cwd?: string; title?: string; prompt?: string; kind?: 'claude' | 'terminal' }): Promise<{ id: string }>
   setNote(nodeId: string, note: string): boolean
   listHandoffs(): unknown
+  createHandoff(input: { source: string; target: string; mode?: 'auto' | 'manual'; template?: string; condition?: string }): { id: string } | { error: string }
+  removeHandoff(id: string): boolean
+  fireHandoff(id: string): { ok: boolean; error?: string }
   browser: {
     list(): unknown
     create(input: { url?: string; title?: string }): Promise<{ id: string }>
@@ -137,6 +140,18 @@ export class HookServer {
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
       if (method === 'GET' && path === '/api/handoffs') return send(res, 200, { handoffs: api.listHandoffs() })
+      if (method === 'POST' && path === '/api/handoffs') {
+        const body = (await readJson(req)) as Parameters<ApiHandlers['createHandoff']>[0]
+        if (!body || typeof body.source !== 'string' || typeof body.target !== 'string') return send(res, 400, { error: 'source and target required' })
+        const r = api.createHandoff(body)
+        return send(res, 'error' in r ? 400 : 200, r)
+      }
+      const h = /^\/api\/handoffs\/([^/]+)(?:\/(fire))?$/.exec(path)
+      if (h && method === 'DELETE') return send(res, api.removeHandoff(decodeURIComponent(h[1])) ? 200 : 404, { ok: true })
+      if (h && h[2] === 'fire' && method === 'POST') {
+        const r = api.fireHandoff(decodeURIComponent(h[1]))
+        return send(res, r.ok ? 200 : 400, r)
+      }
       if (method === 'POST' && path === '/api/agents') {
         const body = (await readJson(req)) as Parameters<ApiHandlers['createAgent']>[0]
         const created = await api.createAgent(body ?? {})

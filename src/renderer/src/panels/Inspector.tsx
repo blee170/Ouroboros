@@ -91,7 +91,7 @@ export function Inspector() {
 
   return (
     <div className="panel inspector">
-      <h3>{d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? 'Claude agent' : d.kind === 'browser' ? 'Browser' : d.kind === 'command' ? 'Command card' : 'Terminal'}</h3>
+      <h3>{d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? (d.engine === 'codex' ? 'Codex agent' : d.engine === 'gemini' ? 'Gemini agent' : 'Claude agent') : d.kind === 'browser' ? 'Browser' : d.kind === 'command' ? 'Command card' : 'Terminal'}</h3>
       <label>
         Title
         <input className="text" value={d.title} onChange={(e) => updateNodeData(nodeId, { title: e.target.value })} />
@@ -117,6 +117,16 @@ export function Inspector() {
       )}
       {(d.kind === 'claude' || d.kind === 'conductor') && (
         <>
+          <label>
+            Engine (applies on restart)
+            <select value={d.engine ?? 'claude'} onChange={(e) => updateNodeData(nodeId, { engine: e.target.value === 'claude' ? undefined : (e.target.value as 'codex' | 'gemini') })}>
+              <option value="claude">Claude Code</option>
+              <option value="codex">OpenAI Codex CLI</option>
+              <option value="gemini">Gemini CLI</option>
+            </select>
+          </label>
+          {d.engine === 'codex' && <div className="muted small">Codex: turn-complete notify → status; board tools and role prompt via -c overrides; resume uses the thread id. Needs Node.js on PATH.</div>}
+          {d.engine === 'gemini' && <div className="muted small">Gemini: hooks + MCP from a per-card settings file (your ~/.gemini settings stay); the role prompt is typed as the first message.</div>}
           <label className="row">
             <input type="checkbox" checked={Boolean(claude.continue)} onChange={(e) => setClaude({ continue: e.target.checked })} /> Continue last conversation on launch (--continue)
           </label>

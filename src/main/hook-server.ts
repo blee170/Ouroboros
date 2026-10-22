@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
-import type { HookEvent } from '@shared/types'
+import type { AgentEngine, HookEvent } from '@shared/types'
 
 export const PREFERRED_HOOK_PORT = 47821
 
@@ -13,6 +13,8 @@ export interface ApiHandlers {
     title?: string
     prompt?: string
     kind?: 'claude' | 'terminal' | 'command'
+    /** claude (default) | codex | gemini for kind=claude */
+    engine?: AgentEngine
     /** command cards: shell template with {{prompt}} / {{prompt_file}} */
     command_template?: string
     role_prompt?: string

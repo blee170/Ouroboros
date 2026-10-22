@@ -105,3 +105,13 @@ Zapier Copilot/Canvas, Make AI, n8n AI Builder, Gumloop, Google Opal, Power Auto
 - PR 모니터링/자동 수정(Claude 데스크톱) — `gh` 필요.
 - 디스코드 봇 카드: 채널 메시지·첨부를 선으로 총괄에 전달.
 - 예약 실행(Superset automations).
+
+
+## 7. Codex / Gemini 어댑터 (0.2.7) — 검증한 사실
+| 엔진 | 상태 전달 | 보드 MCP | 역할 프롬프트 | 이어가기 | 권한 |
+|---|---|---|---|---|---|
+| Codex CLI | `notify = ["node", agent-hook.js, "codex", "--url", …, "--node", …]`: 턴 종료 시 JSON을 **마지막 argv**로 전달(`type: agent-turn-complete`, `thread-id`, `turn-id`, `input-messages`, `last-assistant-message`, `cwd`; 자식 환경변수는 없음 → URL·카드 id를 인자로). `-c key=value`는 TOML로 파싱(실패 시 문자열), 우선순위 최상. 승인 요청 이벤트는 없음 | `-c mcp_servers.ouroboros.command/args/env` (MCP 자식은 부모 env를 상속하지 않으므로 env 명시) | `-c developer_instructions="…"` (developer 메시지; cmd.exe 8191자 제한 땐 첫 프롬프트로 입력) | `codex resume <thread-id>` / `resume --last` | `-s read-only` / `--full-auto` / `--dangerously-bypass-approvals-and-sandbox` |
+| Gemini CLI | `hooks` (settings.json): SessionStart·BeforeAgent·BeforeTool·AfterAgent(`prompt_response`)·Notification(`ToolPermission`)·SessionEnd, 입력 JSON은 **stdin**, 훅별 `env`로 URL·카드 id 전달. 설정 파일은 `GEMINI_CLI_SYSTEM_SETTINGS_PATH`로 카드별 파일 지정(hooks 배열은 CONCAT, mcpServers는 SHALLOW_MERGE라 사용자 설정과 합쳐짐) | `mcpServers.ouroboros` (`env` 명시; `*TOKEN*` 같은 이름은 상속 시 삭제되지만 명시하면 통과) | 시스템 프롬프트 플래그 없음(`GEMINI_SYSTEM_MD`는 전체 교체) → 첫 메시지로 입력 | `-r <uuid>` / `-r latest` | `--approval-mode plan|auto_edit|yolo` |
+
+출처: openai/codex `codex-rs/hooks/src/legacy_notify.rs`, `codex-rs/utils/cli/src/config_override.rs`, `codex-rs/rmcp-client/src/utils.rs`, `codex-rs/core/config.schema.json`; google-gemini/gemini-cli `docs/hooks/reference.md`, `docs/cli/cli-reference.md`, `docs/cli/settings.md`, `docs/tools/mcp-server.md`, `packages/cli/src/config/settings.ts`, `packages/cli/src/config/settingsSchema.ts`, `packages/core/src/hooks/hookRunner.ts`.
+미검증: Codex TUI의 "준비됨" 출력 문구(없어서 출력 후 4초 정적을 준비로 간주), `codex resume` 앞에 둔 전역 플래그(`-m`, 승인 플래그) 수용 여부.

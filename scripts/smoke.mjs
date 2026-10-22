@@ -18,6 +18,7 @@ writeFileSync(bmFile, JSON.stringify({ roots: { bookmark_bar: { type: 'folder', 
 writeFileSync(join(userData, 'settings.json'), JSON.stringify({ browserHome: 'http://127.0.0.1:47821/health' }))
 mkdirSync(join(claudeCfg, 'projects', 'enc'), { recursive: true })
 writeFileSync(join(claudeCfg, 'projects', 'enc', 'sess-1.jsonl'), JSON.stringify({ type: 'user', sessionId: 'sess-1', cwd: join(project, 'sub'), message: { content: 'smoke session title' } }) + '\n')
+const { execFileSync } = await import('node:child_process')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let failures = 0
 const t0 = Date.now()
@@ -213,8 +214,31 @@ const shotOk = typeof shot.json.path === 'string' && (await import('node:fs')).e
 check(shotOk || /timed out/.test(String(shot.json.error)), `browser_screenshot writes a png or times out cleanly without a compositor (${shotOk ? 'png' : shot.json.error})`)
 check((await api('GET', '/api/browsers')).json.browsers.some((b) => b.id === bid && b.ready), 'browser_list shows the card as ready')
 
+// --- Codex / Gemini hook bridge: the bundled script turns their notifications into card status ---
+const hookScript = mcpPath.replace(/mcp-server\.js$/, 'agent-hook.js')
+check((await import('node:fs')).existsSync(hookScript), `agent-hook.js resolvable at runtime (${hookScript})`)
+execFileSync(process.execPath, [hookScript, 'codex', '--url', base, '--node', a, JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'codex-thr', 'last-assistant-message': 'CODEX_DONE_1' })])
+await sleep(400)
+txt = await page.textContent(`.react-flow__node[data-id="${a}"] .status-text`)
+check(txt.includes('Done') && (await api('GET', '/api/agents')).json.agents.find((x) => x.id === a)?.lastAssistantMessage === 'CODEX_DONE_1', `codex notify → Done with the reply (${txt})`)
+execFileSync(process.execPath, [hookScript, 'gemini'], { input: JSON.stringify({ hook_event_name: 'BeforeTool', tool_name: 'write_file', session_id: 'g-1', cwd: project }), env: { ...process.env, OUROBOROS_URL: base, OUROBOROS_NODE_ID: a } })
+await sleep(400)
+txt = await page.textContent(`.react-flow__node[data-id="${a}"] .status-text`)
+check(txt.includes('Working') && txt.includes('write_file'), `gemini BeforeTool hook → Working (${txt})`)
+// a Codex card's launch line carries the notify override and the board MCP server
+const codexNode = await page.evaluate(() => window.__board.getState().addNode('claude', { engine: 'codex', title: 'codexcard', claude: { boardTools: true } }))
+await sleep(2500)
+const codexOut = (await api('GET', `/api/agents/${codexNode}/output?lines=40`)).json.output ?? ''
+check(/codex .*-c .*notify=\[/.test(codexOut.replace(/\n/g, ' ')) && codexOut.includes('mcp_servers.ouroboros'), 'codex card launch line has notify + mcp overrides')
+const geminiNode = await page.evaluate(() => window.__board.getState().addNode('claude', { engine: 'gemini', title: 'geminicard' }))
+await sleep(2500)
+const geminiOut = (await api('GET', `/api/agents/${geminiNode}/output?lines=40`)).json.output ?? ''
+check(/gemini/.test(geminiOut) && (await import('node:fs')).existsSync(join(userData, 'claude-launch', `${geminiNode}.gemini.json`)), 'gemini card writes its per-card settings file and launches gemini')
+await api('DELETE', `/api/agents/${codexNode}`)
+await api('DELETE', `/api/agents/${geminiNode}`)
+await sleep(500)
+
 // --- changes api (git diff of a card's folder) + set_board_tools (PATCH) ---
-const { execFileSync } = await import('node:child_process')
 execFileSync('git', ['init', '-q', project])
 writeFileSync(join(project, 'hello.txt'), 'hi\n')
 const chg = await api('GET', `/api/agents/${a}/changes?diff=1`)

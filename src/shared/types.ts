@@ -1,3 +1,6 @@
+/** Which CLI a Claude/Conductor card runs. Codex and Gemini get the same hooks, lines and board tools. */
+export type AgentEngine = 'claude' | 'codex' | 'gemini'
+
 /** Node kinds shown on the canvas. */
 export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external' | 'browser' | 'command'
 
@@ -58,6 +61,8 @@ export interface WorktreeInfo {
 /** Data carried by every canvas node (serialised into the workspace file). */
 export interface NodeData {
   kind: NodeKind
+  /** claude (default) | codex | gemini — for claude/conductor cards */
+  engine?: AgentEngine
   title: string
   /** Working directory the shell/claude is started in. */
   cwd: string
@@ -148,6 +153,7 @@ export interface HookEvent {
 export interface AgentSnapshot {
   id: string
   kind: NodeKind
+  engine?: AgentEngine
   title: string
   cwd: string
   status: AgentStatus

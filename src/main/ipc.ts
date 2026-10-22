@@ -10,6 +10,7 @@ import { tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
 import { prepareLaunch } from './claude-launcher'
+import { ROLE_PROMPT_PREFIX } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, HookServer } from './hook-server'
 import { PtyManager, defaultShell } from './pty-manager'
@@ -67,6 +68,9 @@ function broadcast(ctx: MainContext, channel: string, payload: unknown): void {
 }
 
 const running = new Map<string, RunningCommand>()
+const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** length of the launch command typed into each card's shell (its echo is not TUI output) */
+const launchLineLength = new Map<string, number>()
 
 /** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
@@ -83,6 +87,8 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
   }
   ctx.ptys.write(nodeId, toPastePayload(text))
   setTimeout(() => ctx.ptys.write(nodeId, '\r'), 150)
+  // Codex has no prompt-submitted hook; we know we just gave it work
+  if (n && n.data.engine === 'codex' && n.data.status !== 'working') s.board.setStatus(nodeId, { status: 'working', statusDetail: 'prompt sent' })
   return true
 }
 
@@ -135,7 +141,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
   const pendingPrompts = new Map<string, string>()
   board.on('status', (p: AgentStatusPayload) => {
     const pending = pendingPrompts.get(p.nodeId)
-    if (pending && p.status === 'idle') {
+    // a typed role prompt goes first; its (suppressed) Stop brings the card back to idle, then the task
+    if (pending && p.status === 'idle' && !board.hasRoleTurn(p.nodeId)) {
       pendingPrompts.delete(p.nodeId)
       setTimeout(() => sendPrompt(ctx, s, p.nodeId, pending), 800)
     }
@@ -234,6 +241,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         height: 400,
         data: {
           kind: input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude',
+          engine: claude && input.engine && input.engine !== 'claude' ? input.engine : undefined,
           title,
           cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
           worktree,
@@ -486,8 +494,20 @@ export function registerIpc(ctx: MainContext): void {
     sendToRenderer(s, IPC.ptyData, { nodeId, data })
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
-    if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting' && detectClaudeReady(data)) {
-      board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+    if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting') {
+      if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+      else if (n.data.engine === 'codex' && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
+        // Codex sends no session-start event: once it has printed more than the echoed launch line,
+        // treat 4s of quiet as "ready"
+        clearTimeout(readyTimers.get(nodeId))
+        readyTimers.set(
+          nodeId,
+          setTimeout(() => {
+            const cur = board.nodes.get(nodeId)
+            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+          }, 4000)
+        )
+      }
     }
   })
   ptys.on('exit', (nodeId: string, code: number) => {
@@ -524,9 +544,11 @@ export function registerIpc(ctx: MainContext): void {
     if (!s) return { ok: false, error: 'no window' }
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
+      const engine = opts.engine ?? 'claude'
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
+        engine,
         claude: opts.claude,
         shell,
         baseUrl: hookServer.baseUrl,
@@ -535,12 +557,24 @@ export function registerIpc(ctx: MainContext): void {
         execPath: process.execPath,
         nodeBin: findNodeBinary(),
         mcpScriptPath: ctx.mcpScriptPath,
+        hookScriptPath: resolveHookScriptPath(),
         title: opts.title
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
-      ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command })
+      ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env })
       s.board.setPtyAlive(opts.nodeId, true)
-      s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: 'launching claude' })
+      s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
+      if (prepared.initialPrompt) {
+        // the role text goes in as the first message once the TUI is ready; its reply is not "work"
+        // (no lines fire, status returns to idle), and a task prompt waits for it. A leftover role
+        // text from an earlier launch is replaced, not repeated.
+        const existing = s.board.nodes.get(opts.nodeId)?.data.initialPrompt
+        const own = existing && !existing.startsWith(ROLE_PROMPT_PREFIX) ? existing : undefined
+        const initialPrompt = [prepared.initialPrompt, own].filter(Boolean).join('\n\n')
+        s.board.markRoleTurn(opts.nodeId)
+        sendToRenderer(s, IPC.boardUpdateNode, { nodeId: opts.nodeId, data: { initialPrompt }, restart: false })
+      }
+      launchLineLength.set(opts.nodeId, prepared.command.length)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -698,6 +732,10 @@ export function initialProjectArg(): string | undefined {
   const fromEnv = process.env.OUROBOROS_PROJECT
   if (fromEnv && existsSync(fromEnv)) return fromEnv
   return projectFromArgv(process.argv, process.cwd(), app.isPackaged)
+}
+
+export function resolveHookScriptPath(): string {
+  return resolveMcpScriptPath().replace(/mcp-server\.js$/, 'agent-hook.js')
 }
 
 export function resolveMcpScriptPath(): string {

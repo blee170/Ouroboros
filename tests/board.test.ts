@@ -28,3 +28,19 @@ describe('Board external-session dedupe', () => {
     expect(b.nodeForSession('s2')).toBe('n1')
   })
 })
+
+describe('role turns', () => {
+  it('the Stop that answers a typed role prompt ends idle and fires no stop event', () => {
+    const b = new Board()
+    b.sync({ projectRoot: '/p', nodes: [{ id: 'a', data: { kind: 'claude', title: 'A', cwd: '/p' } }], edges: [] })
+    const stops: string[] = []
+    b.on('stop', (id: string) => stops.push(id))
+    b.markRoleTurn('a')
+    b.applyHook('a', { hook_event_name: 'Stop', last_assistant_message: 'ready' })
+    expect(b.nodes.get('a')?.data.status).toBe('idle')
+    expect(stops).toEqual([])
+    b.applyHook('a', { hook_event_name: 'Stop', last_assistant_message: 'RESULT: done' })
+    expect(b.nodes.get('a')?.data.status).toBe('done')
+    expect(stops).toEqual(['a'])
+  })
+})

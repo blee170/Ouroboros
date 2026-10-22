@@ -55,9 +55,10 @@ jobs:
       - if: steps.ver.outputs.skip != 'true'
         run: npm run typecheck
       - if: steps.ver.outputs.skip != 'true'
-        run: npm test
-      - if: steps.ver.outputs.skip != 'true'
         run: node scripts/gen-icon.mjs && npm run build
+      # after build: the tests of the bundled helper scripts (mcp-server.js, agent-hook.js) need out/
+      - if: steps.ver.outputs.skip != 'true'
+        run: npm test
       - name: Package
         if: steps.ver.outputs.skip != 'true'
         # electron-builder still writes latest.yml (the updater manifest) because

@@ -1,4 +1,4 @@
-import type { AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
+import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -73,6 +73,7 @@ export interface ClaudeLaunchOptions {
   rows: number
   shell?: string
   kind: 'claude' | 'conductor'
+  engine?: AgentEngine
   claude: NonNullable<NodeData['claude']>
   /** Card title, used as the Claude session display name (--name). */
   title?: string

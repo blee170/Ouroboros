@@ -44,8 +44,8 @@ export function Canvas() {
     },
     [rf]
   )
-  const add = (kind: NodeKind): void => {
-    if (menu) addNode(kind, { position: menu.flow })
+  const add = (kind: NodeKind, engine?: 'codex' | 'gemini'): void => {
+    if (menu) addNode(kind, { position: menu.flow, engine })
     setMenu(null)
   }
   const defaultViewport = useMemo(() => viewport ?? { x: 0, y: 0, zoom: 0.8 }, [viewport])
@@ -133,6 +133,8 @@ export function Canvas() {
       {menu && (
         <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
           <button onClick={() => add('claude')}>✦ Claude agent</button>
+          <button onClick={() => add('claude', 'codex')}>◎ Codex agent</button>
+          <button onClick={() => add('claude', 'gemini')}>✧ Gemini agent</button>
           <button onClick={() => add('conductor')}>🎼 Conductor</button>
           <button onClick={() => add('terminal')}>▣ Terminal</button>
           <button onClick={() => add('browser')}>🌐 Browser</button>

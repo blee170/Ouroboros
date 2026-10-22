@@ -26,7 +26,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
-  const usage = useSessionUsage(data.sessionId, status, kind === 'claude' || kind === 'conductor')
+  const usage = useSessionUsage(data.sessionId, status, (kind === 'claude' || kind === 'conductor') && (data.engine ?? 'claude') === 'claude')
   const select = useBoard((s) => s.select)
 
   // Spawn (or re-spawn) the process once the terminal knows its size.
@@ -40,7 +40,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     if (kind === 'terminal' || kind === 'command') {
       void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined })
     } else if (kind === 'claude' || kind === 'conductor') {
-      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, claude: data.claude ?? {}, title: data.title })
+      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, seq, id, kind])
@@ -77,7 +77,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           />
         ) : (
           <span className="title" onDoubleClick={() => setEditing(true)} title={data.cwd}>
-            {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? '✦ ' : kind === 'command' ? '⚡ ' : '▣ '}
+            {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? (data.engine === 'codex' ? '◎ ' : data.engine === 'gemini' ? '✧ ' : '✦ ') : kind === 'command' ? '⚡ ' : '▣ '}
             {data.title}
           </span>
         )}

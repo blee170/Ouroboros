@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ClaudeOptions } from '@shared/types'
+import type { AgentEngine, ClaudeOptions } from '@shared/types'
+import { buildCodexLaunch, buildGeminiLaunch } from './agent-launcher'
 import { shellKind, type ShellKind } from './pty-manager'
 
 const HOOK_EVENTS_WITH_MATCHER = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']
@@ -90,7 +91,7 @@ You are the Conductor of an Ouroboros board: a canvas where every Claude Code se
 
 ## Tools (MCP server "ouroboros")
 - list_agents / read_output / send_prompt / wait_for_agents — see, read, instruct and wait for cards.
-- create_agent (title, cwd, role_prompt, permission_mode, model, worktree, prompt) / remove_agent — add or close cards. Give every card a role_prompt that states its role, the exact markers it must end replies with, and what it must never do.
+- create_agent (title, cwd, role_prompt, permission_mode, model, worktree, prompt, engine) / remove_agent — add or close cards. engine: claude (default), codex (OpenAI Codex CLI) or gemini (Gemini CLI) — pick by what the owner has signed in to and what suits the task; all three get the same lines, reports and board tools. Give every card a role_prompt that states its role, the exact markers it must end replies with, and what it must never do.
 - connect_agents / list_handoffs / fire_handoff / remove_handoff — handoff lines. A line forwards a card's finished reply to another card automatically (mode auto) or on demand (manual), optionally only when the reply matches a condition (substring or /regex/). Lines are the way work flows; never relay results by hand when a line can do it.
 - create_agent kind=command — any CLI as a card (its output is its reply, lines work the same). Known templates: Aside browser agent "aside exec {{prompt}}" (uses the owner's signed-in Aside browser, bookmarks and all; the Aside window stays separate), "aside --session <id> {{prompt}}" to continue an Aside session, Codex "codex exec {{prompt}}".
 - get_changes (agent_id, diff) — the uncommitted git changes of a card's folder/worktree with the diff: review a worker's result yourself before accepting it, scoring it or sending it on.
@@ -124,15 +125,20 @@ RESULT: <what changed, how verified> · SCORE: <n>/10 · ISSUES: <list or none> 
 - Keep the owner's own conventions (names, ledgers, checkpoints) exactly as before.`
 
 export interface PreparedLaunch {
-  settingsPath: string
+  settingsPath?: string
   mcpConfigPath?: string
   systemPromptPath?: string
   command: string
+  /** extra environment for the PTY (Gemini: GEMINI_CLI_SYSTEM_SETTINGS_PATH) */
+  env?: Record<string, string>
+  /** role text the engine cannot take on its command line; type it as the first prompt */
+  initialPrompt?: string
 }
 
 export function prepareLaunch(params: {
   nodeId: string
   kind: 'claude' | 'conductor'
+  engine?: AgentEngine
   claude: ClaudeOptions
   shell: string
   baseUrl: string
@@ -141,11 +147,15 @@ export function prepareLaunch(params: {
   execPath: string
   nodeBin?: string
   mcpScriptPath: string
+  /** out/main/agent-hook.js — Codex notify / Gemini hooks bridge (codex/gemini engines) */
+  hookScriptPath?: string
   claudeBin?: string
   /** Card title → `--name` session display name. */
   title?: string
 }): PreparedLaunch {
   mkdirSync(params.tmpDir, { recursive: true })
+  const engine = params.engine ?? 'claude'
+  if (engine === 'codex' || engine === 'gemini') return prepareEngineLaunch(engine, params)
   const settingsPath = join(params.tmpDir, `${params.nodeId}.settings.json`)
   writeFileSync(settingsPath, JSON.stringify(buildHookSettings(params.baseUrl, params.nodeId), null, 2))
   let mcpConfigPath: string | undefined
@@ -177,4 +187,35 @@ export function prepareLaunch(params: {
   const sessionName = params.title ? safeSessionName(params.title) || undefined : undefined
   const command = buildClaudeCommand(claude, { settingsPath, mcpConfigPath, systemPromptPath, sessionName }, shellKind(params.shell), params.claudeBin)
   return { settingsPath, mcpConfigPath, systemPromptPath, command }
+}
+
+/** Codex / Gemini cards: same hooks, lines and board tools through their own config mechanisms. */
+function prepareEngineLaunch(engine: 'codex' | 'gemini', params: Parameters<typeof prepareLaunch>[0]): PreparedLaunch {
+  const boardTools = params.kind === 'conductor' || Boolean(params.claude.boardTools)
+  const rolePrompt = [boardTools ? CONDUCTOR_SYSTEM_PROMPT : '', params.claude.appendSystemPrompt ?? ''].filter((t) => t.trim()).join('\n\n')
+  if (!params.hookScriptPath) throw new Error('hookScriptPath is required for codex/gemini cards')
+  if (!params.nodeBin && engine === 'codex') {
+    throw new Error('Codex cards need Node.js on PATH (the Codex notify hook runs a node script without the app environment)')
+  }
+  const input = {
+    nodeId: params.nodeId,
+    claude: params.claude,
+    rolePrompt,
+    boardTools,
+    baseUrl: params.baseUrl,
+    token: params.token,
+    nodeBin: params.nodeBin ?? params.execPath,
+    electronAsNode: !params.nodeBin,
+    hookScriptPath: params.hookScriptPath,
+    mcpScriptPath: params.mcpScriptPath,
+    shell: shellKind(params.shell)
+  }
+  if (engine === 'codex') {
+    const l = buildCodexLaunch(input)
+    return { command: l.command, initialPrompt: l.initialPrompt }
+  }
+  const settingsPath = join(params.tmpDir, `${params.nodeId}.gemini.json`)
+  const l = buildGeminiLaunch(input, settingsPath)
+  for (const [file, text] of Object.entries(l.files ?? {})) writeFileSync(file, text, 'utf8')
+  return { settingsPath, command: l.command, env: l.env, initialPrompt: l.initialPrompt }
 }

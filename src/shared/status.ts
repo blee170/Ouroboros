@@ -82,5 +82,5 @@ export const STATUS_COLOR: Record<AgentStatus, string> = {
 export function detectClaudeReady(chunk: string): boolean {
   // eslint-disable-next-line no-control-regex
   const clean = chunk.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
-  return /Claude Code v\d|\? for shortcuts|Try "|auto mode on|accept edits on|plan mode on/.test(clean)
+  return /Claude Code v\d|\? for shortcuts|Try "|auto mode on|accept edits on|plan mode on|OpenAI Codex|Tips for getting started|Type your message/i.test(clean)
 }

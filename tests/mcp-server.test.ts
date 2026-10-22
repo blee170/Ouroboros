@@ -62,8 +62,9 @@ describe('bundled mcp server', () => {
     const self = await client.callTool({ name: 'send_prompt', arguments: { agent_id: 'me', text: 'loop' } })
     expect(self.isError).toBe(true)
 
-    const created = await client.callTool({ name: 'create_agent', arguments: { cwd: '/tmp', prompt: 'hi' } })
+    const created = await client.callTool({ name: 'create_agent', arguments: { cwd: '/tmp', prompt: 'hi', engine: 'codex' } })
     expect((created.content as Array<{ text: string }>)[0].text).toContain('new1')
+    expect(JSON.parse(calls.find((c) => c.url === '/api/agents' && c.method === 'POST')?.body ?? '{}')).toMatchObject({ engine: 'codex', kind: 'claude', report_to: 'me' })
 
     const self2 = await client.callTool({ name: 'set_board_tools', arguments: { agent_id: 'me' } })
     expect(self2.isError).toBe(true)

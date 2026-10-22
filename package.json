@@ -1,7 +1,7 @@
 {
   "name": "ouroboros",
   "productName": "Ouroboros",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Personal infinite-canvas cockpit for running and conducting multiple Claude Code sessions on Windows",
   "main": "./out/main/index.js",
   "author": "blee170",
@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && vite build -c vite.mcp.config.mts",
+    "build": "electron-vite build && npm run build:mcp",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
@@ -18,7 +18,7 @@
     "dist:linux": "node scripts/gen-icon.mjs && npm run build && electron-builder --linux --x64",
     "icon": "node scripts/gen-icon.mjs",
     "dist:win:portable": "node scripts/gen-icon.mjs && npm run build && electron-builder --win portable --x64",
-    "build:mcp": "vite build -c vite.mcp.config.mts"
+    "build:mcp": "vite build -c vite.mcp.config.mts && vite build -c vite.mcp.config.mts --mode agent-hook"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

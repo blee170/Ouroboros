@@ -31,6 +31,16 @@ export class Board extends EventEmitter {
   private sessionToNode = new Map<string, string>()
   externalSessions = new Map<string, ExternalSession>()
   ptyAlive = new Set<string>()
+  /** Cards whose next Stop is the reply to a typed role prompt: it ends as idle and fires no lines. */
+  private roleTurn = new Set<string>()
+
+  markRoleTurn(nodeId: string): void {
+    this.roleTurn.add(nodeId)
+  }
+
+  hasRoleTurn(nodeId: string): boolean {
+    return this.roleTurn.has(nodeId)
+  }
 
   sync(payload: BoardSyncPayload): void {
     this.projectRoot = payload.projectRoot
@@ -50,7 +60,10 @@ export class Board extends EventEmitter {
       if (data.sessionId) this.sessionToNode.set(data.sessionId, n.id)
     }
     for (const id of this.nodes.keys()) {
-      if (!next.has(id)) this.output.delete(id)
+      if (!next.has(id)) {
+        this.output.delete(id)
+        this.roleTurn.delete(id)
+      }
     }
     this.nodes = next
     this.edges = payload.edges
@@ -121,6 +134,11 @@ export class Board extends EventEmitter {
       this.dropExternal(event.session_id)
     }
     if (!update) return
+    if (event.hook_event_name === 'Stop' && this.roleTurn.has(nodeId)) {
+      this.roleTurn.delete(nodeId)
+      this.setStatus(nodeId, { status: 'idle', statusDetail: 'ready (role acknowledged)' })
+      return
+    }
     this.setStatus(nodeId, update)
     if (event.hook_event_name === 'Stop') {
       this.emit('stop', nodeId, update.lastAssistantMessage ?? '')
@@ -157,6 +175,7 @@ export class Board extends EventEmitter {
       out.push({
         id: n.id,
         kind: n.data.kind,
+        engine: n.data.engine,
         title: n.data.title,
         cwd: n.data.cwd,
         status: n.data.status ?? (this.ptyAlive.has(n.id) ? 'idle' : 'ended'),

@@ -18,7 +18,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
-      output: { inlineDynamicImports: true }
+      output: { codeSplitting: false }
     }
   }
 })

@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && vite build -c vite.mcp.config.ts",
+    "build": "electron-vite build && vite build -c vite.mcp.config.mts",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
@@ -18,7 +18,7 @@
     "dist:linux": "node scripts/gen-icon.mjs && npm run build && electron-builder --linux --x64",
     "icon": "node scripts/gen-icon.mjs",
     "dist:win:portable": "node scripts/gen-icon.mjs && npm run build && electron-builder --win portable --x64",
-    "build:mcp": "vite build -c vite.mcp.config.ts"
+    "build:mcp": "vite build -c vite.mcp.config.mts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

@@ -1,5 +1,9 @@
 # Ouroboros
 
+> **이 저장소는 제가 더 편하고 효율적으로 일하려고 만든 개인용 시스템입니다.** 저는 개발자 이력이 없고 전공자도 아닌, 그냥 AI와 대화하며 만드는 바이브 코더입니다. [Symvibe](https://www.symvibe.com/) 웹사이트를 보고 "저런 보드가 Windows에도 있으면 좋겠다"는 생각에서 시작해, Claude Code와 함께 하나씩 붙여 가며 지금의 모양이 됐습니다. 혹시 필요한 분이 있을지 몰라 그대로 공개합니다. 완성도나 지원을 보장하지는 못하지만, 설치해서 바로 쓸 수 있는 상태입니다.
+>
+> **This is a tool I built for myself, to work faster and with less friction.** I am not a developer by trade and have no CS background; I am a vibe coder who builds by talking to AI. It started when I saw the [Symvibe](https://www.symvibe.com/) website and wanted that kind of board on Windows, and it grew piece by piece with Claude Code. I am publishing it as-is in case someone else finds it useful. No promises of polish or support, but it installs and works today.
+
 **An infinite-canvas cockpit for conducting many AI coding agents at once — on Windows, with your own Claude Code / Codex / Gemini sign-ins.**
 
 Every agent is a card on a board. Cards are real terminals. Lines between cards actually carry work: when one agent finishes, its reply is typed into the next one. A **Conductor** card holds the tools to see the whole board, create cards, draw lines and run a pipeline (plan → review → implement → score → bug hunt → deploy guide) while you watch and decide at the gates.

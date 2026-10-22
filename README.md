@@ -55,7 +55,7 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 |---|---|
 | **Cards** | Real PTY terminals (PowerShell / cmd / Git Bash / WSL / any shell) or agent sessions on an infinite canvas with zoom, minimap, Ctrl+1…9 jumps, Ctrl+F search. |
 | **Status** | Starting / Idle / Working / Needs you / Done / Ended per card, with desktop toasts and taskbar flashing when a card needs a human. |
-| **Lines** | Drag port to port. Auto (fires on the source's finished reply) or manual (▶). Template with `{{last_assistant_message}}`, `{{source_title}}`, … Condition as substring or `/regex/`. 8 s cooldown, max 6 fires / 5 min per line. |
+| **Lines** | Drag port to port. Auto (fires on the source's finished reply) or manual (▶). Template with `{{last_assistant_message}}`, `{{source_title}}`, … Condition as substring or `/regex/`. 8 s cooldown, max 6 fires / 5 min per line. A line flashes when it fires and glows while the card it feeds is working on that handoff. |
 | **Conductor** | A card with the board MCP server: `list_agents`, `read_output`, `send_prompt`, `create_agent`, `remove_agent`, `wait_for_agents`, `connect_agents` / `fire_handoff` / `remove_handoff`, `set_note`, `tidy_board`, `get_changes`, `set_board_tools`, `browser_*`. Ships with an operating procedure (intake → setup → run → report), a default pipeline and human gates (`APPROVED BY OWNER`). |
 | **Engines** | Each agent card runs **Claude Code** (default), **OpenAI Codex CLI** or **Gemini CLI**. Same status, lines, reports and board tools for all three. |
 | **Team leads** | `create_agent board_tools=true` / `set_board_tools` give a worker the same tools so it runs its own sub-cards. |

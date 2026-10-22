@@ -47,6 +47,8 @@ interface BoardState {
   rosterOpen: boolean
   inspectorOpen: boolean
   viewport?: Viewport
+  /** When each card last entered "working" (ms). Runtime only (never synced or saved); drives the line glow. */
+  workingSince: Record<string, number>
   // actions
   init(): Promise<void>
   openProject(root: string): Promise<void>
@@ -104,6 +106,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   rosterOpen: true,
   inspectorOpen: true,
   viewport: undefined,
+  workingSince: {},
 
   async init() {
     const settings = await api().settings.get()
@@ -240,7 +243,15 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   applyStatus(p) {
+    const prev = get().nodes.find((n) => n.id === p.nodeId)?.data.status
+    let workingSince = get().workingSince
+    if (p.status === 'working' && prev !== 'working') workingSince = { ...workingSince, [p.nodeId]: p.at }
+    else if (p.status !== 'working' && prev === 'working') {
+      workingSince = { ...workingSince }
+      delete workingSince[p.nodeId]
+    }
     set({
+      workingSince,
       nodes: get().nodes.map((n) =>
         n.id === p.nodeId
           ? { ...n, data: { ...n.data, status: p.status, statusDetail: p.statusDetail ?? n.data.statusDetail, sessionId: p.sessionId ?? n.data.sessionId, lastAssistantMessage: p.lastAssistantMessage ?? n.data.lastAssistantMessage, lastEventAt: p.at } }

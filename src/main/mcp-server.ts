@@ -230,6 +230,11 @@ server.registerTool(
   async ({ browser_id, text: t, selector, submit }) => text(await api('POST', `/api/browsers/${encodeURIComponent(browser_id)}/type`, { selector, text: t, submit }))
 )
 server.registerTool(
+  'browser_bookmarks',
+  { title: 'Owner bookmarks', description: 'Bookmarks from the owner\'s Chrome/Edge profiles (folder, title, url), optionally filtered by query. Use them to find the sites the owner already works with.', inputSchema: { query: z.string().optional() } },
+  async ({ query }) => text(await api('GET', `/api/bookmarks${query ? `?q=${encodeURIComponent(query)}` : ''}`))
+)
+server.registerTool(
   'browser_screenshot',
   { title: 'Screenshot a browser card', description: 'Capture the page to a PNG file and return its path (open it with the Read tool).', inputSchema: { browser_id: z.string() } },
   async ({ browser_id }) => text(await api('POST', `/api/browsers/${encodeURIComponent(browser_id)}/screenshot`, {}))

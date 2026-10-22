@@ -18,6 +18,7 @@ import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
 import { selectTidyCandidates } from '@shared/tidy'
+import { listBookmarks } from './bookmarks'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
@@ -141,6 +142,7 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
       return ctx.board.edges.length < before
     },
     fireHandoff: (id) => ctx.fireHandoff?.(id, true) ?? { ok: false, error: 'not ready' },
+    bookmarks: (query) => listBookmarks(query, 500),
     browser: {
       list: () =>
         [...ctx.board.nodes.values()]
@@ -504,6 +506,7 @@ export function registerIpc(ctx: MainContext): void {
     packaged: app.isPackaged
   }))
 
+  ipcMain.handle(IPC.bookmarksList, (_e, query?: string) => listBookmarks(query))
   ipcMain.handle(IPC.tidyCandidates, async (_e, minutes: number) => (await ctx.api!.tidy(minutes, true)).candidates)
   ipcMain.handle(IPC.tidyApply, async (_e, ids: string[]) => {
     let removed = 0

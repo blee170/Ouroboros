@@ -32,6 +32,7 @@ export interface ApiHandlers {
   createHandoff(input: { source: string; target: string; mode?: 'auto' | 'manual'; template?: string; condition?: string }): { id: string } | { error: string }
   removeHandoff(id: string): boolean
   fireHandoff(id: string): { ok: boolean; error?: string }
+  bookmarks(query?: string): unknown
   browser: {
     list(): unknown
     create(input: { url?: string; title?: string }): Promise<{ id: string }>
@@ -157,6 +158,7 @@ export class HookServer {
       const api = this.deps.api
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
+      if (method === 'GET' && path === '/api/bookmarks') return send(res, 200, { bookmarks: api.bookmarks(url.searchParams.get('q') ?? undefined) })
       if (path === '/api/tidy' && (method === 'GET' || method === 'POST')) {
         const minutes = Number(url.searchParams.get('minutes') ?? 30) | 0 || 30
         const dry = method === 'GET' || url.searchParams.get('dry_run') === '1'

@@ -12,6 +12,8 @@ mkdirSync(join(project, 'sub'))
 // fake Claude Code history for the Board Builder
 const claudeCfg = mkdtempSync(join(tmpdir(), 'ouro-cfg-'))
 const { writeFileSync } = await import('node:fs')
+const bmFile = join(claudeCfg, 'Bookmarks')
+writeFileSync(bmFile, JSON.stringify({ roots: { bookmark_bar: { type: 'folder', name: 'bar', children: [{ type: 'url', name: 'Smoke Site', url: 'https://example.com/smoke' }] } } }))
 // no internet in CI: point new browser cards at the local hook server
 writeFileSync(join(userData, 'settings.json'), JSON.stringify({ browserHome: 'http://127.0.0.1:47821/health' }))
 mkdirSync(join(claudeCfg, 'projects', 'enc'), { recursive: true })
@@ -25,7 +27,7 @@ const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} [${((Date.
 const app = await electron.launch({
   ...(process.env.SMOKE_EXE ? { executablePath: process.env.SMOKE_EXE } : {}),
   args: [...(process.env.SMOKE_EXE ? [] : ['out/main/index.js']), '--no-sandbox', `--user-data-dir=${userData}`],
-  env: { ...process.env, CLAUDE_CONFIG_DIR: claudeCfg, OUROBOROS_API_TOKEN: TOKEN, OUROBOROS_PROJECT: project, OUROBOROS_SHELL: '/bin/bash', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
+  env: { ...process.env, CHROME_BOOKMARKS_FILE: bmFile, CLAUDE_CONFIG_DIR: claudeCfg, OUROBOROS_API_TOKEN: TOKEN, OUROBOROS_PROJECT: project, OUROBOROS_SHELL: '/bin/bash', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
 })
 app.process().stderr.on('data', (d) => process.stderr.write(`[electron] ${d}`))
 const page = await app.firstWindow()
@@ -175,6 +177,10 @@ const nBefore = await page.evaluate(() => window.__board.getState().nodes.length
 check((await api('DELETE', `/api/agents/${rc.json.id}`)).status === 200, 'remove_agent accepts a known id')
 await sleep(500)
 check((await page.evaluate(() => window.__board.getState().nodes.length)) === nBefore - 1, 'removed agent disappears from the canvas')
+
+// bookmarks
+const bm = await api('GET', '/api/bookmarks?q=smoke')
+check(bm.json.bookmarks?.[0]?.url === 'https://example.com/smoke', 'bookmarks api reads the Chrome bookmarks file')
 
 // tidy: the removed terminal is gone; an exited card shows up as a candidate and is closed by POST
 const tc = await api('POST', '/api/agents', { cwd: project, title: 'tidy-me', kind: 'terminal' })

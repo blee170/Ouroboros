@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { NodeResizer, useStore, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
@@ -34,6 +34,18 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const [address, setAddress] = useState(data.url ?? 'https://www.google.com')
   const [ready, setReady] = useState(false)
   const [pageTitle, setPageTitle] = useState('')
+  const [bmOpen, setBmOpen] = useState(false)
+  const [bmQuery, setBmQuery] = useState('')
+  const [bookmarks, setBookmarks] = useState<Array<{ folder: string; title: string; url: string }> | null>(null)
+  const openBookmarks = async (): Promise<void> => {
+    if (!bookmarks) setBookmarks(await window.ouroboros.bookmarks.list())
+    setBmOpen((v) => !v)
+  }
+  const visibleBookmarks = useMemo(() => {
+    const q = bmQuery.trim().toLowerCase()
+    const list = bookmarks ?? []
+    return (q ? list.filter((b) => b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q) || b.folder.toLowerCase().includes(q)) : list).slice(0, 300)
+  }, [bookmarks, bmQuery])
   const zoom = useStore((s) => s.transform[2])
   useEffect(() => {
     if (!ready) return
@@ -97,6 +109,9 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         <button className="icon-btn nodrag" title="Reload" onClick={() => ref.current?.reload()}>
           ↻
         </button>
+        <button className="icon-btn nodrag" title="Chrome / Edge bookmarks" onClick={() => void openBookmarks()}>
+          ★
+        </button>
         <input
           className="address nodrag"
           value={address}
@@ -111,6 +126,29 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           ✕
         </button>
       </div>
+      {bmOpen && (
+        <div className="bookmarks nodrag nowheel">
+          <input className="text" autoFocus placeholder="search bookmarks…" value={bmQuery} onChange={(e) => setBmQuery(e.target.value)} />
+          <ul>
+            {visibleBookmarks.map((b) => (
+              <li key={b.url}>
+                <button
+                  onClick={() => {
+                    setAddress(b.url)
+                    ref.current?.loadURL(b.url).catch(() => undefined)
+                    setBmOpen(false)
+                  }}
+                  title={b.url}
+                >
+                  <span className="title">{b.title}</span>
+                  <span className="muted small">{b.folder}</span>
+                </button>
+              </li>
+            ))}
+            {bookmarks && bookmarks.length === 0 && <li className="muted small">No Chrome/Edge bookmarks found on this machine.</li>}
+          </ul>
+        </div>
+      )}
       <div className="scale-wrap">
       <div className="browser-host nodrag nowheel" style={{ transform: `scale(${1 / zoom})`, width: `${zoom * 100}%`, height: `${zoom * 100}%` }}>
         <webview ref={ref as React.Ref<HTMLElement>} src={data.url ?? 'https://www.google.com'} partition="persist:ouroboros-browser" allowpopups useragent={CHROME_UA} style={{ width: '100%', height: '100%' }} />

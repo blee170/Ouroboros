@@ -31,6 +31,7 @@ export const IPC = {
   updateSetToken: 'update:setToken',
   updateStatus: 'update:status',
   tidyCandidates: 'tidy:candidates',
+  bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
   browserUnregister: 'browser:unregister',
   // main -> renderer (send)
@@ -216,6 +217,10 @@ export interface OuroborosApi {
     /** Called by a browser card once its <webview> is ready. */
     register(nodeId: string, webContentsId: number): void
     unregister(nodeId: string): void
+  }
+  bookmarks: {
+    /** Bookmarks read from the user's Chrome/Edge profiles (title, url, folder path). */
+    list(query?: string): Promise<Array<{ folder: string; title: string; url: string }>>
   }
   tidy: {
     candidates(olderThanMinutes: number): Promise<Array<{ id: string; title: string; reason: string }>>

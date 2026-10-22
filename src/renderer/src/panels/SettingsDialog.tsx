@@ -97,7 +97,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               {token ? 'Save' : hasToken ? 'Clear' : 'Save'}
             </button>
           </label>
-          <div className="muted small">Releases are built by GitHub Actions when a version tag is pushed. The repository is private, so downloads need this token.</div>
+          <div className="muted small">Releases are built by GitHub Actions on every version bump. The repository is public, so no token is needed; the field is for private forks (stored encrypted).</div>
         </div>
         {msg && <div className="small">{msg}</div>}
         <div className="row right">

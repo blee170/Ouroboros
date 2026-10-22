@@ -4,8 +4,8 @@ import type { UpdateStatus } from '@shared/protocol'
 
 /**
  * In-app updates from GitHub Releases (built by .github/workflows/release.yml).
- * The repository is private, so downloads need a GitHub token with read access to its contents;
- * the token is stored encrypted (safeStorage) in the user settings.
+ * The repository is public, so no token is needed; an optional token (for private forks) is stored
+ * encrypted (safeStorage) in the user settings.
  */
 type AutoUpdaterT = typeof import('electron-updater').autoUpdater
 
@@ -77,7 +77,7 @@ export class Updater extends EventEmitter {
 
 function friendly(err: unknown): string {
   const m = String((err as Error)?.message ?? err)
-  if (/404|Not Found/i.test(m)) return 'No release found (or the token cannot read the private repository). Check the GitHub token in Settings.'
+  if (/404|Not Found/i.test(m)) return 'No release found. If this is a private fork, check the GitHub token in Settings.'
   if (/401|403|Bad credentials/i.test(m)) return 'GitHub token rejected. Create a fine-grained token with Contents: read on blee170/Ouroboros.'
   if (/ENOTFOUND|ECONN|network/i.test(m)) return 'Network error while contacting GitHub.'
   return m.length > 300 ? m.slice(0, 300) + '…' : m

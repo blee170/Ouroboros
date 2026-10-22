@@ -171,7 +171,7 @@ export interface AppSettings {
   defaultShell?: string
   /** Home page for new browser cards. */
   browserHome?: string
-  /** GitHub token (stored encrypted) used to download updates from the private repository. */
+  /** Optional GitHub token (stored encrypted) for update downloads from a private fork. */
   githubTokenEnc?: string
   /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
   autoTidyMinutes?: number

@@ -18,6 +18,7 @@ export const IPC = {
   shellOpenExternal: 'shell:openExternal',
   briefOpen: 'brief:open',
   filesSaveImage: 'files:saveImage',
+  filesPasteClipboard: 'files:pasteClipboard',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -324,6 +325,8 @@ export interface OuroborosApi {
     pathFor(file: File): string
     /** Save pasted image bytes under the app's temp folder; returns the path. */
     saveImage(bytes: Uint8Array, ext: string): Promise<string>
+    /** What Ctrl+V should paste: the clipboard image saved to a file (`path`), else its text. */
+    pasteClipboard(): Promise<{ path?: string; text?: string }>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification, app, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
@@ -723,13 +723,25 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.windowOpen, (_e, projectRoot?: string) => {
     ctx.openProjectWindow(projectRoot || undefined)
   })
-  ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => {
+  const savePasted = (bytes: Uint8Array, ext: string): string => {
     const dir = join(ctx.tmpDir, 'pasted')
     mkdirSync(dir, { recursive: true })
     const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase().replace('jpeg', 'jpg') : 'png'
     const file = join(dir, `paste-${new Date().toISOString().replace(/[:.]/g, '-')}-${nanoid(4)}.${safeExt}`)
     writeFileSync(file, Buffer.from(bytes))
     return file
+  }
+  ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => savePasted(bytes, ext))
+  // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
+  // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
+  ipcMain.handle(IPC.filesPasteClipboard, async (): Promise<{ path?: string; text?: string }> => {
+    for (const item of await clipboard.read()) {
+      const type = item.types.find((t) => t === 'image/png') ?? item.types.find((t) => t.startsWith('image/'))
+      if (!type) continue
+      const blob = (await item.getType(type)) as Blob
+      return { path: savePasted(new Uint8Array(await blob.arrayBuffer()), type.split('/')[1] || 'png') }
+    }
+    return { text: await clipboard.readText() }
   })
   ipcMain.handle(IPC.briefOpen, async (e, url: string) => {
     const s = sessionOf(e)

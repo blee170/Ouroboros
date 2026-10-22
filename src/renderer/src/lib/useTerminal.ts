@@ -63,6 +63,17 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     const typePaths = (paths: string[]): void => {
       if (paths.length) api.pty.write(nodeId, paths.map(quote).join(' ') + ' ')
     }
+    // Ctrl+V: xterm would turn it into ^V for the CLI and the browser would never fire a paste event,
+    // so the clipboard is read through the main process (an image becomes a file path, text is pasted)
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || !e.ctrlKey || e.altKey || e.metaKey || e.key.toLowerCase() !== 'v') return true
+      e.preventDefault()
+      void api.files.pasteClipboard().then((r) => {
+        if (r.path) typePaths([r.path])
+        else if (r.text) term.paste(r.text)
+      })
+      return false
+    })
     const onPaste = (e: ClipboardEvent): void => {
       const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'))
       if (!files.length) return

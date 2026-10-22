@@ -88,7 +88,8 @@ const api: OuroborosApi = {
         return ''
       }
     },
-    saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext)
+    saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext),
+    pasteClipboard: () => ipcRenderer.invoke(IPC.filesPasteClipboard)
   },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)

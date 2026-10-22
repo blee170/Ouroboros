@@ -71,7 +71,7 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Several windows** | One window = one project folder, each with its own board; Conductors never see another window. |
 | **Roster** | Grouped like Claude Code's Agent View (Needs you / Ready to review / Working / Idle / Ended), multi-select broadcast. |
 | **Tidy** | Close exited or long-idle cards (dialog, optional auto-tidy, `tidy_board`). |
-| **Screenshots in** | Paste an image or drop files onto a card: the path is typed into the prompt. |
+| **Screenshots in** | Ctrl+V an image or drop files onto a card: the image is saved and its path is typed into the prompt. |
 | **External sessions** | Claude Code sessions started elsewhere (e.g. the Claude desktop app) appear as cards in the window of the project they run in (never in another project's window) and can be pulled into the canvas via `--resume`. |
 | **Updates** | ⚙ → *Check for updates* (GitHub Releases, built by Actions). |
 

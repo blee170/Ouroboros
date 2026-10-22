@@ -451,9 +451,9 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
     const url = m[0].replace(/[.,;:!?]+$/, '')
     if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
     lastOpened.set(url, Date.now())
-    // claude.ai refuses sign-in inside embedded browsers (Google OAuth + bot check), so by default
-    // its links go to the system browser where the owner is already signed in.
-    if (/^https:\/\/claude\.ai\//.test(url) && (ctx.store.getSettings().claudeLinksExternal ?? true)) {
+    // Briefs stay on the canvas. Only when the owner turned the setting on (claude.ai refusing to sign in
+    // inside the card, which its ↗ button also works around per page) do claude.ai links go to the system browser.
+    if (/^https:\/\/claude\.ai\//.test(url) && ctx.store.getSettings().claudeLinksExternal === true) {
       void shell.openExternal(url)
       return
     }

@@ -64,7 +64,7 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Changes** | `+n −m` badge per card (uncommitted git changes in its folder or worktree), per-file diff, revert, "ask the card to review its diff". |
 | **Checkpoints** | Git snapshots of a card's folder (every non-gitignored file, committed or not; taking one changes nothing on disk), from the Inspector or the Conductor's `create_checkpoint` before a risky stage. Restore puts the files back and saves a "before restore" snapshot first, so it can be undone. |
 | **Context meter** | Claude cards show how full their context window is (read from the session transcript); orange past 70 %. |
-| **Browser cards** | Chromium inside the canvas with a shared persistent profile; agents drive it via `browser_*` tools; ★ Chrome/Edge bookmarks; ↗ to the system browser. claude.ai briefs published by the Conductor open in your system browser by default. |
+| **Browser cards** | Chromium inside the canvas with a shared persistent profile; agents drive it via `browser_*` tools; ★ Chrome/Edge bookmarks; ↗ to the system browser. Briefs published by the Conductor (claude.ai artifacts, report URLs) open in a "📄 Briefs" card on the canvas. |
 | **Command cards** | Any CLI as a card (`aside exec {{prompt}}`, `codex exec {{prompt}}` …): its output is its reply, so lines work the same. |
 | **Worktrees** | One git worktree + branch per card with one click (or `worktree=true` from the Conductor). |
 | **Several windows** | One window = one project folder, each with its own board; Conductors never see another window. |
@@ -202,7 +202,7 @@ Linux builds (`npm run dist:linux`) are used for the automated tests; macOS is u
 - Desktop notifications when a card needs you.
 - Keep running in the tray when the last window is closed.
 - Track Claude Code sessions started outside Ouroboros (writes one HTTP hook into `~/.claude/settings.json`; needs port 47821 free).
-- Open claude.ai briefs in the system browser (claude.ai refuses sign-in inside embedded browsers).
+- Open claude.ai briefs in the system browser instead of a browser card (off by default; turn it on only if claude.ai refuses to sign in inside the card — the card's ↗ button opens any page outside too).
 - Default shell, browser home page, auto-tidy minutes.
 - Updates: *Check for updates*. The repository is public, so no token is needed; the token field remains for private forks (stored encrypted with Electron's `safeStorage`).
 

@@ -21,6 +21,18 @@ describe('Board external-session dedupe', () => {
     b.applyExternalHook({ hook_event_name: 'Stop', session_id: 's1', cwd: '/p' })
     expect(events).toHaveLength(2)
   })
+  it('dropExternal ends the card once with the given reason', () => {
+    const b = new Board()
+    b.sync({ projectRoot: '/p', nodes: [], edges: [] })
+    const events: ExternalSessionPayload[] = []
+    b.on('external', (p: ExternalSessionPayload) => events.push(p))
+    b.applyExternalHook({ hook_event_name: 'UserPromptSubmit', session_id: 's3', cwd: '/elsewhere' })
+    b.dropExternal('s3', 'moved to its project window')
+    b.dropExternal('s3', 'moved to its project window')
+    expect(events).toHaveLength(2)
+    expect(events[1]).toMatchObject({ sessionId: 's3', cwd: '/elsewhere', status: 'ended', statusDetail: 'moved to its project window' })
+    expect(b.externalSessions.has('s3')).toBe(false)
+  })
   it('maps session ids from hooks that do not change status', () => {
     const b = new Board()
     b.sync({ projectRoot: '/p', nodes: [{ id: 'n1', data: { kind: 'claude', title: 'A', cwd: '/p' } }], edges: [] })

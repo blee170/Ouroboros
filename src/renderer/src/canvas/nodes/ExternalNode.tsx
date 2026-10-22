@@ -17,7 +17,7 @@ function ExternalNodeImpl({ id, data }: NodeProps<BoardNode>) {
         <span className="status-text">{STATUS_LABEL[status]}</span>
       </div>
       <div className="external-body">
-        <div className="muted small">{data.statusDetail ?? 'Claude Code session running outside Ouroboros'}</div>
+        <div className="muted small clamp">{data.statusDetail ?? 'Claude Code session running outside Ouroboros'}</div>
         {data.lastAssistantMessage && <div className="small clamp">{data.lastAssistantMessage}</div>}
         <button className="btn small nodrag" onClick={() => pullExternal(id)}>
           Pull into canvas (resume here)

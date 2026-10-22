@@ -1,11 +1,9 @@
-import { execFile } from 'node:child_process'
 import { readFile, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import type { ChangeFile, ChangesSummary } from '@shared/protocol'
+import { git, hasHead } from './git'
 export type { ChangeFile, ChangesSummary }
 
-const execFileP = promisify(execFile)
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 /** untracked files whose lines are counted (the rest show 0) */
 const MAX_COUNTED_UNTRACKED = 30
@@ -13,17 +11,6 @@ const MAX_COUNTED_BYTES = 512 * 1024
 /** one summary per folder is shared by every card and panel polling it */
 const SUMMARY_TTL_MS = 2_000
 const summaryCache = new Map<string, { at: number; promise: Promise<ChangesSummary> }>()
-
-async function git(cwd: string, args: string[], okCodes: number[] = [0]): Promise<string> {
-  try {
-    const { stdout } = await execFileP('git', args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
-    return stdout
-  } catch (err) {
-    const e = err as { code?: number; stdout?: string }
-    if (typeof e.code === 'number' && okCodes.includes(e.code)) return e.stdout ?? ''
-    throw err
-  }
-}
 
 /** Parse `git status --porcelain=v1 -z` output (pure). */
 export function parseStatus(raw: string): Array<{ path: string; status: ChangeFile['status'] }> {
@@ -87,10 +74,6 @@ async function countLines(file: string): Promise<number> {
   }
 }
 
-async function hasHead(cwd: string): Promise<boolean> {
-  return (await git(cwd, ['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])).trim() !== ''
-}
-
 async function computeChanges(cwd: string): Promise<ChangesSummary> {
   try {
     await git(cwd, ['rev-parse', '--is-inside-work-tree'])
@@ -98,7 +81,8 @@ async function computeChanges(cwd: string): Promise<ChangesSummary> {
     return { repo: false, files: [], added: 0, deleted: 0 }
   }
   const branch = (await git(cwd, ['branch', '--show-current'], [0, 128])).trim() || undefined
-  const status = parseStatus(await git(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']))
+  // no optional locks: this polling must not hold index.lock against the agents' own git commands or a checkpoint restore
+  const status = parseStatus(await git(cwd, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all']))
   const numstat = (await hasHead(cwd)) ? parseNumstat(await git(cwd, ['diff', 'HEAD', '--numstat', '-z', '-M'])) : new Map()
   let counted = 0
   const files: ChangeFile[] = []

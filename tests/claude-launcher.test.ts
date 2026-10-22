@@ -73,6 +73,7 @@ describe('prepareLaunch', () => {
     const cond = prepareLaunch({ ...base, nodeId: 'c1', kind: 'conductor', claude: { continue: true, mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
     expect(cond.command).toContain('--system-prompt-snapshot off')
     expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('Conductor')
+    expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('create_checkpoint')
     const cfg = JSON.parse(readFileSync(cond.mcpConfigPath!, 'utf8')) as { mcpServers: Record<string, { command: string }> }
     expect(Object.keys(cfg.mcpServers).sort()).toEqual(['aside', 'ouroboros'])
     expect(cfg.mcpServers.ouroboros.command).toBe('/el') // no nodeBin given -> electron-as-node fallback

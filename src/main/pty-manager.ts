@@ -83,7 +83,9 @@ export class PtyManager extends EventEmitter {
     proc.onExit(({ exitCode }) => {
       entry.exited = true
       log(`pty exit ${opts.nodeId} code=${exitCode}`)
-      if (this.entries.get(opts.nodeId) === entry) this.entries.delete(opts.nodeId)
+      // a restart replaces the entry before the killed process reports its exit: that exit is not the card's
+      if (this.entries.get(opts.nodeId) !== entry) return
+      this.entries.delete(opts.nodeId)
       this.emit('exit', opts.nodeId, exitCode)
     })
     if (opts.initialCommand) {

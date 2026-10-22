@@ -71,7 +71,8 @@ export class Updater extends EventEmitter {
   async install(): Promise<void> {
     if (!app.isPackaged) return
     const u = await this.updater()
-    setImmediate(() => u.quitAndInstall(false, true))
+    // silent: the installer runs with /S (no wizard, same per-user location) and relaunches the app
+    setImmediate(() => u.quitAndInstall(true, true))
   }
 }
 

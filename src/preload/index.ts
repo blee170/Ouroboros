@@ -60,10 +60,19 @@ const api: OuroborosApi = {
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url)
   },
+  brief: {
+    open: (url) => ipcRenderer.invoke(IPC.briefOpen, url)
+  },
   changes: {
     summary: (cwd) => ipcRenderer.invoke(IPC.changesSummary, cwd),
     diff: (cwd, file) => ipcRenderer.invoke(IPC.changesDiff, cwd, file),
     revert: (cwd, file) => ipcRenderer.invoke(IPC.changesRevert, cwd, file)
+  },
+  checkpoints: {
+    list: (cwd) => ipcRenderer.invoke(IPC.checkpointsList, cwd),
+    create: (cwd, label) => ipcRenderer.invoke(IPC.checkpointsCreate, cwd, label),
+    restore: (cwd, id, moveHead) => ipcRenderer.invoke(IPC.checkpointsRestore, cwd, id, moveHead),
+    delete: (cwd, id) => ipcRenderer.invoke(IPC.checkpointsDelete, cwd, id)
   },
   session: {
     usage: (sessionId) => ipcRenderer.invoke(IPC.sessionUsage, sessionId)
@@ -79,7 +88,11 @@ const api: OuroborosApi = {
         return ''
       }
     },
-    saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext)
+    saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext),
+    pasteClipboard: () => ipcRenderer.invoke(IPC.filesPasteClipboard)
+  },
+  skills: {
+    list: (cwd) => ipcRenderer.invoke(IPC.skillsList, cwd)
   },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)

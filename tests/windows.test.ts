@@ -54,4 +54,31 @@ describe('SessionRegistry', () => {
     expect(r.forCwd('C:\\Users\\me\\projects')).toBeUndefined()
     expect(samePath('/a/b/', '/A/B')).toBe(true)
   })
+
+  it('forCwd counts the app\'s own worktrees (<project>-worktrees/<slug>) as the project', () => {
+    const r = new SessionRegistry<S>()
+    r.add(mk(1, 'C:\\Users\\me\\proj'))
+    expect(r.forCwd('C:\\Users\\me\\proj-worktrees\\impl\\src')?.id).toBe(1)
+    expect(r.forCwd('C:\\Users\\me\\proj\\.claude\\worktrees\\x')?.id).toBe(1)
+    expect(r.forCwd('C:\\Users\\me\\proj-worktreesX')).toBeUndefined()
+  })
+
+  it('forExternal never falls back to the focused window and evicts a window that stopped matching', () => {
+    const r = new SessionRegistry<S>()
+    const a = mk(1, 'C:\\Users\\me\\.claudecode\\chill-shuttle')
+    const b = mk(2, 'C:\\Users\\me\\Ouroboros')
+    r.add(a)
+    r.touch(1) // chill-shuttle is focused
+    // only chill-shuttle open: a session from elsewhere is shown nowhere
+    expect(r.forExternal('C:\\Users\\me\\Ouroboros\\.claude\\worktrees\\s1')).toEqual({ target: undefined, evict: undefined })
+    expect(r.forExternal('')).toEqual({ target: undefined, evict: undefined })
+    // it had landed in chill-shuttle (old fallback): evict it, even with no better window
+    expect(r.forExternal('C:\\Users\\me\\Ouroboros\\.claude\\worktrees\\s1', 1)).toEqual({ target: undefined, evict: a })
+    // the Ouroboros window opens: it becomes the target and chill-shuttle still drops the card
+    r.add(b)
+    expect(r.forExternal('C:\\Users\\me\\Ouroboros\\.claude\\worktrees\\s1', 1)).toEqual({ target: b, evict: a })
+    // already in the right window: nothing to evict
+    expect(r.forExternal('C:\\Users\\me\\Ouroboros\\.claude\\worktrees\\s1', 2)).toEqual({ target: b, evict: undefined })
+    expect(r.forExternal('C:\\Users\\me\\Ouroboros', 2)).toEqual({ target: b, evict: undefined })
+  })
 })

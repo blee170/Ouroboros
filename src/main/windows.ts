@@ -88,7 +88,10 @@ export class SessionRegistry<S extends SessionLike> {
     return undefined
   }
 
-  /** The window whose project folder contains `cwd` (deepest match). */
+  /**
+   * The window whose project folder contains `cwd` (deepest match). The app's own worktrees,
+   * `<project>-worktrees/<slug>` next to the project (see worktree.ts), count as the project.
+   */
   forCwd(cwd: string): S | undefined {
     const c = normalizePath(cwd)
     let best: S | undefined
@@ -96,11 +99,22 @@ export class SessionRegistry<S extends SessionLike> {
     for (const s of this.sessions.values()) {
       if (!s.projectRoot) continue
       const r = normalizePath(s.projectRoot)
-      if ((c === r || c.startsWith(r + '/')) && r.length > bestLen) {
+      if ((c === r || c.startsWith(r + '/') || c.startsWith(r + '-worktrees/')) && r.length > bestLen) {
         best = s
         bestLen = r.length
       }
     }
     return best
+  }
+
+  /**
+   * Where a session we did not launch belongs: only the window whose project contains its cwd, never a
+   * fallback. `evict` is the window that showed it before and must drop it (the cwd no longer matches,
+   * or a better window opened).
+   */
+  forExternal(cwd: string, knownId?: number): { target?: S; evict?: S } {
+    const target = cwd ? this.forCwd(cwd) : undefined
+    const known = this.get(knownId)
+    return { target, evict: known && known !== target ? known : undefined }
   }
 }

@@ -91,7 +91,7 @@ server.registerTool(
   {
     title: 'Create a new Claude Code agent card',
     description:
-      'Add a card to the board. kind=claude (default) runs an interactive coding agent: engine=claude (Claude Code), codex (OpenAI Codex CLI) or gemini (Gemini CLI); omitted = the owner\'s default engine from Settings. All get the same hooks, lines and board tools. kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt).',
+      'Add a card to the board. kind=claude (default) runs an interactive coding agent: engine=claude (Claude Code), codex (OpenAI Codex CLI) or gemini (Gemini CLI); omitted = the owner\'s default engine from Settings. All get the same hooks, lines and board tools. kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt). A title that already exists in the same folder reuses that card when it is idle or done (the prompt goes to it; a changed role_prompt is given to it first; the result says reused=true) and replaces it when its process has ended (replaced=<old id>), so keep one stable title per role instead of inventing new names each round; a card that is still working is left alone and a second one is created.',
     inputSchema: {
       cwd: z.string().optional(),
       title: z.string().optional(),
@@ -149,6 +149,49 @@ server.registerTool(
     if (file) q.set('file', file)
     return text(await api('GET', `/api/agents/${encodeURIComponent(agent_id)}/changes?${q.toString()}`))
   }
+)
+
+server.registerTool(
+  'create_checkpoint',
+  {
+    title: "Git snapshot of a card's folder",
+    description:
+      "Take a git snapshot of the card's folder (its worktree if it has one): every non-gitignored file, committed or not. Changes nothing on disk. Take one before a risky stage (Implement, Bug fix, anything that edits files) so the stage can be rolled back with restore_checkpoint. label: a short name for the stage.",
+    inputSchema: { agent_id: z.string(), label: z.string().optional() }
+  },
+  async ({ agent_id, label }) => text(await api('POST', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints`, { label }))
+)
+
+server.registerTool(
+  'list_checkpoints',
+  {
+    title: "Git snapshots of a card's folder",
+    description: "The snapshots taken in the card's folder, newest first. headMoved=true means commits were made since that snapshot: restoring it needs move_head.",
+    inputSchema: { agent_id: z.string() }
+  },
+  async ({ agent_id }) => text(await api('GET', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints`))
+)
+
+server.registerTool(
+  'restore_checkpoint',
+  {
+    title: 'Restore a git snapshot',
+    description:
+      "Put the card's folder back exactly as it was in the snapshot (gitignored files and the board file are left alone). The current state is saved first as a \"before restore\" snapshot, so a restore can be undone. Refused while a card is working (or waiting for the owner) in that folder, and when HEAD moved since the snapshot unless move_head=true, which also moves the branch back to the commit of that time (for the whole repository: everything in it is unstaged, only this card's folder is restored) — destructive git: propose it and wait for APPROVED BY OWNER.",
+    inputSchema: { agent_id: z.string(), checkpoint_id: z.string(), move_head: z.boolean().optional() }
+  },
+  async ({ agent_id, checkpoint_id, move_head }) =>
+    text(await api('POST', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints/${encodeURIComponent(checkpoint_id)}/restore`, { move_head: Boolean(move_head) }))
+)
+
+server.registerTool(
+  'delete_checkpoint',
+  {
+    title: 'Delete a git snapshot',
+    description: 'Forget a snapshot of the card\'s folder (its ref is removed; git keeps the objects until it prunes them).',
+    inputSchema: { agent_id: z.string(), checkpoint_id: z.string() }
+  },
+  async ({ agent_id, checkpoint_id }) => text(await api('DELETE', `/api/agents/${encodeURIComponent(agent_id)}/checkpoints/${encodeURIComponent(checkpoint_id)}`))
 )
 
 server.registerTool(
@@ -234,7 +277,7 @@ server.registerTool(
 )
 server.registerTool(
   'browser_open',
-  { title: 'Open a browser card', description: 'Add a new browser card to the canvas (optionally at a URL) and return its id.', inputSchema: { url: z.string().optional(), title: z.string().optional() } },
+  { title: 'Open a browser card', description: 'Add a browser card to the canvas (optionally at a URL) and return its id. A card that already shows that URL is returned instead of a second copy.', inputSchema: { url: z.string().optional(), title: z.string().optional() } },
   async (input) => text(await api('POST', '/api/browsers', input))
 )
 server.registerTool(

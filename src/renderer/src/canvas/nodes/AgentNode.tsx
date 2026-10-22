@@ -38,10 +38,16 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     const { term } = handle
     const api = window.ouroboros
     const cwd = data.worktree?.path || data.cwd
+    // a launch that fails (shell typo, missing node for Codex) must not leave the card blank on "Starting"
+    const report = (r: { ok: boolean; error?: string }): void => {
+      if (r.ok) return
+      term.write(`\r\n\x1b[31m[launch failed]\x1b[0m ${r.error ?? 'unknown error'}\r\n`)
+      useBoard.getState().applyStatus({ nodeId: id, status: 'ended', statusDetail: 'launch failed', at: Date.now() })
+    }
     if (kind === 'terminal' || kind === 'command') {
-      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined })
+      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined }).then(report)
     } else if (kind === 'claude' || kind === 'conductor') {
-      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title })
+      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title }).then(report)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, seq, id, kind])
@@ -77,7 +83,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             }}
           />
         ) : (
-          <span className="title" onDoubleClick={() => setEditing(true)} title={data.cwd}>
+          <span className="title" onDoubleClick={() => setEditing(true)} title={`${data.title}\n${data.cwd}`}>
             {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? (data.engine === 'codex' ? '◎ ' : data.engine === 'gemini' ? '✧ ' : '✦ ') : kind === 'command' ? '⚡ ' : '▣ '}
             {data.title}
           </span>
@@ -95,6 +101,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span className="bar" style={{ width: `${Math.min(100, Math.round((usage.contextTokens / usage.contextWindow) * 100))}%` }} />
             <span className="label">{Math.round(usage.contextTokens / 1000)}k</span>
           </span>
+        )}
+        {data.lastBriefUrl && (
+          <button className="icon-btn nodrag" title={`Open the latest brief in the 📄 Briefs card\n${data.lastBriefUrl}`} onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
+            📄
+          </button>
         )}
         {changes && changes.repo && changes.files.length > 0 && (
           <button className="changes-badge nodrag" title={`${changes.files.length} changed file(s) on ${changes.branch ?? '?'} — click to review in the Inspector`} onClick={() => select(id, null)}>

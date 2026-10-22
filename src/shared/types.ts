@@ -91,6 +91,8 @@ export interface NodeData {
   initialPrompt?: string
   /** Claude Code session id once known (SessionStart hook). */
   sessionId?: string
+  /** Conductor cards: the last brief (claude.ai artifact, report URL) they published; the 📄 button reopens it. */
+  lastBriefUrl?: string
   // --- runtime-only fields (not persisted) ---
   status?: AgentStatus
   statusDetail?: string
@@ -180,7 +182,7 @@ export interface AppSettings {
   githubTokenEnc?: string
   /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
   autoTidyMinutes?: number
-  /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default true. */
+  /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default false: briefs stay on the canvas. */
   claudeLinksExternal?: boolean
   /** Engine new agent/conductor cards use when none is chosen (claude by default). */
   defaultEngine?: AgentEngine

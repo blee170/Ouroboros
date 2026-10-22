@@ -1,16 +1,18 @@
-import { BrowserWindow, Notification, app, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
-import { normalizeEngine, type AppSettings, type HookEvent, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
+import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
-import { tailLines } from '@shared/ansi'
+import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
+import { findBriefUrl } from './briefs'
+import { listSkills } from './skills'
 import { prepareLaunch } from './claude-launcher'
-import { ROLE_PROMPT_PREFIX } from './agent-launcher'
+import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, HookServer } from './hook-server'
 import { PtyManager, defaultShell } from './pty-manager'
@@ -26,7 +28,8 @@ import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
-import type { SessionRegistry } from './windows'
+import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
+import { normalizePath, type SessionRegistry } from './windows'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -152,6 +155,32 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
+/** The folder a card's git operations apply to: its worktree, else its cwd, else the project. */
+function folderOf(board: Board, n: { data: NodeData }): string {
+  return n.data.worktree?.path || n.data.cwd || board.projectRoot
+}
+
+/**
+ * A card or external session in any window still editing `folder` (or a folder inside / around it): working, or
+ * stopped mid-turn at a permission prompt or a question. Conductors and team leads only orchestrate, so they do not count.
+ */
+function busyIn(ctx: MainContext, folder: string): { id: string; title: string } | undefined {
+  const f = normalizePath(folder)
+  const overlaps = (g: string): boolean => g === f || g.startsWith(f + '/') || f.startsWith(g + '/')
+  const midTurn = (s: NodeData['status']): boolean => s === 'working' || s === 'needs-you'
+  for (const w of ctx.windows.all()) {
+    for (const o of w.board.nodes.values()) {
+      const d = o.data
+      if (!midTurn(d.status) || d.kind === 'conductor' || d.kind === 'note' || d.kind === 'browser' || d.claude?.boardTools) continue
+      if (overlaps(normalizePath(folderOf(w.board, o)))) return { id: o.id, title: d.title }
+    }
+    for (const x of w.board.externalSessions.values()) {
+      if (midTurn(x.status) && x.cwd && overlaps(normalizePath(x.cwd))) return { id: x.sessionId, title: `external session ${x.sessionId.slice(0, 8)}` }
+    }
+  }
+  return undefined
+}
+
 /** The JSON API (MCP server, tests) scoped to one window's board. */
 export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandlers {
   const board = s.board
@@ -202,6 +231,9 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           .filter((n) => n.data.kind === 'browser')
           .map((n) => ({ id: n.id, title: n.data.title, url: n.data.url, ready: ctx.browsers.has(n.id) })),
       create: async (input) => {
+        // the same page twice on the canvas helps nobody: hand back the card that already shows it
+        const dup = input.url ? browserShowing(ctx, board, input.url) : undefined
+        if (dup) return { id: dup }
         const id = nanoid(10)
         const count = board.nodes.size
         const node: WorkspaceNode = {
@@ -225,9 +257,39 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       screenshot: (id) => ctx.browsers.screenshot(id, join(ctx.tmpDir, 'screenshots'))
     },
     createAgent: async (input) => {
-      const id = nanoid(10)
+      const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
       let cwd = input.cwd || board.projectRoot || app.getPath('home')
       const title = input.title || basename(cwd)
+      const kind = input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude'
+      // The same title asked for again (a Conductor tends to want its "Brief writer" every round): a card that
+      // finished its last job is reused, one whose process ended is replaced; a working card is left alone.
+      let replaced: string | undefined
+      const twin = kind === 'claude' ? [...board.nodes.values()].find((n) => n.data.kind === 'claude' && n.data.title.trim().toLowerCase() === title.trim().toLowerCase() && samePath(n.data.cwd, cwd)) : undefined
+      if (twin) {
+        const alive = board.ptyAlive.has(twin.id)
+        const status = twin.data.status ?? (alive ? 'idle' : 'ended')
+        if (alive && (status === 'idle' || status === 'done')) {
+          const role = input.role_prompt?.trim()
+          if (role && role !== twin.data.claude?.appendSystemPrompt) {
+            // a new role for a live session goes in as a role turn; the task waits for its "ready"
+            const claudeOpts = { ...twin.data.claude, appendSystemPrompt: role }
+            twin.data.claude = claudeOpts
+            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { claude: claudeOpts }, restart: false })
+            board.markRoleTurn(twin.id)
+            sendPrompt(ctx, s, twin.id, roleAsMessage(role))
+            if (input.prompt) pendingPrompts.set(twin.id, input.prompt)
+          } else if (input.prompt) sendPrompt(ctx, s, twin.id, input.prompt)
+          if (input.report_to && board.nodes.has(input.report_to) && !board.edges.some((e) => e.source === twin.id && e.target === input.report_to)) {
+            createHandoffEdge(s, { source: twin.id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
+          }
+          return { id: twin.id, cwd: twin.data.worktree?.path || twin.data.cwd, worktree: twin.data.worktree?.path, reused: true }
+        }
+        if (!alive || status === 'ended') {
+          removeCard(ctx, s, twin.id)
+          replaced = twin.id
+        }
+      }
+      const id = nanoid(10)
       let worktree: WorkspaceNode['data']['worktree']
       if (input.worktree) {
         const wt = await createWorktree(cwd, title)
@@ -237,7 +299,6 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const count = board.nodes.size
       // Guard: --continue in a folder where a conductor already lives would clone the conductor's own
       // conversation (and re-run whatever it was doing). Start fresh there instead.
-      const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
       const conductorHere = [...board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
       const wantContinue = Boolean(input.continue) && !conductorHere
       const claude: WorkspaceNode['data']['claude'] =
@@ -257,7 +318,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         width: 560,
         height: 400,
         data: {
-          kind: input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude',
+          kind,
           engine: claude ? normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine) : undefined,
           title,
           cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
@@ -274,7 +335,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (input.report_to && board.nodes.has(input.report_to)) {
         createHandoffEdge(s, { source: id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
       }
-      return { id, cwd, worktree: worktree?.path }
+      return { id, cwd, worktree: worktree?.path, replaced }
     },
     removeAgent: async (id) => {
       if (!board.nodes.has(id)) return false
@@ -300,10 +361,36 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     changes: async (id, opts) => {
       const n = board.nodes.get(id)
       if (!n) return null
-      const cwd = n.data.worktree?.path || n.data.cwd || board.projectRoot
+      const cwd = folderOf(board, n)
       const summary = await getChanges(cwd)
       const diff = summary.repo && (opts.diff || opts.file) ? await getDiff(cwd, opts.file, 120_000) : undefined
       return { cwd, ...summary, diff }
+    },
+    listCheckpoints: async (id) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      return { folder, ...(await listCheckpoints(folder)) }
+    },
+    createCheckpoint: async (id, label) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      return { folder, ...(await createCheckpoint(folder, { label, cardId: id })) }
+    },
+    restoreCheckpoint: async (id, checkpointId, moveHead) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      const busy = busyIn(ctx, folder)
+      if (busy) return { folder, ok: false, error: `"${busy.title}" (${busy.id}) is working or waiting for the owner in that folder; wait for it or stop it first` }
+      return { folder, ...(await restoreCheckpoint(folder, checkpointId, { moveHead, cardId: id })) }
+    },
+    deleteCheckpoint: async (id, checkpointId) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const folder = folderOf(board, n)
+      return { folder, ...(await deleteCheckpoint(folder, checkpointId)) }
     },
     tidy: async (olderThanMinutes, dryRun) => {
       // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
@@ -365,6 +452,34 @@ function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayloa
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
 }
 
+const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
+
+/** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
+function browserShowing(ctx: MainContext, board: Board, url: string): string | undefined {
+  const key = urlKey(url)
+  for (const n of board.nodes.values()) {
+    if (n.data.kind !== 'browser') continue
+    const live = ctx.browsers.get(n.id)?.getURL()
+    if (urlKey(live || n.data.url || '') === key) return n.id
+  }
+  return undefined
+}
+
+/** Show a brief (claude.ai artifact, report URL) in the window's "📄 Briefs" browser card, created on first use. */
+async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+  // Briefs stay on the canvas. Only when the owner turned the setting on (claude.ai refusing to sign in
+  // inside the card, which its ↗ button also works around per page) do claude.ai links go to the system browser.
+  if (/^https:\/\/claude\.ai\//.test(url) && ctx.store.getSettings().claudeLinksExternal === true) {
+    void shell.openExternal(url)
+    return
+  }
+  // a card already on that page (the Conductor's own browser_open, say) is enough: no second copy
+  if (browserShowing(ctx, s.board, url)) return
+  const existing = [...s.board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
+  if (existing && ctx.browsers.has(existing.id)) await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
+  else await s.api.browser.create({ url, title: '📄 Briefs' })
+}
+
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
 function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession['fireHandoff'] {
   const board = s.board
@@ -396,31 +511,26 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
   board.on('stop', (nodeId: string, message: string) => {
     for (const edge of selectHandoffs(board.edges, nodeId, message)) fire(edge, message, false)
   })
-  // A reply that publishes something for the owner (claude.ai artifact or any https URL in a conductor's reply)
-  // is opened in a "📄 Briefs" browser card so it can be read on the canvas.
+  // A card that publishes something for the owner (a claude.ai artifact from any card, any https URL in a
+  // conductor's reply) gets it opened in a "📄 Briefs" browser card so it can be read on the canvas.
   const lastOpened = new Map<string, number>()
   board.on('stop', (nodeId: string, message: string) => {
     const src = board.nodes.get(nodeId)
-    if (!src || src.data.kind !== 'conductor') return
-    const m = /https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9_\-/.]+|https?:\/\/[^\s)>\]"'`]+/.exec(message)
-    if (!m) return
-    const url = m[0].replace(/[.,;:!?]+$/, '')
+    if (!src || src.data.kind === 'browser' || src.data.kind === 'note') return
+    const found = findBriefUrl({ message, output: stripAnsi(board.getOutput(nodeId)), anyUrl: src.data.kind === 'conductor' })
+    if (!found) return
+    const { url, inMessage } = found
+    // a link that is only in the scrollback was handled when it first appeared
+    if (!inMessage && src.data.lastBriefUrl === url) return
     if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
     lastOpened.set(url, Date.now())
-    // claude.ai refuses sign-in inside embedded browsers (Google OAuth + bot check), so by default
-    // its links go to the system browser where the owner is already signed in.
-    if (/^https:\/\/claude\.ai\//.test(url) && (ctx.store.getSettings().claudeLinksExternal ?? true)) {
-      void shell.openExternal(url)
-      return
+    // remembered on the card and on every conductor so the owner can reopen it with the 📄 button
+    for (const n of board.nodes.values()) {
+      if (n.id !== nodeId && n.data.kind !== 'conductor') continue
+      n.data.lastBriefUrl = url
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: n.id, data: { lastBriefUrl: url }, restart: false })
     }
-    void (async () => {
-      const existing = [...board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
-      if (existing && ctx.browsers.has(existing.id)) {
-        await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
-      } else {
-        await s.api.browser.create({ url, title: '📄 Briefs' })
-      }
-    })()
+    void openBrief(ctx, s, url)
   })
 
   // A card that needs a human (permission prompt, question) tells every conductor it reports to.
@@ -487,14 +597,19 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): v
   ctx.windows.forNode(nodeId)?.board.applyHook(nodeId, event)
 }
 
-/** Global (external) hook: ignore sessions any window launched; show the card in the window whose project contains its cwd. */
+/**
+ * Global (external) hook: ignore sessions any window launched; show the card only in the window whose
+ * project contains its cwd. A session that matches no open window is not shown anywhere, and one that
+ * sat in a window whose project no longer matches is moved out of it.
+ */
 export function routeExternalHook(ctx: MainContext, event: HookEvent): void {
   const sessionId = typeof event.session_id === 'string' ? event.session_id : undefined
   if (!sessionId) return
   if (ctx.windows.all().some((s) => s.board.nodeForSession(sessionId))) return
-  const cwd = typeof event.cwd === 'string' ? event.cwd : ''
   const known = ctx.windows.all().find((s) => s.board.externalSessions.has(sessionId))
-  const target = known ?? (cwd ? ctx.windows.forCwd(cwd) : undefined) ?? ctx.windows.current()
+  const cwd = (typeof event.cwd === 'string' && event.cwd) || known?.board.externalSessions.get(sessionId)?.cwd || ''
+  const { target, evict } = ctx.windows.forExternal(cwd, known?.id)
+  evict?.board.dropExternal(sessionId, 'moved to its project window')
   target?.board.applyExternalHook(event)
 }
 
@@ -633,13 +748,33 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.windowOpen, (_e, projectRoot?: string) => {
     ctx.openProjectWindow(projectRoot || undefined)
   })
-  ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => {
+  const savePasted = (bytes: Uint8Array, ext: string): string => {
     const dir = join(ctx.tmpDir, 'pasted')
     mkdirSync(dir, { recursive: true })
     const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase().replace('jpeg', 'jpg') : 'png'
     const file = join(dir, `paste-${new Date().toISOString().replace(/[:.]/g, '-')}-${nanoid(4)}.${safeExt}`)
     writeFileSync(file, Buffer.from(bytes))
     return file
+  }
+  ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => savePasted(bytes, ext))
+  ipcMain.handle(IPC.skillsList, (_e, cwd: string) => listSkills(typeof cwd === 'string' ? cwd : ''))
+  // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
+  // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
+  ipcMain.handle(IPC.filesPasteClipboard, async (): Promise<{ path?: string; text?: string }> => {
+    // Office apps put a bitmap next to the copied cells: text wins whenever there is any
+    const text = await clipboard.readText()
+    if (text.trim()) return { text }
+    for (const item of await clipboard.read()) {
+      const type = item.types.find((t) => t === 'image/png') ?? item.types.find((t) => t.startsWith('image/'))
+      if (!type) continue
+      const blob = (await item.getType(type)) as Blob
+      return { path: savePasted(new Uint8Array(await blob.arrayBuffer()), type.split('/')[1] || 'png') }
+    }
+    return {}
+  })
+  ipcMain.handle(IPC.briefOpen, async (e, url: string) => {
+    const s = sessionOf(e)
+    if (s && /^https?:\/\//.test(url)) await openBrief(ctx, s, url)
   })
   ipcMain.handle(IPC.shellOpenExternal, (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url)
@@ -703,6 +838,14 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.bookmarksList, (_e, query?: string) => listBookmarks(query))
   ipcMain.handle(IPC.changesSummary, (_e, cwd: string) => getChanges(cwd))
   ipcMain.handle(IPC.changesDiff, (_e, cwd: string, file?: string) => getDiff(cwd, file))
+  ipcMain.handle(IPC.checkpointsList, (_e, cwd: string) => listCheckpoints(cwd))
+  ipcMain.handle(IPC.checkpointsCreate, (_e, cwd: string, label?: string) => createCheckpoint(cwd, { label }))
+  ipcMain.handle(IPC.checkpointsRestore, (_e, cwd: string, id: string, moveHead?: boolean) => {
+    const busy = busyIn(ctx, cwd)
+    if (busy) return { ok: false, error: `"${busy.title}" is working or waiting for you in that folder; wait for it or stop it first` }
+    return restoreCheckpoint(cwd, id, { moveHead: Boolean(moveHead) })
+  })
+  ipcMain.handle(IPC.checkpointsDelete, (_e, cwd: string, id: string) => deleteCheckpoint(cwd, id))
   ipcMain.handle(IPC.changesRevert, async (_e, cwd: string, file: string) => {
     try {
       await revertFile(cwd, file)

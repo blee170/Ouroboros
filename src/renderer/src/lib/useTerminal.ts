@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 
@@ -44,6 +45,10 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     const search = new SearchAddon()
     term.loadAddon(fit)
     term.loadAddon(search)
+    // the CLIs lay out emoji as 2 columns (Unicode 11 widths); xterm's built-in table is Unicode 6, which
+    // drifts the cursor and box borders on every ✅ 📄 in a reply
+    term.loadAddon(new Unicode11Addon())
+    term.unicode.activeVersion = '11'
     term.open(el)
     try {
       const webgl = new WebglAddon()
@@ -63,6 +68,25 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     const typePaths = (paths: string[]): void => {
       if (paths.length) api.pty.write(nodeId, paths.map(quote).join(' ') + ' ')
     }
+    // Ctrl+V: xterm would turn it into ^V for the CLI and the browser would never fire a paste event,
+    // so the clipboard is read through the main process (an image becomes a file path, text is pasted)
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || !e.ctrlKey || e.altKey || e.metaKey) return true
+      // Ctrl+C with a selection copies it; without one it stays the interrupt the CLI expects
+      if (e.key.toLowerCase() === 'c' && term.hasSelection()) {
+        e.preventDefault()
+        void navigator.clipboard.writeText(term.getSelection())
+        term.clearSelection()
+        return false
+      }
+      if (e.key.toLowerCase() !== 'v') return true
+      e.preventDefault()
+      void api.files.pasteClipboard().then((r) => {
+        if (r.path) typePaths([r.path])
+        else if (r.text) term.paste(r.text)
+      })
+      return false
+    })
     const onPaste = (e: ClipboardEvent): void => {
       const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'))
       if (!files.length) return

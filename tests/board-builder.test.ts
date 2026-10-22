@@ -28,12 +28,16 @@ describe('buildBoard', () => {
 
   it('wires implementer -> tester (auto), tester -> reviewer (auto on PASS), reviewer -> implementer (manual)', () => {
     const [impl, tester, reviewer] = built.nodes.slice(2, 5).map((x) => x.id)
-    expect(built.edges.map((e) => [e.source, e.target, e.data.mode])).toEqual([
+    const conductor = built.nodes[1].id
+    const reports = built.edges.filter((e) => e.target === conductor)
+    expect(reports.map((e) => e.source)).toEqual(built.nodes.filter((n) => n.data.kind === 'claude').map((n) => n.id))
+    const flow = built.edges.filter((e) => e.target !== conductor)
+    expect(flow.map((e) => [e.source, e.target, e.data.mode])).toEqual([
       [impl, tester, 'auto'],
       [tester, reviewer, 'auto'],
       [reviewer, impl, 'manual']
     ])
-    const cond = built.edges[1].data.condition
+    const cond = flow[1].data.condition
     expect(matchesCondition(cond, 'PASS: ran vitest, 12 green')).toBe(true)
     expect(matchesCondition(cond, '2 tests failed')).toBe(false)
   })
@@ -43,7 +47,7 @@ describe('buildBoard', () => {
     expect(b.nodes[1].data.initialPrompt).toBe('rebuild lanes')
     expect(b.nodes.some((x) => x.data.kind === 'browser')).toBe(false)
     expect(b.nodes[1].data.claude?.resume).toBe('abc')
-    expect(b.edges).toEqual([])
+    expect(b.edges.every((e) => e.target === b.nodes[1].id)).toBe(true) // only report lines
     expect(conductorPrompt({ projectRoot: '/p', conductor: { cwd: '/p', mode: 'fresh' }, roles: ['ops'], extraFolders: [] })).toContain('"Ops"')
   })
 })

@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { AppSettings, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
-import { DEFAULT_HANDOFF_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
+import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
@@ -49,6 +49,27 @@ export function sendPrompt(ctx: MainContext, nodeId: string, text: string): bool
   return true
 }
 
+/** Create a handoff line in main and push it to the canvas. */
+export function createHandoffEdge(
+  ctx: MainContext,
+  input: { source: string; target: string; mode?: 'auto' | 'manual'; template?: string; condition?: string }
+): { id: string } | { error: string } {
+  const src = ctx.board.nodes.get(input.source)
+  const dst = ctx.board.nodes.get(input.target)
+  if (!src || !dst) return { error: 'unknown source or target agent id' }
+  if (input.source === input.target) return { error: 'source and target must differ' }
+  if (src.data.kind === 'note' || src.data.kind === 'browser' || dst.data.kind === 'note' || dst.data.kind === 'browser') return { error: 'handoffs connect agent cards only' }
+  const edge: WorkspaceEdge = {
+    id: nanoid(8),
+    source: input.source,
+    target: input.target,
+    data: { mode: input.mode === 'manual' ? 'manual' : 'auto', template: input.template?.trim() || DEFAULT_HANDOFF_TEMPLATE, condition: input.condition?.trim() || undefined }
+  }
+  ctx.board.edges = [...ctx.board.edges.filter((e) => e.id !== edge.id), edge]
+  sendToRenderer(ctx, IPC.boardAddEdge, edge)
+  return { id: edge.id }
+}
+
 export function createApiHandlers(ctx: MainContext): ApiHandlers {
   const pendingPrompts = new Map<string, string>()
   ctx.board.on('status', (p: AgentStatusPayload) => {
@@ -81,23 +102,7 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
         template: e.data.template,
         lastFiredAt: e.data.lastFiredAt
       })),
-    createHandoff: (input) => {
-      const src = ctx.board.nodes.get(input.source)
-      const dst = ctx.board.nodes.get(input.target)
-      if (!src || !dst) return { error: 'unknown source or target agent id' }
-      if (input.source === input.target) return { error: 'source and target must differ' }
-      if (src.data.kind === 'note' || src.data.kind === 'browser' || dst.data.kind === 'note' || dst.data.kind === 'browser') return { error: 'handoffs connect agent cards only' }
-      const edge: WorkspaceEdge = {
-        id: nanoid(8),
-        source: input.source,
-        target: input.target,
-        data: { mode: input.mode === 'manual' ? 'manual' : 'auto', template: input.template?.trim() || DEFAULT_HANDOFF_TEMPLATE, condition: input.condition?.trim() || undefined }
-      }
-      // keep main authoritative immediately; the renderer will echo it back through board:sync
-      ctx.board.edges = [...ctx.board.edges.filter((e) => e.id !== edge.id), edge]
-      sendToRenderer(ctx, IPC.boardAddEdge, edge)
-      return { id: edge.id }
-    },
+    createHandoff: (input) => createHandoffEdge(ctx, input),
     removeHandoff: (id) => {
       const before = ctx.board.edges.length
       ctx.board.edges = ctx.board.edges.filter((e) => e.id !== id)
@@ -162,6 +167,11 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
       }
       if (input.prompt) pendingPrompts.set(id, input.prompt)
       sendToRenderer(ctx, IPC.boardAddNode, node)
+      // register in main right away so a report line can be attached before the renderer echoes the node
+      ctx.board.nodes.set(id, { id, data: { ...node.data } })
+      if (input.report_to && ctx.board.nodes.has(input.report_to)) {
+        createHandoffEdge(ctx, { source: id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
+      }
       return { id, cwd, worktree: worktree?.path }
     },
     removeAgent: async (id) => {
@@ -244,6 +254,21 @@ function installHandoffRunner(ctx: MainContext): void {
   }
   ctx.board.on('stop', (nodeId: string, message: string) => {
     for (const edge of selectHandoffs(ctx.board.edges, nodeId, message)) fire(edge, message, false)
+  })
+  // A card that needs a human (permission prompt, question) tells every conductor it reports to.
+  const noticed = new Map<string, number>()
+  ctx.board.on('status', (p: AgentStatusPayload) => {
+    if (p.status !== 'needs-you') return
+    const now = Date.now()
+    if (now - (noticed.get(p.nodeId) ?? 0) < 60_000) return
+    const src = ctx.board.nodes.get(p.nodeId)
+    for (const edge of ctx.board.edges) {
+      if (edge.source !== p.nodeId || edge.data.mode !== 'auto') continue
+      const dst = ctx.board.nodes.get(edge.target)
+      if (!dst || dst.data.kind !== 'conductor') continue
+      noticed.set(p.nodeId, now)
+      sendPrompt(ctx, edge.target, `[${src?.data.title ?? p.nodeId} needs input] ${p.statusDetail ?? 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
+    }
   })
   ctx.fireHandoff = (edgeId, manual) => {
     const edge = ctx.board.edges.find((e) => e.id === edgeId)

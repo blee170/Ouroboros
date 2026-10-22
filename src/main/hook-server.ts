@@ -19,6 +19,8 @@ export interface ApiHandlers {
     worktree?: boolean
     continue?: boolean
     resume?: string
+    /** Agent id (usually the caller) that gets an automatic report line from the new card. */
+    report_to?: string
   }): Promise<{ id: string; cwd: string; worktree?: string }>
   removeAgent(id: string): Promise<boolean>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>

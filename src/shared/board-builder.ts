@@ -1,4 +1,5 @@
 import type { ClaudeOptions, NodeData, WorkspaceEdge, WorkspaceNode } from './types'
+import { REPORT_TEMPLATE } from './handoff'
 
 export type RoleKind = 'implementer' | 'tester' | 'reviewer' | 'ops'
 
@@ -106,7 +107,7 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
       note: [
         `# ${basename(input.conductor.cwd)} board`,
         '',
-        '1. Talk to **Conductor** only; it dispatches to the role cards with MCP tools.',
+        '1. Talk to **Conductor** only; it dispatches to the role cards with MCP tools. Every worker card reports back to it through a line when it finishes.',
         '2. Implementer → Tester fires automatically when the Implementer finishes a reply.',
         '3. Tester → Reviewer fires only when the Tester\'s reply contains PASS.',
         '4. Reviewer → Implementer is manual: press ▶ on the line to send review findings back.',
@@ -173,6 +174,12 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
       data: { kind: 'claude', title: f.title, cwd: f.cwd, claude: f.sessionId ? { resume: f.sessionId } : {} }
     })
   })
+
+  // Report lines: every worker card tells the Conductor when it finishes
+  for (const n of nodes) {
+    if (n.id === conductorId || n.data.kind !== 'claude') continue
+    edges.push({ id: makeId(), source: n.id, target: conductorId, data: { mode: 'auto', template: REPORT_TEMPLATE } })
+  }
 
   // Lines
   if (roleIds.implementer && roleIds.tester) {

@@ -7,7 +7,7 @@ export interface StatusUpdate {
   sessionId?: string
 }
 
-const NEEDS_YOU_NOTIFICATIONS = new Set(['permission_prompt', 'idle_prompt', 'agent_needs_input', 'elicitation_dialog'])
+const NEEDS_YOU_NOTIFICATIONS = new Set(['permission_prompt', 'agent_needs_input', 'elicitation_dialog'])
 
 function detailOf(event: HookEvent): string | undefined {
   if (typeof event.message === 'string' && event.message.trim()) return event.message.trim().slice(0, 200)
@@ -40,6 +40,8 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): Sta
       if (NEEDS_YOU_NOTIFICATIONS.has(type)) {
         return { status: 'needs-you', statusDetail: detailOf(event) ?? type, sessionId }
       }
+      // idle_prompt just means "no input for a while": keep Done if it finished, otherwise Idle
+      if (type === 'idle_prompt') return { status: prev === 'done' ? 'done' : 'idle', statusDetail: prev === 'done' ? 'finished · idle' : 'idle', sessionId }
       return null
     }
     case 'Stop':

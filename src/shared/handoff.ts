@@ -56,3 +56,6 @@ export function toPastePayload(text: string): string {
   const normalised = text.replace(/\r\n?/g, '\n').replace(/\n+$/g, '')
   return `\x1b[200~${normalised}\x1b[201~`
 }
+
+/** Template for the automatic "report back to the Conductor" lines. */
+export const REPORT_TEMPLATE = '[{{source_title}} finished]\n{{last_assistant_message}}'

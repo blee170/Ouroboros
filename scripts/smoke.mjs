@@ -123,7 +123,7 @@ await sleep(1500)
 const after = await page.evaluate(() => window.__board.getState().nodes.map((n) => n.data.kind))
 check(after.length === before + 8, `Build board added note+conductor+4 roles+browser+1 extra (${after.length - before})`)
 const edgeCount = await page.evaluate(() => window.__board.getState().edges.length)
-check(edgeCount === 4, `Build board wired 3 role lines on top of the existing one (${edgeCount - 1})`)
+check(edgeCount === 9, `Build board wired 3 flow lines + 5 report lines on top of the existing one (${edgeCount - 1})`)
 check((await api('GET', '/api/handoffs')).json.handoffs.length === edgeCount, 'generated lines synced to main')
 
 // handoff lines through the api (what connect_agents calls)
@@ -138,6 +138,15 @@ check(out.includes('LOOP ready to ship RETURN_PAYLOAD_9'), 'api-created line fir
 check((await api('DELETE', `/api/handoffs/${hc.json.id}`)).status === 200, 'remove_handoff deletes the line')
 await sleep(300)
 check((await page.evaluate(() => window.__board.getState().edges.length)) === edgeCount, 'deleted line disappears from the canvas')
+
+// create_agent with report_to draws a line back and the report arrives
+const rep = await api('POST', '/api/agents', { cwd: project, title: 'worker', kind: 'terminal', report_to: a })
+await sleep(800)
+check((await api('GET', '/api/handoffs')).json.handoffs.some((h) => h.source === rep.json.id && h.target === a), 'create_agent(report_to) draws a report line')
+await fetch(`${base}/hook/${rep.json.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'REPORT_PAYLOAD_5' }) })
+out = ''
+for (let i = 0; i < 30 && !out.includes('[worker finished]'); i++) { await sleep(300); out = (await api('GET', `/api/agents/${a}/output?lines=80`)).json.output ?? '' }
+check(out.includes('[worker finished]') && out.includes('REPORT_PAYLOAD_5'), 'finished worker reports into the conductor card')
 
 // wait_for_agents + remove_agent
 const w1 = await api('GET', `/api/agents-wait?ids=${a}&status=done&timeout=2`)

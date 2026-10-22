@@ -32,6 +32,8 @@ describe('bundled mcp server', () => {
         else if (req.url?.startsWith('/api/agents/a1/output')) res.end(JSON.stringify({ output: 'hello\nworld' }))
         else if (req.url === '/api/agents/a1/prompt') res.end(JSON.stringify({ ok: true }))
         else if (req.url === '/api/agents' && req.method === 'POST') res.end(JSON.stringify({ id: 'new1' }))
+        else if (req.url === '/api/agents/a1' && req.method === 'PATCH') res.end(JSON.stringify({ ok: true }))
+        else if (req.url?.startsWith('/api/agents/a1/changes')) res.end(JSON.stringify({ repo: true, files: [{ path: 'x.ts', status: 'M', added: 1, deleted: 0 }] }))
         else res.writeHead(404).end('{"error":"nf"}')
       })
     })
@@ -45,7 +47,7 @@ describe('bundled mcp server', () => {
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'fire_handoff', 'list_agents', 'list_handoffs', 'read_output', 'remove_agent', 'remove_handoff', 'send_prompt', 'set_note', 'tidy_board', 'wait_for_agents'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'fire_handoff', 'get_changes', 'list_agents', 'list_handoffs', 'read_output', 'remove_agent', 'remove_handoff', 'send_prompt', 'set_board_tools', 'set_note', 'tidy_board', 'wait_for_agents'])
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text
@@ -62,6 +64,15 @@ describe('bundled mcp server', () => {
 
     const created = await client.callTool({ name: 'create_agent', arguments: { cwd: '/tmp', prompt: 'hi' } })
     expect((created.content as Array<{ text: string }>)[0].text).toContain('new1')
+
+    const self2 = await client.callTool({ name: 'set_board_tools', arguments: { agent_id: 'me' } })
+    expect(self2.isError).toBe(true)
+    await client.callTool({ name: 'set_board_tools', arguments: { agent_id: 'a1' } })
+    expect(calls.find((c) => c.url === '/api/agents/a1' && c.method === 'PATCH')?.body).toBe('{"board_tools":true,"restart":true}')
+    expect(calls.every((c) => c.method !== 'PATCH' || c.url === '/api/agents/a1')).toBe(true)
+    const ch = await client.callTool({ name: 'get_changes', arguments: { agent_id: 'a1', diff: true } })
+    expect((ch.content as Array<{ text: string }>)[0].text).toContain('x.ts')
+    expect(calls.find((c) => c.url.startsWith('/api/agents/a1/changes'))?.url).toBe('/api/agents/a1/changes?diff=1')
 
     await client.close()
     server.close()

@@ -1,6 +1,7 @@
 import { useBoard } from '@/store/board'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 import { MCP_PRESETS, type ClaudeOptions, type McpServerSpec } from '@shared/types'
+import { ChangesPanel } from './ChangesPanel'
 
 export function Inspector() {
   const nodeId = useBoard((s) => s.selectedNodeId)
@@ -104,6 +105,7 @@ export function Inspector() {
           <div className="muted small">Agents drive this card with the browser_* MCP tools (Conductor has them; enable "Board & browser tools" on other Claude cards). Logins persist in the shared browser profile.</div>
         </>
       )}
+      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <ChangesPanel nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />}
       {d.kind !== 'note' && d.kind !== 'browser' && (
         <label>
           Folder

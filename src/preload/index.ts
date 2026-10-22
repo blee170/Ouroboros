@@ -29,6 +29,7 @@ const api: OuroborosApi = {
     onRemoveNode: (cb) => on(IPC.boardRemoveNode, cb),
     onRemoveEdge: (cb) => on(IPC.boardRemoveEdge, cb),
     onSetNote: (cb) => on(IPC.boardSetNote, cb),
+    onUpdateNode: (cb) => on(IPC.boardUpdateNode, cb),
     onExternalSession: (cb) => on(IPC.externalSession, cb),
     fireHandoff: (edgeId) => ipcRenderer.invoke(IPC.handoffFire, edgeId),
     listAgents: () => ipcRenderer.invoke(IPC.agentsList)
@@ -58,6 +59,14 @@ const api: OuroborosApi = {
   },
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url)
+  },
+  changes: {
+    summary: (cwd) => ipcRenderer.invoke(IPC.changesSummary, cwd),
+    diff: (cwd, file) => ipcRenderer.invoke(IPC.changesDiff, cwd, file),
+    revert: (cwd, file) => ipcRenderer.invoke(IPC.changesRevert, cwd, file)
+  },
+  session: {
+    usage: (sessionId) => ipcRenderer.invoke(IPC.sessionUsage, sessionId)
   },
   files: {
     pathFor: (file) => {

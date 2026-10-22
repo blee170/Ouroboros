@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, useReactFlow, type EdgeTypes, type NodeTypes, type OnSelectionChangeParams } from '@xyflow/react'
 import { useBoard } from '@/store/board'
 import { AgentNode } from './nodes/AgentNode'
@@ -8,6 +8,7 @@ import { BrowserNode } from './nodes/BrowserNode'
 import { HandoffEdge } from './edges/HandoffEdge'
 import { STATUS_COLOR } from '@shared/status'
 import type { NodeKind } from '@shared/types'
+import { rosterOrder } from '@/lib/rosterOrder'
 
 const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode, browser: BrowserNode }
 const edgeTypes: EdgeTypes = { handoff: HandoffEdge }
@@ -48,9 +49,57 @@ export function Canvas() {
     setMenu(null)
   }
   const defaultViewport = useMemo(() => viewport ?? { x: 0, y: 0, zoom: 0.8 }, [viewport])
+  const [find, setFind] = useState<string | null>(null)
+
+  // Ctrl+1…9 jump to the n-th agent card (roster order), Ctrl+F finds a card by title.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      // never steal keys from a terminal, text field or editable note
+      const t = e.target as HTMLElement | null
+      if (t && (t.closest('input, textarea, [contenteditable="true"], .xterm, webview') || t.isContentEditable)) return
+      if (e.key === 'f') {
+        e.preventDefault()
+        setFind('')
+        return
+      }
+      const n = Number(e.key)
+      if (!Number.isInteger(n) || n < 1 || n > 9) return
+      const target = rosterOrder(useBoard.getState().nodes)[n - 1]
+      if (!target) return
+      e.preventDefault()
+      void rf.fitView({ nodes: [{ id: target.id }], duration: 300, padding: 0.3 })
+      select(target.id, null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [rf, select])
+  const runFind = (q: string): void => {
+    const needle = q.trim().toLowerCase()
+    const hit = needle ? useBoard.getState().nodes.find((x) => String(x.data.title ?? '').toLowerCase().includes(needle)) : undefined
+    if (hit) {
+      void rf.fitView({ nodes: [{ id: hit.id }], duration: 300, padding: 0.3 })
+      select(hit.id, null)
+    }
+    setFind(null)
+  }
 
   return (
     <div className="canvas-wrap" onClick={() => menu && setMenu(null)}>
+      {find !== null && (
+        <input
+          className="find-box"
+          autoFocus
+          placeholder="Find card by title… (Enter)"
+          value={find}
+          onChange={(e) => setFind(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') runFind(find)
+            if (e.key === 'Escape') setFind(null)
+          }}
+          onBlur={() => setFind(null)}
+        />
+      )}
       <svg style={{ position: 'absolute', width: 0, height: 0 }}>
         <defs>
           <marker id="handoff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">

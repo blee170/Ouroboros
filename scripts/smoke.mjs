@@ -213,6 +213,17 @@ const shotOk = typeof shot.json.path === 'string' && (await import('node:fs')).e
 check(shotOk || /timed out/.test(String(shot.json.error)), `browser_screenshot writes a png or times out cleanly without a compositor (${shotOk ? 'png' : shot.json.error})`)
 check((await api('GET', '/api/browsers')).json.browsers.some((b) => b.id === bid && b.ready), 'browser_list shows the card as ready')
 
+// --- changes api (git diff of a card's folder) + set_board_tools (PATCH) ---
+const { execFileSync } = await import('node:child_process')
+execFileSync('git', ['init', '-q', project])
+writeFileSync(join(project, 'hello.txt'), 'hi\n')
+const chg = await api('GET', `/api/agents/${a}/changes?diff=1`)
+check(chg.status === 200 && chg.json.repo === true && chg.json.files.some((f) => f.path === 'hello.txt' && f.status === '?') && String(chg.json.diff).includes('+hi'), `changes api lists untracked hello.txt with its diff (${chg.json.files?.length} files)`)
+const patched = await api('PATCH', `/api/agents/${a}`, { board_tools: true, restart: false })
+await sleep(400)
+const bt = await page.evaluate((id) => window.__board.getState().nodes.find((n) => n.id === id)?.data.claude?.boardTools, a)
+check(patched.status === 404 && bt !== true, `PATCH board_tools on a terminal card is refused (claude cards only) (${patched.status})`)
+
 // --- a second window is a second project, fully separated from the first ---
 const project2 = mkdtempSync(join(tmpdir(), 'ouro-smoke2-'))
 await page.evaluate((p) => window.ouroboros.window.open(p), project2)

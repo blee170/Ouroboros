@@ -17,6 +17,10 @@ export const IPC = {
   windowOpen: 'window:open',
   shellOpenExternal: 'shell:openExternal',
   filesSaveImage: 'files:saveImage',
+  changesSummary: 'changes:summary',
+  changesDiff: 'changes:diff',
+  changesRevert: 'changes:revert',
+  sessionUsage: 'session:usage',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   worktreeCreate: 'worktree:create',
@@ -48,6 +52,7 @@ export const IPC = {
   boardRemoveNode: 'board:removeNode',
   boardRemoveEdge: 'board:removeEdge',
   boardSetNote: 'board:setNote',
+  boardUpdateNode: 'board:updateNode',
   externalSession: 'external:session'
 } as const
 
@@ -157,6 +162,31 @@ export interface FolderInfo {
   packageName?: string
 }
 
+export interface ChangeFile {
+  path: string
+  status: 'M' | 'A' | 'D' | 'R' | '?' | 'C'
+  added: number
+  deleted: number
+}
+
+export interface ChangesSummary {
+  repo: boolean
+  branch?: string
+  files: ChangeFile[]
+  added: number
+  deleted: number
+}
+
+export interface SessionUsage {
+  /** tokens in the context window at the last assistant turn (input + cache read + cache write) */
+  contextTokens: number
+  /** context window size assumed for the model */
+  contextWindow: number
+  model?: string
+  outputTokens: number
+  at: number
+}
+
 export interface WorkspaceLoadResult {
   workspace: Workspace | null
   projectRoot: string
@@ -187,6 +217,8 @@ export interface OuroborosApi {
     onRemoveNode(cb: (nodeId: string) => void): () => void
     onRemoveEdge(cb: (edgeId: string) => void): () => void
     onSetNote(cb: (p: { nodeId: string; note: string }) => void): () => void
+    /** Main changed a card's options (e.g. a conductor enabled board tools); restart=true relaunches it. */
+    onUpdateNode(cb: (p: { nodeId: string; data: Partial<NodeData>; restart: boolean }) => void): () => void
     onExternalSession(cb: (p: ExternalSessionPayload) => void): () => void
     fireHandoff(edgeId: string): Promise<{ ok: boolean; error?: string }>
     listAgents(): Promise<AgentSnapshot[]>
@@ -217,6 +249,15 @@ export interface OuroborosApi {
   }
   shell: {
     openExternal(url: string): Promise<void>
+  }
+  changes: {
+    summary(cwd: string): Promise<ChangesSummary>
+    diff(cwd: string, file?: string): Promise<string>
+    revert(cwd: string, file: string): Promise<{ ok: boolean; error?: string }>
+  }
+  session: {
+    /** Context usage of the last turn, read from the Claude Code transcript. */
+    usage(sessionId: string): Promise<SessionUsage | null>
   }
   files: {
     /** Absolute path of a File dropped from the OS (empty for in-browser files). */

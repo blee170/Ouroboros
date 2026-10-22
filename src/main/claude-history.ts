@@ -1,7 +1,7 @@
 import { closeSync, existsSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { ClaudeProjectHistory, ClaudeSessionInfo, FolderInfo } from '@shared/protocol'
+import type { ClaudeProjectHistory, ClaudeSessionInfo, FolderInfo, SessionUsage } from '@shared/protocol'
 
 const HEAD_BYTES = 64 * 1024
 
@@ -65,15 +65,20 @@ export function parseSessionHead(text: string, fallbackId: string): { id: string
   return { id, cwd, title: summary ?? firstUser, branch }
 }
 
-function readHead(file: string): string {
+/** Read `length` bytes of a file starting at `start` (bounded, no full read of big transcripts). */
+function readRange(file: string, start: number, length: number): string {
   const fd = openSync(file, 'r')
   try {
-    const buf = Buffer.alloc(HEAD_BYTES)
-    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
+    const buf = Buffer.alloc(length)
+    const n = readSync(fd, buf, 0, length, start)
     return buf.subarray(0, n).toString('utf8')
   } finally {
     closeSync(fd)
   }
+}
+
+function readHead(file: string): string {
+  return readRange(file, 0, HEAD_BYTES)
 }
 
 function samePathPrefix(path: string, root: string): boolean {
@@ -154,4 +159,74 @@ export function listSubfolders(root: string): FolderInfo[] {
     out.push({ path, name, isGit: existsSync(join(path, '.git')), hasClaudeMd: existsSync(join(path, 'CLAUDE.md')), packageName })
   }
   return out.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+const TAIL_BYTES = 512 * 1024
+
+function readTail(file: string): string {
+  const size = statSync(file).size
+  const start = Math.max(0, size - TAIL_BYTES)
+  return readRange(file, start, size - start)
+}
+
+/** Context window we assume for a model id (Claude 5 family and "[1m]" variants: 1M; else 200k). */
+export function contextWindowFor(model?: string): number {
+  if (!model) return 200_000
+  if (/\[1m\]/i.test(model)) return 1_000_000
+  if (/fable/i.test(model)) return 1_000_000
+  // claude-<family>-5[-minor]: the Claude 5 generation
+  if (/^claude-(opus|sonnet|haiku)-5(?:-\d+)?(?:-\d{8})?$/i.test(model)) return 1_000_000
+  return 200_000
+}
+
+/** Pure: last assistant usage in a transcript tail (the tail is bounded, so no turn counting). */
+export function parseUsageTail(text: string): SessionUsage | null {
+  let last: SessionUsage | null = null
+  for (const line of text.split('\n')) {
+    if (!line.includes('"usage"')) continue
+    let d: { type?: string; timestamp?: string; message?: { model?: string; usage?: Record<string, number> } }
+    try {
+      d = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (d.type !== 'assistant' || !d.message?.usage) continue
+    const u = d.message.usage
+    const model = d.message.model
+    last = {
+      contextTokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+      contextWindow: contextWindowFor(model),
+      model,
+      outputTokens: u.output_tokens ?? 0,
+      at: d.timestamp ? Date.parse(d.timestamp) || Date.now() : Date.now()
+    }
+  }
+  return last
+}
+
+const usageFileCache = new Map<string, string>()
+
+/** Find a session's transcript (any project folder) and report the context usage of its last turn. */
+export function readSessionUsage(sessionId: string, configDir = claudeConfigDir()): SessionUsage | null {
+  if (!/^[\w-]+$/.test(sessionId)) return null
+  let file = usageFileCache.get(sessionId)
+  if (!file || !existsSync(file)) {
+    file = undefined
+    const projectsDir = join(configDir, 'projects')
+    if (!existsSync(projectsDir)) return null
+    for (const dirName of readdirSync(projectsDir)) {
+      const candidate = join(projectsDir, dirName, `${sessionId}.jsonl`)
+      if (existsSync(candidate)) {
+        file = candidate
+        break
+      }
+    }
+    if (!file) return null
+    usageFileCache.set(sessionId, file)
+  }
+  try {
+    return parseUsageTail(readTail(file))
+  } catch {
+    return null
+  }
 }

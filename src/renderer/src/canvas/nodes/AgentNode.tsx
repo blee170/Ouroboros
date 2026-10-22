@@ -4,7 +4,8 @@ import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
 import { useTerminal } from '@/lib/useTerminal'
-import { toPastePayload } from '@shared/handoff'
+import { typePrompt } from '@/lib/typePrompt'
+import { useCardChanges, useSessionUsage } from '@/lib/useCardInfo'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
@@ -24,6 +25,9 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const status = data.status ?? 'starting'
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
+  const changes = useCardChanges(data.worktree?.path || data.cwd, status)
+  const usage = useSessionUsage(data.sessionId, status, kind === 'claude' || kind === 'conductor')
+  const select = useBoard((s) => s.select)
 
   // Spawn (or re-spawn) the process once the terminal knows its size.
   useEffect(() => {
@@ -46,11 +50,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     if (!data.initialPrompt || status !== 'idle') return
     const prompt = data.initialPrompt
     updateNodeData(id, { initialPrompt: undefined })
-    const api = window.ouroboros
-    setTimeout(() => {
-      api.pty.write(id, toPastePayload(prompt))
-      setTimeout(() => api.pty.write(id, '\r'), 200)
-    }, 1200)
+    setTimeout(() => typePrompt(id, prompt, 200), 1200)
   }, [data.initialPrompt, status, id, updateNodeData])
 
   const color = STATUS_COLOR[status]
@@ -86,6 +86,20 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           {data.statusDetail ? ` · ${data.statusDetail}` : ''}
         </span>
         <span className="spacer" />
+        {usage && (
+          <span
+            className={`ctx-meter nodrag ${usage.contextTokens / usage.contextWindow > 0.7 ? 'hot' : ''}`}
+            title={`Context: ${usage.contextTokens.toLocaleString()} of ${usage.contextWindow.toLocaleString()} tokens (${usage.model ?? 'model?'}). Past 70%: ask the card to /compact.`}
+          >
+            <span className="bar" style={{ width: `${Math.min(100, Math.round((usage.contextTokens / usage.contextWindow) * 100))}%` }} />
+            <span className="label">{Math.round(usage.contextTokens / 1000)}k</span>
+          </span>
+        )}
+        {changes && changes.repo && changes.files.length > 0 && (
+          <button className="changes-badge nodrag" title={`${changes.files.length} changed file(s) on ${changes.branch ?? '?'} — click to review in the Inspector`} onClick={() => select(id, null)}>
+            <span className="add">+{changes.added}</span> <span className="del">−{changes.deleted}</span>
+          </button>
+        )}
         <button className="icon-btn nodrag" title="Restart" onClick={() => void restartNode(id)}>
           ↻
         </button>

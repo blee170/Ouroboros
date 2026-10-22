@@ -21,7 +21,8 @@ import { selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
-import { listClaudeSessions, listSubfolders } from './claude-history'
+import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
+import { getChanges, getDiff, revertFile } from './git-changes'
 import type { SessionRegistry } from './windows'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
@@ -223,7 +224,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
               permissionMode: input.permission_mode as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
               model: input.model || undefined,
               continue: wantContinue || undefined,
-              resume: input.resume || undefined
+              resume: input.resume || undefined,
+              boardTools: input.board_tools || undefined
             }
       const node: WorkspaceNode = {
         id,
@@ -253,6 +255,30 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (!board.nodes.has(id)) return false
       removeCard(ctx, s, id)
       return true
+    },
+    updateAgent: (id, patch) => {
+      const n = board.nodes.get(id)
+      if (!n) return false
+      const isClaude = n.data.kind === 'claude' || n.data.kind === 'conductor'
+      if (patch.board_tools !== undefined && !isClaude) return false // only Claude cards have launch options
+      const data: Partial<WorkspaceNode['data']> = {}
+      if (patch.title) data.title = patch.title
+      if (patch.board_tools !== undefined) data.claude = { ...(n.data.claude ?? {}), boardTools: patch.board_tools }
+      if (Object.keys(data).length === 0) return true // nothing to change, nothing to restart
+      const restart = Boolean(patch.restart) && isClaude && data.claude !== undefined
+      // A relaunch must keep the conversation: resume the session we know, never start fresh.
+      if (restart && n.data.sessionId) data.claude = { ...data.claude, resume: n.data.sessionId, continue: undefined }
+      Object.assign(n.data, data)
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data, restart })
+      return true
+    },
+    changes: async (id, opts) => {
+      const n = board.nodes.get(id)
+      if (!n) return null
+      const cwd = n.data.worktree?.path || n.data.cwd || board.projectRoot
+      const summary = await getChanges(cwd)
+      const diff = summary.repo && (opts.diff || opts.file) ? await getDiff(cwd, opts.file, 120_000) : undefined
+      return { cwd, ...summary, diff }
     },
     tidy: async (olderThanMinutes, dryRun) => {
       // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
@@ -622,6 +648,17 @@ export function registerIpc(ctx: MainContext): void {
   }))
 
   ipcMain.handle(IPC.bookmarksList, (_e, query?: string) => listBookmarks(query))
+  ipcMain.handle(IPC.changesSummary, (_e, cwd: string) => getChanges(cwd))
+  ipcMain.handle(IPC.changesDiff, (_e, cwd: string, file?: string) => getDiff(cwd, file))
+  ipcMain.handle(IPC.changesRevert, async (_e, cwd: string, file: string) => {
+    try {
+      await revertFile(cwd, file)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
   ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number) => (await sessionOf(e)?.api.tidy(minutes, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
     const s = sessionOf(e)

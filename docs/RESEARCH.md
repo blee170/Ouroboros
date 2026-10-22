@@ -70,3 +70,38 @@ Zapier Copilot/Canvas, Make AI, n8n AI Builder, Gumloop, Google Opal, Power Auto
 - `claude --teleport` (또는 세션 안 `/teleport`): 대화 전체 + 브랜치를 로컬로. 조건: 같은 claude.ai 계정, 같은 저장소 클론, 브랜치 푸시됨, git 깨끗함. 단방향. https://code.claude.com/docs/en/claude-code-on-the-web
 - 간단 경로: `git fetch origin && git checkout <branch> && claude` (대화 이력 없음).
 - 반대 방향: `claude --remote-control` → 폰/웹에서 조종. https://code.claude.com/docs/en/remote-control
+
+
+## 6. 유사 프로그램 조사 → 우로보로스 개선 (2026-10-22, 0.2.6)
+
+### 6-1. 비교표
+| 제품 | 형태·플랫폼 | 가격/라이선스 | 핵심 구현 방식 | 강점(가져올 것) |
+|---|---|---|---|---|
+| [Conductor](https://vibecoding.app/blog/conductor-review) | macOS 앱 | 로컬 무료 / Pro $50월(클라우드 워크스페이스·5인 멀티플레이어·API) / Teams $60인 | 작업마다 git worktree + 브랜치, 에이전트 CLI 그대로 실행 | [Diff Viewer](https://docs.conductor.build/core/diff-viewer): 변경 검토, 코멘트를 에이전트에 되돌려 보내기, 파일 되돌리기, 커밋별 보기; Create PR; Checks 탭(CI·리뷰 코멘트). 에이전트 간 핸드오프 없음, 병합은 수동 |
+| [Symvibe](https://www.symvibe.com/) | macOS 앱 | $19월 / $190년 | 보드 위 실제 PTY 터미널, 30+ CLI 에이전트, 음성 플래너(월 10,000 크레딧, 서버 경유) | 모티브. 독립 리뷰 없음, 선(line) 기능 문서 없음 |
+| [Superset](https://superset.sh/compare/superset-vs-emdash) | 데스크톱, 로컬 우선 | 소스 공개(ELv2), 팀·클라우드 지향 | worktree 격리 + 영속 터미널, diff/파일 편집기, 인앱 브라우저(문서·dev 서버), 포트 관리, MCP 서버·CLI·TS SDK·Slack 봇, 예약 실행(automations) | MCP로 에이전트가 앱을 조종(우리와 같은 설계), 자동화 예약 |
+| [Emdash](https://superset.sh/compare/superset-vs-emdash) | 데스크톱 (YC W26) | Apache-2.0 | worktree별 에이전트, 로컬 또는 SSH 원격, 30+ 에이전트, 이슈 트래커 12종 연동 | 폭넓은 연동 |
+| [Mux (Coder)](https://github.com/coder/mux) | 데스크톱+브라우저 | AGPL-3.0 무료 | 로컬 폴더·worktree·SSH 워크스페이스, 자체 에이전트 루프, Plan/Exec 모드, 모델 라우팅 | 토큰·비용 가시성, 재시작 후 스트림 자동 재개 |
+| [ccanvas](https://github.com/DevoidSloth/ccanvas) | Tauri, Win/mac/Linux | Apache-2.0 | 무한 캔버스: agent/term/files/diff/editor/note 위젯, 체크포인트(git 스냅샷), 트랜스크립트 위젯 | **컨텍스트 미터(70% 넘으면 compact 버튼)**, 로스터(상태·비용·턴·마지막 답), 브로드캐스트, 프롬프트 라이브러리, 파일 드롭→경로 붙여넣기, ⌘1-9 점프, 미니맵, 레이아웃 템플릿 |
+| [Nimbalyst](https://www.implicator.ai/nimbalyst-claude-code-codex-mac-windows-linux/) | Electron, Win/mac/Linux | 개인 무료, MIT | 세션 보드 + 편집 파일 나란히, worktree 선택 | Crystal 후속. Windows 지원 |
+| [Vibe Kanban](https://zenn.dev/maedana/articles/claude-code-multi-session-tools-comparison?locale=en) | 웹/칸반 | Apache-2.0, 커뮤니티 유지(Bloop 2026-04 종료) | 카드=에이전트 워크스페이스 | 칸반 상태 흐름 |
+| [Claude Squad](https://www.augmentcode.com/tools/open-source-agent-orchestrators) | TUI(Go) | AGPL-3.0 | tmux 세션 + worktree per agent | 터미널 우선 |
+| [Claude Code 데스크톱](https://code.claude.com/docs/en/desktop.md) (공식) | Win/mac | 구독 | 세션별 worktree, Changes(diff) 패널·줄 코멘트, PR 모니터링(Auto-fix, Merge when ready), Side chat, Background tasks, 세션 간 메시지, 브라우저 패널+Auto-verify, Dispatch(폰), Context 카드 | **Agent View식 그룹(needs-input / ready / working)**, Changes 패널, Context 카드, PR 자동 수정 |
+
+### 6-2. 공통점과 차이
+- 모두 "작업 = git worktree + 에이전트 CLI 그대로"가 기본. 우로보로스도 같다(카드 worktree 옵션).
+- 대부분은 **사람이 각 에이전트를 지휘**한다. 에이전트 간 자동 전달(선)·총괄 에이전트·보드 MCP는 Superset(MCP) 외에는 드물다. 이 부분이 우로보로스의 차별점.
+- 유료 모델은 공통적으로 "로컬 무료 + 클라우드/팀/멀티플레이어 유료"(Conductor $50, Superset 팀) 또는 1인 구독(Symvibe $19). 개인용인 우리에겐 해당 없음.
+
+### 6-3. 0.2.6에 반영한 개선
+1. **Changes(변경 검토)** — Conductor/Claude 데스크톱의 Changes 패널. 카드 헤더에 `+n −m` 배지, 인스펙터에 파일 목록·파일별 diff·되돌리기·"카드에게 diff 리뷰 시키기". 총괄용 `get_changes` MCP 도구(요약+diff)로 채점/검토 단계에서 결과물을 직접 본다.
+2. **컨텍스트 미터** — ccanvas/Claude 데스크톱 Context 카드. 세션 트랜스크립트(jsonl)의 마지막 usage로 컨텍스트 사용량 바(70% 넘으면 주황).
+3. **로스터 그룹** — Claude Code Agent View식 "Needs you / Ready to review / Working / Idle / Ended" + 그룹 일괄 선택 후 브로드캐스트.
+4. **캔버스 단축키** — Ctrl+1…9 카드 점프, Ctrl+F 제목 검색(ccanvas).
+5. **팀 리드 카드** — 총괄 피드백 반영: `create_agent board_tools=true`, `set_board_tools(agent_id)`(재시작 포함)로 하위 카드가 자기 하위 카드와 선을 직접 만든다.
+
+### 6-4. 다음 후보
+- 체크포인트(ccanvas/Conductor): 위험한 단계 전 git 스냅샷·복원.
+- PR 모니터링/자동 수정(Claude 데스크톱) — `gh` 필요.
+- 디스코드 봇 카드: 채널 메시지·첨부를 선으로 총괄에 전달.
+- 예약 실행(Superset automations).

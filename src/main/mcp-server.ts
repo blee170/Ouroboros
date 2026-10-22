@@ -27,7 +27,7 @@ const BASE = process.env.OUROBOROS_URL ?? 'http://127.0.0.1:47821'
 const TOKEN = process.env.OUROBOROS_TOKEN ?? ''
 const SELF = process.env.OUROBOROS_SELF_ID ?? ''
 
-async function api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
+async function api(method: 'GET' | 'POST' | 'DELETE' | 'PATCH', path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(BASE + path, {
     method,
     // the caller's card id scopes every call to the window (board) that owns it
@@ -91,7 +91,7 @@ server.registerTool(
   {
     title: 'Create a new Claude Code agent card',
     description:
-      'Add a card to the board. kind=claude (default) runs Claude Code; kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt).',
+      'Add a card to the board. kind=claude (default) runs Claude Code; kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt).',
     inputSchema: {
       cwd: z.string().optional(),
       title: z.string().optional(),
@@ -104,7 +104,8 @@ server.registerTool(
       resume: z.string().optional(),
       report_to_me: z.boolean().optional(),
       kind: z.enum(['claude', 'command']).optional(),
-      command_template: z.string().optional()
+      command_template: z.string().optional(),
+      board_tools: z.boolean().optional()
     }
   },
   async ({ report_to_me, kind, ...input }) => text(await api('POST', '/api/agents', { ...input, kind: kind ?? 'claude', report_to: report_to_me === false ? undefined : SELF || undefined }))
@@ -116,6 +117,36 @@ server.registerTool(
   async ({ agent_id }) => {
     if (agent_id === SELF) throw new Error('refusing to remove yourself')
     return text(await api('DELETE', `/api/agents/${encodeURIComponent(agent_id)}`))
+  }
+)
+
+server.registerTool(
+  'set_board_tools',
+  {
+    title: 'Give or take a card the board tools',
+    description:
+      'Enable (or disable) the ouroboros MCP server on an existing Claude card so it can create cards and lines itself (a team lead). Claude cards only. Applies on relaunch: restart=true (default) relaunches the card right away, resuming its current session so nothing is lost.',
+    inputSchema: { agent_id: z.string(), enabled: z.boolean().optional(), restart: z.boolean().optional() }
+  },
+  async ({ agent_id, enabled, restart }) => {
+    if (agent_id === SELF) throw new Error('refusing to change yourself')
+    return text(await api('PATCH', `/api/agents/${encodeURIComponent(agent_id)}`, { board_tools: enabled ?? true, restart: restart ?? true }))
+  }
+)
+
+server.registerTool(
+  'get_changes',
+  {
+    title: 'Uncommitted changes of a card',
+    description:
+      'git status of the card\'s folder (its worktree if it has one): files with +added/-deleted counts and the branch. diff=true adds the unified diff (capped), file=<path> the diff of one file. Use it to review a worker\'s result before accepting it or asking for fixes.',
+    inputSchema: { agent_id: z.string(), diff: z.boolean().optional(), file: z.string().optional() }
+  },
+  async ({ agent_id, diff, file }) => {
+    const q = new URLSearchParams()
+    if (diff) q.set('diff', '1')
+    if (file) q.set('file', file)
+    return text(await api('GET', `/api/agents/${encodeURIComponent(agent_id)}/changes?${q.toString()}`))
   }
 )
 

@@ -23,8 +23,14 @@ export interface ApiHandlers {
     resume?: string
     /** Agent id (usually the caller) that gets an automatic report line from the new card. */
     report_to?: string
+    /** Give the card the ouroboros MCP server too (team lead). */
+    board_tools?: boolean
   }): Promise<{ id: string; cwd: string; worktree?: string }>
   removeAgent(id: string): Promise<boolean>
+  /** Change a card's launch options (board_tools) and optionally restart it so they apply. */
+  updateAgent(id: string, patch: { board_tools?: boolean; title?: string; restart?: boolean }): boolean
+  /** Uncommitted git changes in the card's folder; with diff=true (or a file) the unified diff too. */
+  changes(id: string, opts: { file?: string; diff?: boolean }): Promise<unknown>
   tidy(olderThanMinutes: number, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
@@ -160,7 +166,7 @@ export class HookServer {
       const self = (Array.isArray(selfHeader) ? selfHeader[0] : selfHeader) || url.searchParams.get('self') || undefined
       const api = this.deps.resolveApi(self)
       if (!api) return send(res, 503, { error: 'no window open' })
-      const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt))?$/.exec(path)
+      const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt|changes))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
       if (method === 'GET' && path === '/api/bookmarks') return send(res, 200, { bookmarks: api.bookmarks(url.searchParams.get('q') ?? undefined) })
       if (path === '/api/tidy' && (method === 'GET' || method === 'POST')) {
@@ -175,6 +181,14 @@ export class HookServer {
         return send(res, 200, await api.waitForAgents(ids, statuses, timeout))
       }
       if (m && method === 'DELETE' && !m[2]) return send(res, (await api.removeAgent(decodeURIComponent(m[1]))) ? 200 : 404, { ok: true })
+      if (m && method === 'PATCH' && !m[2]) {
+        const body = (await readJson(req)) as Parameters<ApiHandlers['updateAgent']>[1]
+        return send(res, api.updateAgent(decodeURIComponent(m[1]), body ?? {}) ? 200 : 404, { ok: true })
+      }
+      if (m && method === 'GET' && m[2] === 'changes') {
+        const r = await api.changes(decodeURIComponent(m[1]), { file: url.searchParams.get('file') ?? undefined, diff: url.searchParams.get('diff') === '1' })
+        return send(res, r === null ? 404 : 200, r ?? { error: 'unknown agent' })
+      }
       if (method === 'GET' && path === '/api/handoffs') return send(res, 200, { handoffs: api.listHandoffs() })
       if (method === 'POST' && path === '/api/handoffs') {
         const body = (await readJson(req)) as Parameters<ApiHandlers['createHandoff']>[0]

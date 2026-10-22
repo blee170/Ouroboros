@@ -15,6 +15,13 @@ export function Toolbar() {
   const addNode = useBoard((s) => s.addNode)
   const openProject = useBoard((s) => s.openProject)
   const persist = useBoard((s) => s.persist)
+  const savedAt = useBoard((s) => s.savedAt)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!savedAt) return
+    const t = setTimeout(() => tick((x) => x + 1), 4200) // flip "Saved ✓" back to "Save"
+    return () => clearTimeout(t)
+  }, [savedAt])
   const toggleRoster = useBoard((s) => s.toggleRoster)
   const toggleInspector = useBoard((s) => s.toggleInspector)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -81,8 +88,8 @@ export function Toolbar() {
         <span className="dot" style={{ background: '#f59e0b' }} /> {needs} need you
       </span>
       <span className="sep" />
-      <button className="btn" onClick={persist} disabled={!projectRoot}>
-        💾 Save
+      <button className="btn" onClick={persist} disabled={!projectRoot} title={savedAt ? `Saved ${new Date(savedAt).toLocaleTimeString()} — also auto-saved after every change` : 'Saves .ouroboros.json now (changes are auto-saved too)'}>
+        💾 {savedAt && Date.now() - savedAt < 4000 ? 'Saved ✓' : 'Save'}
       </button>
       <button className="btn" disabled={!projectRoot} title="Close finished or idle cards" onClick={() => setTidyOpen(true)}>
         🧹 Tidy

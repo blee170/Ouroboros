@@ -37,6 +37,8 @@ function toBoardNode(n: WorkspaceNode): BoardNode {
 
 interface BoardState {
   projectRoot: string
+  /** last successful write of .ouroboros.json (ms) */
+  savedAt?: number
   nodes: BoardNode[]
   edges: BoardEdge[]
   settings: AppSettings
@@ -293,7 +295,7 @@ export const useBoard = create<BoardState>((set, get) => ({
         return { id: e.id, source: e.source, target: e.target, data }
       })
     }
-    void api().workspace.save(ws)
+    void api().workspace.save(ws).then(() => set({ savedAt: Date.now() }))
   }
 }))
 

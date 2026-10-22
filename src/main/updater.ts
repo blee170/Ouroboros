@@ -7,6 +7,8 @@ import type { UpdateStatus } from '@shared/protocol'
  * The repository is private, so downloads need a GitHub token with read access to its contents;
  * the token is stored encrypted (safeStorage) in the user settings.
  */
+type AutoUpdaterT = typeof import('electron-updater').autoUpdater
+
 export class Updater extends EventEmitter {
   status: UpdateStatus = { state: app.isPackaged ? 'idle' : 'unavailable', currentVersion: app.getVersion(), message: app.isPackaged ? undefined : 'dev build: pull & rebuild instead' }
   private wired = false
@@ -21,7 +23,11 @@ export class Updater extends EventEmitter {
   }
 
   private async updater(): Promise<typeof import('electron-updater').autoUpdater> {
-    const { autoUpdater } = await import('electron-updater')
+    // electron-updater defines `autoUpdater` with an arrow-function getter, which Node's CommonJS
+    // export detection misses: the named import is undefined. module.exports (`default`) has it.
+    const mod = (await import('electron-updater')) as unknown as { autoUpdater?: AutoUpdaterT; default?: { autoUpdater?: AutoUpdaterT } }
+    const autoUpdater = mod.autoUpdater ?? mod.default?.autoUpdater
+    if (!autoUpdater) throw new Error('electron-updater did not load')
     if (!this.wired) {
       this.wired = true
       autoUpdater.autoDownload = false

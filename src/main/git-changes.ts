@@ -113,6 +113,12 @@ async function computeChanges(cwd: string): Promise<ChangesSummary> {
   return { repo: true, branch, files, added: files.reduce((a, f) => a + f.added, 0), deleted: files.reduce((a, f) => a + f.deleted, 0) }
 }
 
+/** Forget cached summaries (after a revert, or in tests). */
+export function invalidateChanges(cwd?: string): void {
+  if (cwd) summaryCache.delete(cwd)
+  else summaryCache.clear()
+}
+
 /** Uncommitted changes (working tree vs HEAD) of a folder, untracked files included. Cached briefly per folder. */
 export function getChanges(cwd: string): Promise<ChangesSummary> {
   const hit = summaryCache.get(cwd)
@@ -152,6 +158,7 @@ export async function getDiff(cwd: string, file?: string, maxChars = 200_000): P
 /** Discard one file's uncommitted change: restore from HEAD, or delete a file HEAD does not have (staged or untracked). */
 export async function revertFile(cwd: string, file: string): Promise<void> {
   file = diskPath(file)
+  invalidateChanges(cwd)
   const inHead = (await hasHead(cwd)) && (await git(cwd, ['ls-tree', '--name-only', 'HEAD', '--', file])).trim() !== ''
   if (inHead) {
     await git(cwd, ['checkout', 'HEAD', '--', file])

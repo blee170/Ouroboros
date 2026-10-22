@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { getChanges, getDiff, parseNumstat, parseStatus, revertFile } from '../src/main/git-changes'
+import { getChanges, getDiff, invalidateChanges, parseNumstat, parseStatus, revertFile } from '../src/main/git-changes'
 
 describe('parseStatus / parseNumstat (pure)', () => {
   it('reads porcelain -z entries including renames and untracked files', () => {
@@ -59,13 +59,12 @@ describe('getChanges / getDiff / revertFile (real git)', () => {
     // staged-new file (A): revert must delete it, not fail with "pathspec did not match"
     writeFileSync(join(dir, 'c.txt'), 'new\n')
     git('add', 'c.txt')
-    await new Promise((r) => setTimeout(r, 2100)) // summary cache ttl
+    invalidateChanges(dir)
     expect((await getChanges(dir)).files.find((f) => f.path === 'c.txt')?.status).toBe('A')
     expect(await getDiff(dir, 'c.txt')).toContain('+new')
     await revertFile(dir, 'a.txt')
     await revertFile(dir, 'b.txt')
     await revertFile(dir, 'c.txt')
-    await new Promise((r) => setTimeout(r, 2100))
     expect((await getChanges(dir)).files).toEqual([])
-  })
+  }, 30_000) // several git spawns; Windows runners are slow
 })

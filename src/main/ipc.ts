@@ -487,14 +487,19 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): v
   ctx.windows.forNode(nodeId)?.board.applyHook(nodeId, event)
 }
 
-/** Global (external) hook: ignore sessions any window launched; show the card in the window whose project contains its cwd. */
+/**
+ * Global (external) hook: ignore sessions any window launched; show the card only in the window whose
+ * project contains its cwd. A session that matches no open window is not shown anywhere, and one that
+ * sat in a window whose project no longer matches is moved out of it.
+ */
 export function routeExternalHook(ctx: MainContext, event: HookEvent): void {
   const sessionId = typeof event.session_id === 'string' ? event.session_id : undefined
   if (!sessionId) return
   if (ctx.windows.all().some((s) => s.board.nodeForSession(sessionId))) return
-  const cwd = typeof event.cwd === 'string' ? event.cwd : ''
   const known = ctx.windows.all().find((s) => s.board.externalSessions.has(sessionId))
-  const target = known ?? (cwd ? ctx.windows.forCwd(cwd) : undefined) ?? ctx.windows.current()
+  const cwd = (typeof event.cwd === 'string' && event.cwd) || known?.board.externalSessions.get(sessionId)?.cwd || ''
+  const { target, evict } = ctx.windows.forExternal(cwd, known?.id)
+  evict?.board.dropExternal(sessionId, 'moved to its project window')
   target?.board.applyExternalHook(event)
 }
 

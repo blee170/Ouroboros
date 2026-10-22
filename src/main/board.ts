@@ -114,12 +114,15 @@ export class Board extends EventEmitter {
     this.emit('status', payload)
   }
 
-  /** A session we launched also fired the global hook before we knew its id: remove the stray external card. */
-  private dropExternal(sessionId: string): void {
+  /**
+   * Remove an external card: a session we launched also fired the global hook before we knew its id
+   * (claimed by a card), or the session belongs to another window's project.
+   */
+  dropExternal(sessionId: string, reason = 'claimed by a card'): void {
     const ext = this.externalSessions.get(sessionId)
     if (!ext) return
     this.externalSessions.delete(sessionId)
-    const payload: ExternalSessionPayload = { ...ext, status: 'ended', statusDetail: 'claimed by a card', at: Date.now() }
+    const payload: ExternalSessionPayload = { ...ext, status: 'ended', statusDetail: reason, at: Date.now() }
     this.emit('external', payload)
   }
 

@@ -55,7 +55,7 @@ interface BoardState {
   onNodesChange(changes: NodeChange<BoardNode>[]): void
   onEdgesChange(changes: EdgeChange<BoardEdge>[]): void
   onConnect(c: Connection): void
-  addNode(kind: NodeKind, partial?: Partial<NodeData> & { id?: string; position?: { x: number; y: number } }): string
+  addNode(kind: NodeKind, partial?: Partial<NodeData> & { id?: string; position?: { x: number; y: number }; select?: boolean }): string
   /** Add a generated set of nodes/edges (Board Builder). `replace` closes every existing card first. */
   addGenerated(nodes: WorkspaceNode[], edges: WorkspaceEdge[], replace: boolean): Promise<void>
   updateNodeData(id: string, patch: Partial<NodeData>): void
@@ -147,7 +147,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const isNote = kind === 'note'
     const isBrowser = kind === 'browser'
     const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : kind === 'command' ? 'Command' : basename(cwd)
-    const { position: _p, id: _id, ...rest } = partial
+    const { position: _p, id: _id, select = true, ...rest } = partial
     const data: NodeData = {
       kind,
       title: rest.title ?? titleDefault,
@@ -170,7 +170,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       dragHandle: '.node-header',
       data
     }
-    set({ nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null })
+    set(select ? { nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null } : { nodes: [...s.nodes, node] })
     scheduleSync(get)
     return id
   },
@@ -224,7 +224,15 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   select(nodeId, edgeId) {
-    set({ selectedNodeId: nodeId, selectedEdgeId: edgeId })
+    // React Flow keeps its own `selected` flags: without this the last clicked card keeps its border and
+    // resizer, and clicking it again fires no selection change
+    const s = get()
+    set({
+      selectedNodeId: nodeId,
+      selectedEdgeId: edgeId,
+      nodes: s.nodes.map((n) => (Boolean(n.selected) === (n.id === nodeId) ? n : { ...n, selected: n.id === nodeId })),
+      edges: s.edges.map((e) => (Boolean(e.selected) === (e.id === edgeId) ? e : { ...e, selected: e.id === edgeId }))
+    })
   },
   toggleRoster() {
     set({ rosterOpen: !get().rosterOpen })

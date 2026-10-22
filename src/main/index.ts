@@ -106,6 +106,9 @@ async function main(): Promise<void> {
   }
   // Separate ids: toasts left in Action Center by a dev run must not COM-activate node_modules\electron.exe later.
   app.setAppUserModelId(isDev ? 'dev.blee170.ouroboros.dev' : 'dev.blee170.ouroboros')
+  // Electron's default menu keeps Ctrl+R (reloads the board and relaunches every card) and Ctrl+W live even
+  // with the bar hidden; the packaged app has no menu at all (dev keeps it for DevTools)
+  if (!isDev) Menu.setApplicationMenu(null)
   // Local-only crash dumps (userData/Crashpad/reports) and a main.log trail: no upload anywhere.
   try {
     crashReporter.start({ submitURL: '', uploadToServer: false, compress: false, ignoreSystemCrashHandler: false })

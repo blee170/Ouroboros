@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { AppSettings, Workspace } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -31,11 +31,20 @@ export function loadWorkspace(projectRoot: string): Workspace | null {
   if (!existsSync(file)) return null
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as Workspace
-    if (parsed.version !== 1 || !Array.isArray(parsed.nodes)) return null
+    if (parsed.version !== 1 || !Array.isArray(parsed.nodes)) throw new Error(`unsupported board file (version ${String(parsed.version)})`)
     parsed.projectRoot = projectRoot
     parsed.edges = Array.isArray(parsed.edges) ? parsed.edges : []
     return parsed
-  } catch {
+  } catch (err) {
+    // an unreadable board (conflict markers, a hand edit, a newer format) would be overwritten by the empty
+    // board the window starts with: keep a copy next to it first
+    const copy = `${file}.unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`
+    try {
+      copyFileSync(file, copy)
+    } catch {
+      /* nothing more to do */
+    }
+    console.error(`[workspace] ${file} could not be read (${err instanceof Error ? err.message : String(err)}); copied to ${copy}`)
     return null
   }
 }

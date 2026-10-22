@@ -38,10 +38,16 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     const { term } = handle
     const api = window.ouroboros
     const cwd = data.worktree?.path || data.cwd
+    // a launch that fails (shell typo, missing node for Codex) must not leave the card blank on "Starting"
+    const report = (r: { ok: boolean; error?: string }): void => {
+      if (r.ok) return
+      term.write(`\r\n\x1b[31m[launch failed]\x1b[0m ${r.error ?? 'unknown error'}\r\n`)
+      useBoard.getState().applyStatus({ nodeId: id, status: 'ended', statusDetail: 'launch failed', at: Date.now() })
+    }
     if (kind === 'terminal' || kind === 'command') {
-      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined })
+      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined }).then(report)
     } else if (kind === 'claude' || kind === 'conductor') {
-      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title })
+      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title }).then(report)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, seq, id, kind])

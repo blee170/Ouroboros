@@ -114,7 +114,13 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
                 return (
                   <li key={f.path} className={`folder-item${isConductor ? ' chosen' : ''}`}>
                     <div className="row">
-                      <button className={`btn small${isConductor ? ' primary' : ''}`} onClick={() => setConductorCwd(f.path)} title="Use this folder for the Conductor and the role cards">
+                      <button
+                        className={`btn small${isConductor ? ' primary' : ''}`}
+                        onClick={() => {
+                          setConductorCwd(f.path)
+                          setSessionId('') // a session belongs to its folder
+                        }}
+                        title="Use this folder for the Conductor and the role cards">
                         {isConductor ? '🎼 Conductor' : 'Conduct'}
                       </button>
                       <label className="row small">

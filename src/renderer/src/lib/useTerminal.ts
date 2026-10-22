@@ -71,7 +71,15 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     // Ctrl+V: xterm would turn it into ^V for the CLI and the browser would never fire a paste event,
     // so the clipboard is read through the main process (an image becomes a file path, text is pasted)
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown' || !e.ctrlKey || e.altKey || e.metaKey || e.key.toLowerCase() !== 'v') return true
+      if (e.type !== 'keydown' || !e.ctrlKey || e.altKey || e.metaKey) return true
+      // Ctrl+C with a selection copies it; without one it stays the interrupt the CLI expects
+      if (e.key.toLowerCase() === 'c' && term.hasSelection()) {
+        e.preventDefault()
+        void navigator.clipboard.writeText(term.getSelection())
+        term.clearSelection()
+        return false
+      }
+      if (e.key.toLowerCase() !== 'v') return true
       e.preventDefault()
       void api.files.pasteClipboard().then((r) => {
         if (r.path) typePaths([r.path])

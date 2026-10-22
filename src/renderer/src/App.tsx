@@ -37,7 +37,11 @@ export default function App() {
       api.board.onRemoveNode((id) => void useBoard.getState().removeNode(id)),
       api.board.onRemoveEdge((id) => useBoard.getState().removeEdge(id)),
       api.board.onAddNode((n) => {
-        useBoard.getState().addNode(n.data.kind, { ...n.data, id: n.id, position: n.position })
+        // main stores Claude as `undefined`; without the explicit value the renderer would apply the default
+        // engine (Codex / Gemini) to a card the Conductor asked for as Claude. Main-initiated cards do not
+        // steal the selection from whatever the owner is editing.
+        const agent = n.data.kind === 'claude' || n.data.kind === 'conductor'
+        useBoard.getState().addNode(n.data.kind, { ...n.data, id: n.id, position: n.position, engine: agent ? (n.data.engine ?? 'claude') : undefined, select: false })
       }),
       api.pty.onExit((id) => {
         const s = useBoard.getState()

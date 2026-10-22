@@ -761,13 +761,16 @@ export function registerIpc(ctx: MainContext): void {
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
   ipcMain.handle(IPC.filesPasteClipboard, async (): Promise<{ path?: string; text?: string }> => {
+    // Office apps put a bitmap next to the copied cells: text wins whenever there is any
+    const text = await clipboard.readText()
+    if (text.trim()) return { text }
     for (const item of await clipboard.read()) {
       const type = item.types.find((t) => t === 'image/png') ?? item.types.find((t) => t.startsWith('image/'))
       if (!type) continue
       const blob = (await item.getType(type)) as Blob
       return { path: savePasted(new Uint8Array(await blob.arrayBuffer()), type.split('/')[1] || 'png') }
     }
-    return { text: await clipboard.readText() }
+    return {}
   })
   ipcMain.handle(IPC.briefOpen, async (e, url: string) => {
     const s = sessionOf(e)

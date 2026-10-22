@@ -33,6 +33,9 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const updateNodeData = useBoard((s) => s.updateNodeData)
   const removeNode = useBoard((s) => s.removeNode)
   const [address, setAddress] = useState(data.url ?? 'https://www.google.com')
+  // the webview's src is set once: every navigation writes the new URL into data.url, and re-setting
+  // src to the page the webview is already on makes Electron load it a second time
+  const [initialSrc] = useState(data.url ?? 'https://www.google.com')
   const [ready, setReady] = useState(false)
   const [pageTitle, setPageTitle] = useState('')
   const [bmOpen, setBmOpen] = useState(false)
@@ -182,7 +185,7 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
       )}
       <div className="scale-wrap">
       <div className="browser-host nodrag nowheel" style={{ transform: `scale(${1 / zoom})`, width: `${zoom * 100}%`, height: `${zoom * 100}%` }}>
-        <webview ref={ref as React.Ref<HTMLElement>} src={data.url ?? 'https://www.google.com'} partition="persist:ouroboros-browser" allowpopups useragent={CHROME_UA} style={{ width: '100%', height: '100%' }} />
+        <webview ref={ref as React.Ref<HTMLElement>} src={initialSrc} partition="persist:ouroboros-browser" allowpopups useragent={CHROME_UA} style={{ width: '100%', height: '100%' }} />
       </div>
       </div>
     </div>

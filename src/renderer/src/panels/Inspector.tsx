@@ -44,7 +44,14 @@ export function Inspector() {
         <div className="muted small">Placeholders: {'{{last_assistant_message}} {{source_title}} {{source_cwd}} {{target_title}}'}</div>
         {d.lastFiredAt && <div className="muted small">Last fired {new Date(d.lastFiredAt).toLocaleTimeString()}</div>}
         <div className="row">
-          <button className="btn" onClick={() => void window.ouroboros.board.fireHandoff(edgeId)}>
+          <button
+            className="btn"
+            onClick={() =>
+              void window.ouroboros.board.fireHandoff(edgeId).then((r) => {
+                if (!r.ok) alert(r.error)
+              })
+            }
+          >
             ▶ Send now
           </button>
           <button className="btn danger" onClick={() => removeEdge(edgeId)}>
@@ -106,8 +113,8 @@ export function Inspector() {
           <div className="muted small">Agents drive this card with the browser_* MCP tools (Conductor has them; enable "Board & browser tools" on other Claude cards). Logins persist in the shared browser profile.</div>
         </>
       )}
-      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <ChangesPanel nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />}
-      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <CheckpointsPanel cwd={d.worktree?.path || d.cwd} />}
+      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <ChangesPanel key={nodeId} nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />}
+      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <CheckpointsPanel key={nodeId} cwd={d.worktree?.path || d.cwd} />}
       {d.kind !== 'note' && d.kind !== 'browser' && (
         <label>
           Folder

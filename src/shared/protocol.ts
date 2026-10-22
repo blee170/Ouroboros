@@ -16,6 +16,7 @@ export const IPC = {
   dialogFolder: 'dialog:folder',
   windowOpen: 'window:open',
   shellOpenExternal: 'shell:openExternal',
+  briefOpen: 'brief:open',
   filesSaveImage: 'files:saveImage',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
@@ -293,6 +294,10 @@ export interface OuroborosApi {
   }
   shell: {
     openExternal(url: string): Promise<void>
+  }
+  brief: {
+    /** Show a URL in this window's "📄 Briefs" browser card (created on first use). */
+    open(url: string): Promise<void>
   }
   changes: {
     summary(cwd: string): Promise<ChangesSummary>

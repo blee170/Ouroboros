@@ -80,7 +80,7 @@ function quoteFor(arg: string, shell: ShellKind, crt: boolean): string {
 /** Whole-line budget: cmd.exe stops at 8191 chars, PowerShell at 32767, posix far above. */
 const MAX_COMMAND_LINE = { cmd: 7500, powershell: 30000, posix: 100000 } as const
 
-function roleAsMessage(role: string): string {
+export function roleAsMessage(role: string): string {
   return `${ROLE_PROMPT_PREFIX} (follow them for every reply, then answer "ready"):\n\n${role}`
 }
 

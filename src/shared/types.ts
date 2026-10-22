@@ -91,6 +91,8 @@ export interface NodeData {
   initialPrompt?: string
   /** Claude Code session id once known (SessionStart hook). */
   sessionId?: string
+  /** Conductor cards: the last brief (claude.ai artifact, report URL) they published; the 📄 button reopens it. */
+  lastBriefUrl?: string
   // --- runtime-only fields (not persisted) ---
   status?: AgentStatus
   statusDetail?: string

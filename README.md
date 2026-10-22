@@ -60,11 +60,12 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Engines** | Each agent card runs **Claude Code** (default), **OpenAI Codex CLI** or **Gemini CLI**. Same status, lines, reports and board tools for all three. |
 | **Team leads** | `create_agent board_tools=true` / `set_board_tools` give a worker the same tools so it runs its own sub-cards. |
 | **Reports** | Every card the Conductor creates gets an automatic report line back; "needs input" notices are relayed too. |
+| **One card per role** | `create_agent` with a title that already exists reuses that card when it is idle or done and replaces it when it has ended, so a Conductor that asks for its "Brief writer" every round does not pile up copies. |
 | **Build board** | Scans a root folder and your Claude Code history and generates Conductor + Implementer / Tester / Reviewer / Ops cards, lines and a pipeline note. |
 | **Changes** | `+n −m` badge per card (uncommitted git changes in its folder or worktree), per-file diff, revert, "ask the card to review its diff". |
 | **Checkpoints** | Git snapshots of a card's folder (every non-gitignored file, committed or not; taking one changes nothing on disk), from the Inspector or the Conductor's `create_checkpoint` before a risky stage. Restore puts the files back and saves a "before restore" snapshot first, so it can be undone. |
 | **Context meter** | Claude cards show how full their context window is (read from the session transcript); orange past 70 %. |
-| **Browser cards** | Chromium inside the canvas with a shared persistent profile; agents drive it via `browser_*` tools; ★ Chrome/Edge bookmarks; ↗ to the system browser. Briefs published by the Conductor (claude.ai artifacts, report URLs) open in a "📄 Briefs" card on the canvas. |
+| **Browser cards** | Chromium inside the canvas with a shared persistent profile; agents drive it via `browser_*` tools; ★ Chrome/Edge bookmarks; ↗ to the system browser. Briefs published by the Conductor (claude.ai artifacts, report URLs) open in a "📄 Briefs" card on the canvas; the Conductor card's 📄 button reopens the latest one. |
 | **Command cards** | Any CLI as a card (`aside exec {{prompt}}`, `codex exec {{prompt}}` …): its output is its reply, so lines work the same. |
 | **Worktrees** | One git worktree + branch per card with one click (or `worktree=true` from the Conductor). |
 | **Several windows** | One window = one project folder, each with its own board; Conductors never see another window. |

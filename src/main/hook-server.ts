@@ -29,7 +29,7 @@ export interface ApiHandlers {
     report_to?: string
     /** Give the card the ouroboros MCP server too (team lead). */
     board_tools?: boolean
-  }): Promise<{ id: string; cwd: string; worktree?: string }>
+  }): Promise<{ id: string; cwd: string; worktree?: string; reused?: boolean; replaced?: string }>
   removeAgent(id: string): Promise<boolean>
   /** Change a card's launch options (board_tools) and optionally restart it so they apply. */
   updateAgent(id: string, patch: { board_tools?: boolean; title?: string; restart?: boolean }): boolean

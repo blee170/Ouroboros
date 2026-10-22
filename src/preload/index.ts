@@ -60,6 +60,9 @@ const api: OuroborosApi = {
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url)
   },
+  brief: {
+    open: (url) => ipcRenderer.invoke(IPC.briefOpen, url)
+  },
   changes: {
     summary: (cwd) => ipcRenderer.invoke(IPC.changesSummary, cwd),
     diff: (cwd, file) => ipcRenderer.invoke(IPC.changesDiff, cwd, file),

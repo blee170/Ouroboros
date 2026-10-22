@@ -96,7 +96,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span className="label">{Math.round(usage.contextTokens / 1000)}k</span>
           </span>
         )}
-        {kind === 'conductor' && data.lastBriefUrl && (
+        {data.lastBriefUrl && (
           <button className="icon-btn nodrag" title={`Open the latest brief in the 📄 Briefs card\n${data.lastBriefUrl}`} onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
             📄
           </button>

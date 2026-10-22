@@ -6,9 +6,10 @@ import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, Handoff
 import { IPC } from '@shared/protocol'
 import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
-import { tailLines } from '@shared/ansi'
+import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
 import type { Board } from './board'
+import { findBriefUrl } from './briefs'
 import { prepareLaunch } from './claude-launcher'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -491,20 +492,25 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
   board.on('stop', (nodeId: string, message: string) => {
     for (const edge of selectHandoffs(board.edges, nodeId, message)) fire(edge, message, false)
   })
-  // A reply that publishes something for the owner (claude.ai artifact or any https URL in a conductor's reply)
-  // is opened in a "📄 Briefs" browser card so it can be read on the canvas.
+  // A card that publishes something for the owner (a claude.ai artifact from any card, any https URL in a
+  // conductor's reply) gets it opened in a "📄 Briefs" browser card so it can be read on the canvas.
   const lastOpened = new Map<string, number>()
   board.on('stop', (nodeId: string, message: string) => {
     const src = board.nodes.get(nodeId)
-    if (!src || src.data.kind !== 'conductor') return
-    const m = /https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9_\-/.]+|https?:\/\/[^\s)>\]"'`]+/.exec(message)
-    if (!m) return
-    const url = m[0].replace(/[.,;:!?]+$/, '')
+    if (!src || src.data.kind === 'browser' || src.data.kind === 'note') return
+    const found = findBriefUrl({ message, output: stripAnsi(board.getOutput(nodeId)), anyUrl: src.data.kind === 'conductor' })
+    if (!found) return
+    const { url, inMessage } = found
+    // a link that is only in the scrollback was handled when it first appeared
+    if (!inMessage && src.data.lastBriefUrl === url) return
     if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
     lastOpened.set(url, Date.now())
-    // remembered on the card so the owner can reopen it with the 📄 button
-    src.data.lastBriefUrl = url
-    sendToRenderer(s, IPC.boardUpdateNode, { nodeId, data: { lastBriefUrl: url }, restart: false })
+    // remembered on the card and on every conductor so the owner can reopen it with the 📄 button
+    for (const n of board.nodes.values()) {
+      if (n.id !== nodeId && n.data.kind !== 'conductor') continue
+      n.data.lastBriefUrl = url
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: n.id, data: { lastBriefUrl: url }, restart: false })
+    }
     void openBrief(ctx, s, url)
   })
 

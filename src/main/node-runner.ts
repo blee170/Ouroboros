@@ -23,5 +23,5 @@ export function findNodeBinary(): string | undefined {
     const guesses = [join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', 'node.exe'), join(process.env.LOCALAPPDATA ?? '', 'Programs', 'nodejs', 'node.exe')]
     for (const g of guesses) if (existsSync(g)) return (cached = g)
   }
-  return (cached = undefined)
+  return undefined // not cached: Node may be installed while the app is open
 }

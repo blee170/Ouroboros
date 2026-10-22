@@ -160,6 +160,18 @@ A role prompt typed as a message is treated as a *role turn*: the reply ends Idl
 - Per-user settings and the recent-project list live in Electron's `userData` folder (`%APPDATA%\Ouroboros` on Windows). Temporary launch files are under `userData/claude-launch`.
 - Runtime output of each card is kept in a 200 KB ring buffer in main (what `read_output` returns), not on disk.
 
+## Setup for ChatGPT or Gemini users
+
+You do not need Claude. Ouroboros runs whichever CLI you are signed in to:
+
+| You have | Install the CLI | Sign in | Then |
+|---|---|---|---|
+| **ChatGPT** (Plus/Pro/Business) | `npm install -g @openai/codex` (needs [Node.js](https://nodejs.org/)) | `codex login` | pick **Codex** as the default engine |
+| **Google / Gemini** | `npm install -g @google/gemini-cli` (needs Node.js) | `gemini` (browser sign-in on first run) | pick **Gemini** |
+| **Claude** (Pro/Max) | `irm https://claude.ai/install.ps1 \| iex` | `claude` | pick **Claude** |
+
+The Welcome screen and ⚙ Settings → *Engines* show what is installed and signed in, with copyable commands and an *Open sign-in terminal* button. The default engine is used for new agent and Conductor cards; any card can switch engine in the Inspector, and a board can mix engines (a Codex Conductor driving Gemini and Claude workers, for example).
+
 ## Install
 
 **Windows 10/11, x64.** Download the latest `Ouroboros-Setup-<version>.exe` (installer, per-user, no admin) or `Ouroboros-<version>-portable.exe` from the [Releases page](https://github.com/blee170/Ouroboros/releases). The build is unsigned, so SmartScreen asks once: *More info → Run anyway*.

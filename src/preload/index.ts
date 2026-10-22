@@ -68,6 +68,9 @@ const api: OuroborosApi = {
   session: {
     usage: (sessionId) => ipcRenderer.invoke(IPC.sessionUsage, sessionId)
   },
+  engines: {
+    detect: () => ipcRenderer.invoke(IPC.enginesDetect)
+  },
   files: {
     pathFor: (file) => {
       try {

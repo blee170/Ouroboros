@@ -21,6 +21,7 @@ export const IPC = {
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
   sessionUsage: 'session:usage',
+  enginesDetect: 'engines:detect',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   worktreeCreate: 'worktree:create',
@@ -192,6 +193,20 @@ export interface SessionUsage {
   at: number
 }
 
+export interface EngineInfo {
+  engine: AgentEngine
+  label: string
+  installed: boolean
+  version?: string
+  /** undefined = cannot tell from files */
+  signedIn?: boolean
+  installCommand: string
+  loginCommand: string
+  signupUrl: string
+  needsNode: boolean
+  nodeAvailable: boolean
+}
+
 export interface WorkspaceLoadResult {
   workspace: Workspace | null
   projectRoot: string
@@ -263,6 +278,10 @@ export interface OuroborosApi {
   session: {
     /** Context usage of the last turn, read from the Claude Code transcript. */
     usage(sessionId: string): Promise<SessionUsage | null>
+  }
+  engines: {
+    /** Installed / signed-in state of claude, codex and gemini. */
+    detect(): Promise<EngineInfo[]>
   }
   files: {
     /** Absolute path of a File dropped from the OS (empty for in-browser files). */

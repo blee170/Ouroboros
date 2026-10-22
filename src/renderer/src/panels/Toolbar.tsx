@@ -37,6 +37,8 @@ export function Toolbar() {
       clearTimeout(t)
     }
   }, [])
+  const defaultEngine = useBoard((s) => s.settings.defaultEngine)
+  const engineLabel = defaultEngine === 'codex' ? '◎ Codex' : defaultEngine === 'gemini' ? '✧ Gemini' : '✦ Claude'
   const nodes = useBoard((s) => s.nodes)
   const needs = nodes.filter((n) => n.data.status === 'needs-you').length
   const working = nodes.filter((n) => n.data.status === 'working').length
@@ -59,8 +61,8 @@ export function Toolbar() {
         ⧉
       </button>
       <span className="sep" />
-      <button className="btn" disabled={!projectRoot} onClick={() => addNode('claude')}>
-        + Claude
+      <button className="btn" disabled={!projectRoot} onClick={() => addNode('claude')} title={`New agent card (${engineLabel}); right-click the canvas for a specific engine`}>
+        + {engineLabel}
       </button>
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('conductor')}>
         + Conductor

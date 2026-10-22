@@ -1,6 +1,6 @@
 import { useBoard } from '@/store/board'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
-import { MCP_PRESETS, type ClaudeOptions, type McpServerSpec } from '@shared/types'
+import { MCP_PRESETS, normalizeEngine, type ClaudeOptions, type McpServerSpec } from '@shared/types'
 import { ChangesPanel } from './ChangesPanel'
 
 export function Inspector() {
@@ -118,8 +118,24 @@ export function Inspector() {
       {(d.kind === 'claude' || d.kind === 'conductor') && (
         <>
           <label>
+            Card role (applies on restart; the conversation continues)
+            <select
+              value={d.kind}
+              onChange={(e) => {
+                const kind = e.target.value as 'claude' | 'conductor'
+                if (kind === d.kind) return
+                // keep the session: a relaunch resumes it instead of starting fresh
+                updateNodeData(nodeId, { kind, claude: { ...claude, resume: d.sessionId ?? claude.resume, continue: d.sessionId ? undefined : claude.continue } })
+                void restartNode(nodeId)
+              }}
+            >
+              <option value="claude">Agent card</option>
+              <option value="conductor">Conductor (board tools + conductor playbook)</option>
+            </select>
+          </label>
+          <label>
             Engine (applies on restart)
-            <select value={d.engine ?? 'claude'} onChange={(e) => updateNodeData(nodeId, { engine: e.target.value === 'claude' ? undefined : (e.target.value as 'codex' | 'gemini') })}>
+            <select value={d.engine ?? 'claude'} onChange={(e) => updateNodeData(nodeId, { engine: normalizeEngine(e.target.value) })}>
               <option value="claude">Claude Code</option>
               <option value="codex">OpenAI Codex CLI</option>
               <option value="gemini">Gemini CLI</option>

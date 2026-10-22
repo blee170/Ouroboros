@@ -248,6 +248,17 @@ await sleep(400)
 const bt = await page.evaluate((id) => window.__board.getState().nodes.find((n) => n.id === id)?.data.claude?.boardTools, a)
 check(patched.status === 404 && bt !== true, `PATCH board_tools on a terminal card is refused (claude cards only) (${patched.status})`)
 
+// --- engines setup: detection runs and reports all three CLIs; default engine flows into new cards ---
+const engines = await page.evaluate(() => window.ouroboros.engines.detect())
+check(Array.isArray(engines) && engines.map((e) => e.engine).join(',') === 'claude,codex,gemini' && engines.every((e) => typeof e.installed === 'boolean' && e.installCommand), `engines.detect lists claude/codex/gemini (${engines.map((e) => `${e.engine}:${e.installed}`).join(' ')})`)
+await page.evaluate(() => window.__board.getState().setSettings({ defaultEngine: 'gemini' }))
+const defId = await page.evaluate(() => window.__board.getState().addNode('claude', { title: 'defaultEngineCard' }))
+const defEngine = await page.evaluate((id) => window.__board.getState().nodes.find((n) => n.id === id)?.data.engine, defId)
+check(defEngine === 'gemini', `new agent cards take the default engine (${defEngine})`)
+await page.evaluate(() => window.__board.getState().setSettings({ defaultEngine: undefined }))
+await api('DELETE', `/api/agents/${defId}`)
+await sleep(300)
+
 // --- card size presets + webview drag shield ---
 const sizeBefore = await page.evaluate((id) => { const n = window.__board.getState().nodes.find((x) => x.id === id); return n.measured?.width ?? n.width }, bid)
 await page.evaluate((id) => window.__board.getState().resizeNode(id, 960, 720), bid)

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } from '@shared/protocol'
-import type { AppSettings, HandoffEdgeData, NodeData, NodeKind, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
+import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 
@@ -153,6 +153,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       url: isBrowser ? (rest.url ?? s.settings.browserHome ?? 'https://www.google.com') : undefined,
       claude: kind === 'claude' || kind === 'conductor' ? { ...(rest.claude ?? {}) } : undefined,
       ...rest,
+      // engine: explicit > settings default; claude is stored as undefined
+      // engine: an explicit value (including 'claude') wins; otherwise the settings default
+      engine: kind === 'claude' || kind === 'conductor' ? normalizeEngine(rest.engine !== undefined ? rest.engine : s.settings.defaultEngine) : undefined,
       launchSeq: 0
     }
     const node: BoardNode = {
@@ -176,7 +179,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     }
     const keep = replace ? [] : s.nodes
     const keepEdges = replace ? [] : s.edges
-    const nodes = generated.map(toBoardNode)
+    const def = normalizeEngine(s.settings.defaultEngine)
+    const nodes = generated.map((n) => (n.data.kind === 'claude' || n.data.kind === 'conductor') && !n.data.engine && def ? { ...n, data: { ...n.data, engine: def } } : n).map(toBoardNode)
     const edges: BoardEdge[] = generatedEdges.map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
     set({ nodes: [...keep, ...nodes], edges: [...keepEdges, ...edges], selectedNodeId: null, selectedEdgeId: null })
     scheduleSync(get)
@@ -279,7 +283,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       set({ nodes: get().nodes.filter((x) => x.id !== id) })
       return
     }
-    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, claude: { resume: n.data.sessionId }, position: { x: 80, y: 80 } })
+    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, engine: 'claude', claude: { resume: n.data.sessionId }, position: { x: 80, y: 80 } })
     set({ nodes: get().nodes.filter((x) => x.id !== id) })
   },
 

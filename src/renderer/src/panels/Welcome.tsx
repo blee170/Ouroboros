@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
+import { EnginesPanel } from './EnginesPanel'
 
 export function Welcome() {
   const openProject = useBoard((s) => s.openProject)
@@ -19,6 +20,10 @@ export function Welcome() {
         <button className="btn primary" onClick={() => void pick()}>
           Open project folder
         </button>
+        <div className="block">
+          <div className="muted small">Setup</div>
+          <EnginesPanel compact />
+        </div>
         {recent.length > 0 && (
           <div className="block">
             <div className="muted small">Recent</div>

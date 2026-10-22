@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
-import type { AppSettings, HookEvent, Workspace, WorkspaceEdge, WorkspaceNode } from '@shared/types'
+import { normalizeEngine, type AppSettings, type HookEvent, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
@@ -21,6 +21,7 @@ import { buildCommandLine, extractCompleted, type RunningCommand } from './comma
 import { selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
 import { logPath } from './diagnostics'
+import { detectEngines } from './engines'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
@@ -69,6 +70,7 @@ function broadcast(ctx: MainContext, channel: string, payload: unknown): void {
 }
 
 const running = new Map<string, RunningCommand>()
+
 /**
  * Terminal creation is serialised with a short gap: a Conductor can ask for six cards in one
  * breath, and creating many ConPTYs in the same instant is where Windows terminals get fragile.
@@ -256,7 +258,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         height: 400,
         data: {
           kind: input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude',
-          engine: claude && input.engine && input.engine !== 'claude' ? input.engine : undefined,
+          engine: claude ? normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine) : undefined,
           title,
           cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
           worktree,
@@ -710,6 +712,7 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
+  ipcMain.handle(IPC.enginesDetect, () => detectEngines())
   ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number) => (await sessionOf(e)?.api.tidy(minutes, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
     const s = sessionOf(e)

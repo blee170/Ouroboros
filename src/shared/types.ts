@@ -1,6 +1,11 @@
 /** Which CLI a Claude/Conductor card runs. Codex and Gemini get the same hooks, lines and board tools. */
 export type AgentEngine = 'claude' | 'codex' | 'gemini'
 
+/** Stored engine value: claude is the implicit default and is kept as undefined. */
+export function normalizeEngine(e: string | undefined | null): 'codex' | 'gemini' | undefined {
+  return e === 'codex' || e === 'gemini' ? e : undefined
+}
+
 /** Node kinds shown on the canvas. */
 export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external' | 'browser' | 'command'
 
@@ -177,6 +182,8 @@ export interface AppSettings {
   autoTidyMinutes?: number
   /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default true. */
   claudeLinksExternal?: boolean
+  /** Engine new agent/conductor cards use when none is chosen (claude by default). */
+  defaultEngine?: AgentEngine
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

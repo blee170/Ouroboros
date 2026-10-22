@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
 import type { AppInfo, UpdateStatus } from '@shared/protocol'
+import { EnginesPanel } from './EnginesPanel'
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useBoard((s) => s.settings)
@@ -38,6 +39,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>Settings</h3>
+        <div className="block">
+          <div className="muted small">Engines</div>
+          <EnginesPanel />
+        </div>
         <label className="row">
           <input type="checkbox" checked={settings.notifications} onChange={(e) => void setSettings({ notifications: e.target.checked })} /> Desktop notifications when an agent needs you
         </label>

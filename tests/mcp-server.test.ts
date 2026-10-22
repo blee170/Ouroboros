@@ -8,6 +8,14 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const script = resolve(__dirname, '../out/main/mcp-server.js')
 
 describe('bundled mcp server', () => {
+  it.skipIf(!existsSync(script))('is a single self-contained file (no relative requires, no node_modules)', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(script, 'utf8')
+    expect(src).not.toMatch(/require\("\.\//)
+    expect(src).not.toMatch(/require\("@modelcontextprotocol/)
+    expect(src).not.toMatch(/require\("zod"\)/)
+  })
+
   it.skipIf(!existsSync(script))('exposes the conductor tools and proxies them to the json api', async () => {
     const calls: Array<{ method: string; url: string; body: string }> = []
     const server = http.createServer((req, res) => {

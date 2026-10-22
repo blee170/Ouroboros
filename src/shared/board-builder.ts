@@ -169,7 +169,8 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
       position: { x: i * (CARD_W + GAP_X), y: 2 * (CARD_H + GAP_Y) },
       width: CARD_W,
       height: CARD_H,
-      data: { kind: 'claude', title: f.title, cwd: f.cwd, claude: f.sessionId ? { resume: f.sessionId } : { continue: true } }
+      // resume the folder's latest session when we know one; otherwise start fresh (--continue would fail)
+      data: { kind: 'claude', title: f.title, cwd: f.cwd, claude: f.sessionId ? { resume: f.sessionId } : {} }
     })
   })
 

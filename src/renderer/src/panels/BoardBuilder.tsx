@@ -73,7 +73,10 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
     const chosenRoles = ROLE_ORDER.filter((r) => roles[r])
     const extraFolders = visibleFolders
       .filter((f) => extras[f.path] && !samePath(f.path, conductorCwd))
-      .map((f) => ({ cwd: f.path, title: `${f.name} · latest`, sessionId: sessionsFor(f.path)[0]?.id }))
+      .map((f) => {
+        const latest = sessionsFor(f.path)[0]
+        return { cwd: f.path, title: `${f.name} · ${latest ? 'latest' : 'new'}`, sessionId: latest?.id }
+      })
     const built = buildBoard(
       {
         projectRoot,

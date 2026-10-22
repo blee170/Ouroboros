@@ -4,14 +4,11 @@ import { resolve } from 'node:path'
 
 export default defineConfig({
   main: {
-    // Bundle the MCP SDK into mcp-server.js so it runs from the unpacked file without node_modules.
-    plugins: [externalizeDepsPlugin({ exclude: ['@modelcontextprotocol/sdk', 'zod'] })],
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: {
-          index: resolve(__dirname, 'src/main/index.ts'),
-          'mcp-server': resolve(__dirname, 'src/main/mcp-server.ts')
-        }
+        // mcp-server.ts is built separately by vite.mcp.config.ts into one self-contained file.
+        input: { index: resolve(__dirname, 'src/main/index.ts') }
       }
     }
   },

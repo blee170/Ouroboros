@@ -90,7 +90,7 @@ server.registerTool(
   {
     title: 'Create a new Claude Code agent card',
     description:
-      'Add a Claude Code card to the board. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt).',
+      'Add a card to the board. kind=claude (default) runs Claude Code; kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt).',
     inputSchema: {
       cwd: z.string().optional(),
       title: z.string().optional(),
@@ -101,10 +101,12 @@ server.registerTool(
       worktree: z.boolean().optional(),
       continue: z.boolean().optional(),
       resume: z.string().optional(),
-      report_to_me: z.boolean().optional()
+      report_to_me: z.boolean().optional(),
+      kind: z.enum(['claude', 'command']).optional(),
+      command_template: z.string().optional()
     }
   },
-  async ({ report_to_me, ...input }) => text(await api('POST', '/api/agents', { ...input, kind: 'claude', report_to: report_to_me === false ? undefined : SELF || undefined }))
+  async ({ report_to_me, kind, ...input }) => text(await api('POST', '/api/agents', { ...input, kind: kind ?? 'claude', report_to: report_to_me === false ? undefined : SELF || undefined }))
 )
 
 server.registerTool(

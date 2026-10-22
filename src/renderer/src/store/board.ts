@@ -138,7 +138,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const position = partial.position ?? { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 }
     const isNote = kind === 'note'
     const isBrowser = kind === 'browser'
-    const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : basename(cwd)
+    const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : kind === 'command' ? 'Command' : basename(cwd)
     const { position: _p, id: _id, ...rest } = partial
     const data: NodeData = {
       kind,
@@ -167,7 +167,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   async addGenerated(generated, generatedEdges, replace) {
     const s = get()
     if (replace) {
-      for (const n of s.nodes) if (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor') await api().pty.kill(n.id)
+      for (const n of s.nodes) if (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor' || n.data.kind === 'command') await api().pty.kill(n.id)
     }
     const keep = replace ? [] : s.nodes
     const keepEdges = replace ? [] : s.edges
@@ -188,7 +188,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   async removeNode(id) {
     const n = get().nodes.find((x) => x.id === id)
-    if (n && (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor')) await api().pty.kill(id)
+    if (n && (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor' || n.data.kind === 'command')) await api().pty.kill(id)
     set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId })
     scheduleSync(get)
   },

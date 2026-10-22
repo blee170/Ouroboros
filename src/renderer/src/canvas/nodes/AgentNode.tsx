@@ -33,8 +33,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     const { term } = handle
     const api = window.ouroboros
     const cwd = data.worktree?.path || data.cwd
-    if (kind === 'terminal') {
-      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: data.initialCommand })
+    if (kind === 'terminal' || kind === 'command') {
+      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined })
     } else if (kind === 'claude' || kind === 'conductor') {
       void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, claude: data.claude ?? {}, title: data.title })
     }
@@ -77,7 +77,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           />
         ) : (
           <span className="title" onDoubleClick={() => setEditing(true)} title={data.cwd}>
-            {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? '✦ ' : '▣ '}
+            {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? '✦ ' : kind === 'command' ? '⚡ ' : '▣ '}
             {data.title}
           </span>
         )}

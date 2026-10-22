@@ -87,6 +87,7 @@ export function Canvas() {
           <button onClick={() => add('conductor')}>🎼 Conductor</button>
           <button onClick={() => add('terminal')}>▣ Terminal</button>
           <button onClick={() => add('browser')}>🌐 Browser</button>
+          <button onClick={() => add('command')}>⚡ Command card</button>
           <button onClick={() => add('note')}>📝 Note</button>
         </div>
       )}

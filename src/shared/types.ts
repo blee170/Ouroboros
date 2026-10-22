@@ -1,5 +1,5 @@
 /** Node kinds shown on the canvas. */
-export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external' | 'browser'
+export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external' | 'browser' | 'command'
 
 /** Lifecycle status of an agent/terminal node, derived from Claude Code hooks (or PTY exit). */
 export type AgentStatus = 'starting' | 'idle' | 'working' | 'needs-you' | 'done' | 'ended'
@@ -71,6 +71,12 @@ export interface NodeData {
   note?: string
   /** Browser cards: last/home URL. */
   url?: string
+  /**
+   * Command cards: shell command run for every prompt the card receives (send_prompt / handoff lines).
+   * Placeholders: {{prompt}} (shell-quoted, single line), {{prompt_file}} (path to a temp file holding the full prompt).
+   * The command's output until it exits becomes the card's "reply", so outgoing lines fire when it finishes.
+   */
+  commandTemplate?: string
   /** Sent once to the card's Claude session as soon as it is ready, then cleared. */
   initialPrompt?: string
   /** Claude Code session id once known (SessionStart hook). */

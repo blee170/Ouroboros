@@ -16,6 +16,9 @@ interface WebviewEl extends HTMLElement {
   setZoomFactor(factor: number): void
 }
 
+// Google and some sites refuse sign-in from a UA that mentions Electron; present a plain Chrome UA.
+const CHROME_UA = navigator.userAgent.replace(/\s?Electron\/[\d.]+/, '').replace(/\s?ouroboros\/[\d.]+/i, '')
+
 function normalise(url: string): string {
   const u = url.trim()
   if (!u) return 'about:blank'
@@ -110,7 +113,7 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
       </div>
       <div className="scale-wrap">
       <div className="browser-host nodrag nowheel" style={{ transform: `scale(${1 / zoom})`, width: `${zoom * 100}%`, height: `${zoom * 100}%` }}>
-        <webview ref={ref as React.Ref<HTMLElement>} src={data.url ?? 'https://www.google.com'} partition="persist:ouroboros-browser" allowpopups style={{ width: '100%', height: '100%' }} />
+        <webview ref={ref as React.Ref<HTMLElement>} src={data.url ?? 'https://www.google.com'} partition="persist:ouroboros-browser" allowpopups useragent={CHROME_UA} style={{ width: '100%', height: '100%' }} />
       </div>
       </div>
     </div>

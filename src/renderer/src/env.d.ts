@@ -5,7 +5,7 @@ declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
       webview: React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & { src?: string; partition?: string; allowpopups?: boolean; preload?: string },
+        React.HTMLAttributes<HTMLElement> & { src?: string; partition?: string; allowpopups?: boolean; preload?: string; useragent?: string },
         HTMLElement
       >
     }

@@ -90,7 +90,7 @@ export function Inspector() {
 
   return (
     <div className="panel inspector">
-      <h3>{d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? 'Claude agent' : d.kind === 'browser' ? 'Browser' : 'Terminal'}</h3>
+      <h3>{d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? 'Claude agent' : d.kind === 'browser' ? 'Browser' : d.kind === 'command' ? 'Command card' : 'Terminal'}</h3>
       <label>
         Title
         <input className="text" value={d.title} onChange={(e) => updateNodeData(nodeId, { title: e.target.value })} />
@@ -191,6 +191,24 @@ export function Inspector() {
             <div className="muted small">Changes apply on "Apply & restart". Browser servers open their own window; the card gets the tools.</div>
           </div>
           {d.sessionId && <div className="muted small">session {d.sessionId}</div>}
+        </>
+      )}
+      {d.kind === 'command' && (
+        <>
+          <label>
+            Command template (runs for every prompt this card receives)
+            <textarea rows={3} value={d.commandTemplate ?? ''} placeholder='aside exec {{prompt}}' onChange={(e) => updateNodeData(nodeId, { commandTemplate: e.target.value })} />
+          </label>
+          <div className="muted small">{'{{prompt}}'} = quoted single line, {'{{prompt_file}}'} = temp file with the full text. Output until the command exits becomes this card's reply, so outgoing lines fire when it finishes.</div>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <button className="btn small" onClick={() => updateNodeData(nodeId, { commandTemplate: 'aside exec {{prompt}}' })}>Aside agent</button>
+            <button className="btn small" onClick={() => updateNodeData(nodeId, { commandTemplate: 'codex exec {{prompt}}' })}>Codex</button>
+            <button className="btn small" onClick={() => updateNodeData(nodeId, { commandTemplate: 'claude -p {{prompt}}' })}>claude -p</button>
+          </div>
+          <label>
+            Shell
+            <input className="text" placeholder="default" value={d.shell ?? ''} onChange={(e) => updateNodeData(nodeId, { shell: e.target.value || undefined })} />
+          </label>
         </>
       )}
       {d.kind === 'terminal' && (

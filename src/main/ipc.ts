@@ -16,11 +16,14 @@ import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
+import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
 
 export interface MainContext {
+  /** Set by index.ts after createApiHandlers. */
+  api?: ApiHandlers
   /** Set by installHandoffRunner; fires an edge now (manual = ignore cooldown). */
   fireHandoff?: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   board: Board
@@ -43,12 +46,37 @@ function sendToRenderer(ctx: MainContext, channel: string, payload: unknown): vo
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
 
-/** Type a prompt into an agent terminal (bracketed paste + Enter). */
+const running = new Map<string, RunningCommand>()
+
+/** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
 export function sendPrompt(ctx: MainContext, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
+  const n = ctx.board.nodes.get(nodeId)
+  if (n?.data.kind === 'command') {
+    if (running.has(nodeId)) return false // busy: one command at a time
+    const shell = n.data.shell || ctx.store.getSettings().defaultShell || defaultShell()
+    const { line, nonce } = buildCommandLine(n.data.commandTemplate || 'echo {{prompt}}', text, { shell, tmpDir: join(ctx.tmpDir, 'prompts'), nodeId })
+    running.set(nodeId, { nonce, startedAt: Date.now(), buffer: '' })
+    ctx.board.setStatus(nodeId, { status: 'working', statusDetail: 'running command' })
+    ctx.ptys.write(nodeId, line + '\r')
+    return true
+  }
   ctx.ptys.write(nodeId, toPastePayload(text))
   setTimeout(() => ctx.ptys.write(nodeId, '\r'), 150)
   return true
+}
+
+/** Watch a command card's output for the completion sentinel; completion behaves like a Claude Stop. */
+function watchCommandOutput(ctx: MainContext, nodeId: string, data: string): void {
+  const r = running.get(nodeId)
+  if (!r) return
+  r.buffer += data
+  if (r.buffer.length > 400_000) r.buffer = r.buffer.slice(-400_000)
+  const out = extractCompleted(r.buffer, r.nonce)
+  if (out === null) return
+  running.delete(nodeId)
+  ctx.board.setStatus(nodeId, { status: 'done', statusDetail: `command finished (${Math.round((Date.now() - r.startedAt) / 1000)}s)`, lastAssistantMessage: out })
+  ctx.board.emit('stop', nodeId, out)
 }
 
 /** Create a handoff line in main and push it to the canvas. */
@@ -156,7 +184,7 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
       const conductorHere = [...ctx.board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
       const wantContinue = Boolean(input.continue) && !conductorHere
       const claude: WorkspaceNode['data']['claude'] =
-        input.kind === 'terminal'
+        input.kind === 'terminal' || input.kind === 'command'
           ? undefined
           : {
               appendSystemPrompt: input.role_prompt?.trim() || undefined,
@@ -170,7 +198,14 @@ export function createApiHandlers(ctx: MainContext): ApiHandlers {
         position: { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 },
         width: 560,
         height: 400,
-        data: { kind: input.kind === 'terminal' ? 'terminal' : 'claude', title, cwd: input.worktree ? input.cwd || ctx.board.projectRoot : cwd, worktree, claude }
+        data: {
+          kind: input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude',
+          title,
+          cwd: input.worktree ? input.cwd || ctx.board.projectRoot : cwd,
+          worktree,
+          claude,
+          commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined
+        }
       }
       if (input.prompt) pendingPrompts.set(id, input.prompt)
       sendToRenderer(ctx, IPC.boardAddNode, node)
@@ -234,6 +269,7 @@ function notifyNeedsYou(ctx: MainContext, p: AgentStatusPayload): void {
 }
 
 function installHandoffRunner(ctx: MainContext): void {
+  const api = ctx.api!
   const fired = new Map<string, number[]>()
   const fire = (edge: WorkspaceEdge, message: string, manual: boolean): { ok: boolean; error?: string } => {
     const src = ctx.board.nodes.get(edge.source)
@@ -262,6 +298,27 @@ function installHandoffRunner(ctx: MainContext): void {
   ctx.board.on('stop', (nodeId: string, message: string) => {
     for (const edge of selectHandoffs(ctx.board.edges, nodeId, message)) fire(edge, message, false)
   })
+  // A reply that publishes something for the owner (claude.ai artifact or any https URL in a conductor's reply)
+  // is opened in a "📄 Briefs" browser card so it can be read on the canvas.
+  const lastOpened = new Map<string, number>()
+  ctx.board.on('stop', (nodeId: string, message: string) => {
+    const src = ctx.board.nodes.get(nodeId)
+    if (!src || src.data.kind !== 'conductor') return
+    const m = /https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9_\-/.]+|https?:\/\/[^\s)>\]"'`]+/.exec(message)
+    if (!m) return
+    const url = m[0].replace(/[.,;:!?]+$/, '')
+    if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
+    lastOpened.set(url, Date.now())
+    void (async () => {
+      const existing = [...ctx.board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
+      if (existing && ctx.browsers.has(existing.id)) {
+        await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
+      } else {
+        await api.browser.create({ url, title: '📄 Briefs' })
+      }
+    })()
+  })
+
   // A card that needs a human (permission prompt, question) tells every conductor it reports to.
   const noticed = new Map<string, number>()
   ctx.board.on('status', (p: AgentStatusPayload) => {
@@ -292,12 +349,14 @@ export function registerIpc(ctx: MainContext): void {
   ptys.on('data', (nodeId: string, data: string) => {
     board.appendOutput(nodeId, data)
     sendToRenderer(ctx, IPC.ptyData, { nodeId, data })
+    watchCommandOutput(ctx, nodeId, data)
     const n = board.nodes.get(nodeId)
     if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting' && detectClaudeReady(data)) {
       board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
     }
   })
   ptys.on('exit', (nodeId: string, code: number) => {
+    running.delete(nodeId)
     board.setPtyAlive(nodeId, false)
     if (board.nodes.has(nodeId)) board.setStatus(nodeId, { status: 'ended', statusDetail: `exited (${code})` })
     sendToRenderer(ctx, IPC.ptyExit, { nodeId, code })

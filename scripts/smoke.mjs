@@ -148,6 +148,17 @@ out = ''
 for (let i = 0; i < 30 && !out.includes('[worker finished]'); i++) { await sleep(300); out = (await api('GET', `/api/agents/${a}/output?lines=80`)).json.output ?? '' }
 check(out.includes('[worker finished]') && out.includes('REPORT_PAYLOAD_5'), 'finished worker reports into the conductor card')
 
+// command card: template runs per prompt, output becomes the reply, lines fire
+const cc = await api('POST', '/api/agents', { cwd: project, title: 'cmd', kind: 'command', command_template: 'echo RUN:{{prompt}}; cat {{prompt_file}} | wc -l', report_to: a })
+await sleep(1200)
+check((await api('POST', `/api/agents/${cc.json.id}/prompt`, { text: 'hello world\nline2' })).status === 200, 'command card accepts a prompt')
+let cs = null
+for (let i = 0; i < 30 && cs?.status !== 'done'; i++) { await sleep(300); cs = (await api('GET', '/api/agents')).json.agents.find((x) => x.id === cc.json.id) }
+check(cs?.status === 'done' && /RUN:hello world line2/.test(cs.lastAssistantMessage ?? '') && /\b1\b/.test(cs.lastAssistantMessage ?? ''), `command card finished with its output as the reply (${JSON.stringify(cs?.lastAssistantMessage)})`)
+out = ''
+for (let i = 0; i < 20 && !out.includes('[cmd finished]'); i++) { await sleep(300); out = (await api('GET', `/api/agents/${a}/output?lines=80`)).json.output ?? '' }
+check(out.includes('[cmd finished]'), 'command card reported back through its line')
+
 // wait_for_agents + remove_agent
 const w1 = await api('GET', `/api/agents-wait?ids=${a}&status=done&timeout=2`)
 check(w1.json.timedOut === false && w1.json.ready.some((r) => r.id === a), 'wait_for_agents returns immediately for an already-done agent')

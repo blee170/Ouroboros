@@ -109,10 +109,11 @@ async function main(): Promise<void> {
     hookServer: null as unknown as HookServer
   }
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))
+  ctx.api = createApiHandlers(ctx)
   ctx.hookServer = new HookServer({
     onHook: (nodeId, event) => board.applyHook(nodeId, event),
     onExternalHook: (event) => board.applyExternalHook(event),
-    api: createApiHandlers(ctx)
+    api: ctx.api
   })
   await ctx.hookServer.start()
   registerIpc(ctx)

@@ -56,6 +56,9 @@ export function Toolbar() {
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('browser')}>
         + Browser
       </button>
+      <button className="btn" disabled={!projectRoot} title="A card that runs Aside's browser agent for every prompt it receives (needs the Aside app + CLI)" onClick={() => addNode('command', { title: '🅰 Aside', commandTemplate: 'aside exec {{prompt}}' })}>
+        + Aside
+      </button>
       <button className="btn" disabled={!projectRoot} onClick={() => addNode('note')}>
         + Note
       </button>

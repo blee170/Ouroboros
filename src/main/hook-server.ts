@@ -12,7 +12,9 @@ export interface ApiHandlers {
     cwd?: string
     title?: string
     prompt?: string
-    kind?: 'claude' | 'terminal'
+    kind?: 'claude' | 'terminal' | 'command'
+    /** command cards: shell template with {{prompt}} / {{prompt_file}} */
+    command_template?: string
     role_prompt?: string
     permission_mode?: string
     model?: string

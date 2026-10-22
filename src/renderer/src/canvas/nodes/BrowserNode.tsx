@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { NodeResizer, type NodeProps } from '@xyflow/react'
+import { NodeResizer, useStore, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
 
@@ -13,6 +13,7 @@ interface WebviewEl extends HTMLElement {
   goForward(): void
   canGoBack(): boolean
   canGoForward(): boolean
+  setZoomFactor(factor: number): void
 }
 
 function normalise(url: string): string {
@@ -30,6 +31,18 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const [address, setAddress] = useState(data.url ?? 'https://www.google.com')
   const [ready, setReady] = useState(false)
   const [pageTitle, setPageTitle] = useState('')
+  const zoom = useStore((s) => s.transform[2])
+  useEffect(() => {
+    if (!ready) return
+    const t = setTimeout(() => {
+      try {
+        ref.current?.setZoomFactor(zoom)
+      } catch {
+        /* not ready */
+      }
+    }, 80)
+    return () => clearTimeout(t)
+  }, [zoom, ready])
 
   useEffect(() => {
     const el = ref.current
@@ -95,8 +108,10 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           ✕
         </button>
       </div>
-      <div className="browser-host nodrag nowheel">
+      <div className="scale-wrap">
+      <div className="browser-host nodrag nowheel" style={{ transform: `scale(${1 / zoom})`, width: `${zoom * 100}%`, height: `${zoom * 100}%` }}>
         <webview ref={ref as React.Ref<HTMLElement>} src={data.url ?? 'https://www.google.com'} partition="persist:ouroboros-browser" allowpopups style={{ width: '100%', height: '100%' }} />
+      </div>
       </div>
     </div>
   )

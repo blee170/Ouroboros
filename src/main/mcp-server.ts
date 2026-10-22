@@ -6,6 +6,22 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { appendFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const LOG = join(tmpdir(), 'ouroboros-mcp.log')
+function log(line: string): void {
+  try {
+    appendFileSync(LOG, `${new Date().toISOString()} ${line}\n`)
+  } catch {
+    /* ignore */
+  }
+}
+process.on('uncaughtException', (e) => {
+  log(`uncaught: ${String(e?.stack ?? e)}`)
+  process.exit(1)
+})
 
 const BASE = process.env.OUROBOROS_URL ?? 'http://127.0.0.1:47821'
 const TOKEN = process.env.OUROBOROS_TOKEN ?? ''
@@ -140,11 +156,14 @@ server.registerTool(
 )
 
 async function main(): Promise<void> {
+  log(`start node=${process.version} exec=${process.execPath} base=${BASE} self=${SELF}`)
   const transport = new StdioServerTransport()
   await server.connect(transport)
+  log('connected')
 }
 
 main().catch((err) => {
+  log(`failed: ${String(err?.stack ?? err)}`)
   process.stderr.write(`ouroboros mcp server failed: ${String(err)}\n`)
   process.exit(1)
 })

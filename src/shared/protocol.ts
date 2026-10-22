@@ -103,6 +103,9 @@ export interface AppInfo {
   userData: string
   /** Project folder given on the command line or via OUROBOROS_PROJECT, opened on start. */
   initialProject?: string
+  /** How the board MCP server is launched for Claude cards. */
+  mcpRunner?: string
+  mcpScript?: string
 }
 
 export interface ClaudeSessionInfo {

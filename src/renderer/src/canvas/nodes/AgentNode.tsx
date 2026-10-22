@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Handle, NodeResizer, Position, type NodeProps } from '@xyflow/react'
+import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow/react'
 import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
@@ -14,6 +14,13 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const updateNodeData = useBoard((s) => s.updateNodeData)
   const [editing, setEditing] = useState(false)
   const launchedSeq = useRef<number>(-1)
+  const zoom = useStore((s) => s.transform[2])
+  // Keep the terminal DOM at screen scale (undo the canvas transform) and scale the font instead.
+  useEffect(() => {
+    if (!handle) return
+    const t = setTimeout(() => handle.setZoom(zoom), 80)
+    return () => clearTimeout(t)
+  }, [zoom, handle])
   const status = data.status ?? 'starting'
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
@@ -86,7 +93,14 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           ✕
         </button>
       </div>
-      <div className="terminal-host nodrag nowheel" ref={ref} onMouseDown={() => handle?.term.focus()} />
+      <div className="scale-wrap">
+        <div
+          className="terminal-host nodrag nowheel"
+          ref={ref}
+          style={{ transform: `scale(${1 / zoom})`, width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+          onMouseDown={() => handle?.term.focus()}
+        />
+      </div>
     </div>
   )
 }

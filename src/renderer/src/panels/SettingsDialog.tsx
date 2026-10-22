@@ -46,6 +46,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <div className="muted small">
             v{info.version} · hook server on 127.0.0.1:{info.hookPort}
             {info.hookPort !== 47821 ? ' (non-default port: external tracking will not work until restarted with 47821 free)' : ''} · data in {info.userData}
+            <br />
+            MCP runner: {info.mcpRunner} → {info.mcpScript}
           </div>
         )}
         {msg && <div className="small">{msg}</div>}

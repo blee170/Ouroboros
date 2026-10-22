@@ -8,7 +8,11 @@ export interface TerminalHandle {
   term: Terminal
   fit: FitAddon
   search: SearchAddon
+  /** Scale the font with the canvas zoom (the DOM itself is kept unscaled so mouse mapping stays exact). */
+  setZoom(zoom: number): void
 }
+
+export const BASE_FONT_SIZE = 13
 
 /**
  * Mounts an xterm.js terminal into `containerRef`, pipes it to the PTY of `nodeId`
@@ -24,7 +28,7 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: BASE_FONT_SIZE,
       fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
       scrollback: 8000,
       theme: {
@@ -68,7 +72,13 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     })
     ro.observe(el)
     doFit()
-    const h: TerminalHandle = { term, fit, search }
+    const setZoom = (zoom: number): void => {
+      const size = Math.max(6, Math.round(BASE_FONT_SIZE * zoom * 10) / 10)
+      if (term.options.fontSize === size) return
+      term.options.fontSize = size
+      requestAnimationFrame(doFit)
+    }
+    const h: TerminalHandle = { term, fit, search, setZoom }
     handleRef.current = h
     setHandle(h)
     return () => {

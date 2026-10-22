@@ -30,21 +30,16 @@ export function buildHookSettings(baseUrl: string, target: string, events: strin
   return { hooks }
 }
 
-export function buildMcpConfig(opts: { execPath: string; scriptPath: string; baseUrl: string; token: string; nodeId: string }): Record<string, unknown> {
-  return {
-    mcpServers: {
-      ouroboros: {
-        command: opts.execPath,
-        args: [opts.scriptPath],
-        env: {
-          ELECTRON_RUN_AS_NODE: '1',
-          OUROBOROS_URL: opts.baseUrl,
-          OUROBOROS_TOKEN: opts.token,
-          OUROBOROS_SELF_ID: opts.nodeId
-        }
-      }
-    }
+export function buildMcpConfig(opts: { execPath: string; nodeBin?: string; scriptPath: string; baseUrl: string; token: string; nodeId: string }): Record<string, unknown> {
+  const env: Record<string, string> = {
+    OUROBOROS_URL: opts.baseUrl,
+    OUROBOROS_TOKEN: opts.token,
+    OUROBOROS_SELF_ID: opts.nodeId
   }
+  // Prefer a system node; fall back to running the app binary as node.
+  const command = opts.nodeBin ?? opts.execPath
+  if (!opts.nodeBin) env.ELECTRON_RUN_AS_NODE = '1'
+  return { mcpServers: { ouroboros: { command, args: [opts.scriptPath], env } } }
 }
 
 export function quoteArg(arg: string, kind: ShellKind): string {
@@ -107,6 +102,7 @@ export function prepareLaunch(params: {
   token: string
   tmpDir: string
   execPath: string
+  nodeBin?: string
   mcpScriptPath: string
   claudeBin?: string
   /** Card title → `--name` session display name. */
@@ -123,6 +119,7 @@ export function prepareLaunch(params: {
       mcpServers,
       (buildMcpConfig({
         execPath: params.execPath,
+        nodeBin: params.nodeBin,
         scriptPath: params.mcpScriptPath,
         baseUrl: params.baseUrl,
         token: params.token,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildClaudeCommand, buildHookSettings, quoteArg, safeSessionName } from '../src/main/claude-launcher'
+import { buildClaudeCommand, buildHookSettings, buildMcpConfig, quoteArg, safeSessionName } from '../src/main/claude-launcher'
 
 describe('buildHookSettings', () => {
   it('registers http hooks for every lifecycle event with matcher on tool events', () => {
@@ -7,6 +7,18 @@ describe('buildHookSettings', () => {
     expect(s.hooks.Stop[0].hooks[0].url).toBe('http://127.0.0.1:1234/hook/node1')
     expect(s.hooks.PreToolUse[0].matcher).toBe('*')
     expect(s.hooks.Stop[0].matcher).toBeUndefined()
+  })
+})
+
+describe('buildMcpConfig', () => {
+  it('uses system node when available and electron-as-node otherwise', () => {
+    const base = { execPath: 'C:\\App\\Ouroboros.exe', scriptPath: 'C:\\App\\mcp.js', baseUrl: 'http://127.0.0.1:1', token: 't', nodeId: 'n' }
+    const withNode = buildMcpConfig({ ...base, nodeBin: 'C:\\nodejs\\node.exe' }) as { mcpServers: { ouroboros: { command: string; env: Record<string, string> } } }
+    expect(withNode.mcpServers.ouroboros.command).toBe('C:\\nodejs\\node.exe')
+    expect(withNode.mcpServers.ouroboros.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    const fallback = buildMcpConfig(base) as { mcpServers: { ouroboros: { command: string; env: Record<string, string> } } }
+    expect(fallback.mcpServers.ouroboros.command).toBe('C:\\App\\Ouroboros.exe')
+    expect(fallback.mcpServers.ouroboros.env.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 })
 
@@ -62,7 +74,7 @@ describe('prepareLaunch', () => {
     expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('Conductor')
     const cfg = JSON.parse(readFileSync(cond.mcpConfigPath!, 'utf8')) as { mcpServers: Record<string, { command: string }> }
     expect(Object.keys(cfg.mcpServers).sort()).toEqual(['aside', 'ouroboros'])
-    expect(cfg.mcpServers.ouroboros.command).toBe('/el')
+    expect(cfg.mcpServers.ouroboros.command).toBe('/el') // no nodeBin given -> electron-as-node fallback
     rmSync(tmp, { recursive: true, force: true })
   })
 })

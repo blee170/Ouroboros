@@ -14,6 +14,7 @@ import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, HookServer } from './hook-server'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
+import { findNodeBinary } from './node-runner'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders } from './claude-history'
@@ -227,6 +228,7 @@ export function registerIpc(ctx: MainContext): void {
         token: hookServer.token,
         tmpDir: ctx.tmpDir,
         execPath: process.execPath,
+        nodeBin: findNodeBinary(),
         mcpScriptPath: ctx.mcpScriptPath,
         title: opts.title
       })
@@ -303,7 +305,9 @@ export function registerIpc(ctx: MainContext): void {
     version: app.getVersion(),
     hookPort: hookServer.port,
     userData: app.getPath('userData'),
-    initialProject: initialProjectArg()
+    initialProject: initialProjectArg(),
+    mcpRunner: findNodeBinary() ?? `${process.execPath} (ELECTRON_RUN_AS_NODE)`,
+    mcpScript: ctx.mcpScriptPath
   }))
 }
 

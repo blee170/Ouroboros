@@ -52,6 +52,8 @@ await page.click('text=+ Terminal')
 await page.click('text=+ Terminal')
 await page.waitForSelector('.agent-node', { timeout: 10000 })
 await sleep(1500)
+const hostStyle = await page.getAttribute('.agent-node .terminal-host', 'style')
+check(/scale\(/.test(hostStyle ?? ''), `terminal host is counter-scaled against the canvas zoom (${hostStyle})`)
 const ids = await page.evaluate(() => window.__board.getState().nodes.map((n) => n.id))
 check(ids.length === 2, `two terminal nodes created (${ids.length})`)
 const [a, b] = ids

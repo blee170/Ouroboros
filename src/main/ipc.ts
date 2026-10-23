@@ -461,7 +461,12 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
   const spokenNeedsYou = new Map<string, number>()
   const done = new BoardDone()
   let settleTimer: ReturnType<typeof setTimeout> | null = null
-  const anyBusy = (): boolean => [...board.nodes.values()].some((n) => n.data.status === 'working' || n.data.status === 'needs-you')
+  // a card still booting (no status yet, or starting) is about to get its prompt: the board is not finished
+  const AGENT = new Set<NodeData['kind']>(['claude', 'conductor', 'terminal', 'command'])
+  const anyBusy = (): boolean =>
+    [...board.nodes.values()].some((n) => n.data.status === 'working' || n.data.status === 'needs-you' || (AGENT.has(n.data.kind) && (n.data.status === undefined || n.data.status === 'starting')))
+  // statuses that mark a fresh turn: UserPromptSubmit (Claude, Gemini), a prompt typed into Codex, a command card's run
+  const TURN_START = new Set(['thinking', 'prompt sent', 'running command'])
   const deliver = (p: AnnouncePayload, body: string | undefined, prefs: { toast: boolean; voice: boolean }): void => {
     if (prefs.toast && Notification.isSupported()) {
       const note = new Notification({ title: phrase(p), body })
@@ -477,12 +482,14 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
   }
   board.on('status', (p: AgentStatusPayload) => {
     if (p.status === 'working') {
-      if (!workingSince.has(p.nodeId)) workingSince.set(p.nodeId, p.at)
+      // a turn that ended without a Stop (API failure, Esc) must not lend its start to the next one
+      if (!workingSince.has(p.nodeId) || TURN_START.has(p.statusDetail ?? '')) workingSince.set(p.nodeId, p.at)
       done.working()
     } else if (p.status !== 'needs-you') {
-      // the turn is over: remember how long it ran for the Stop that follows this status
+      // the turn is over: remember how long it ran for the Stop that follows a 'done'; anything else forgets it
       const since = workingSince.get(p.nodeId)
-      if (since !== undefined) lastTurnMs.set(p.nodeId, p.at - since)
+      if (p.status === 'done' && since !== undefined) lastTurnMs.set(p.nodeId, p.at - since)
+      else lastTurnMs.delete(p.nodeId)
       workingSince.delete(p.nodeId)
     }
     if (p.status === 'needs-you') {
@@ -497,7 +504,7 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
     if (settleTimer) clearTimeout(settleTimer)
     settleTimer = setTimeout(() => {
       settleTimer = null
-      if (!done.settle(anyBusy())) return
+      if (s.win.isDestroyed() || !done.settle(anyBusy())) return
       const prefs = announceSettings(ctx.store.getSettings())
       if (prefs.target === 'off') return
       deliver({ kind: 'all-done', title: '', lang: langFor(...[...board.nodes.values()].map((n) => n.data.title)) }, undefined, prefs)

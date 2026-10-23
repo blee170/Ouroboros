@@ -110,7 +110,7 @@ export function Toolbar() {
           ↶ Undo arrange
         </button>
       ) : (
-        <button className="btn" disabled={!projectRoot || nodes.length === 0} title="Line the cards up in rows: conductors, then agents by title, then notes, then browsers" onClick={arrangeAndFit}>
+        <button className="btn" disabled={!projectRoot || !nodes.some((n) => n.data.kind !== 'external')} title="Line the cards up in rows: conductors, then agents by title, then notes, then browsers" onClick={arrangeAndFit}>
           ⊞ Arrange
         </button>
       )}

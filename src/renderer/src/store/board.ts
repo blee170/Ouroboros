@@ -56,7 +56,7 @@ interface BoardState {
   viewport?: Viewport
   /** When each card last entered "working" (ms). Runtime only (never synced or saved); drives the line glow. */
   workingSince: Record<string, number>
-  /** Positions from before the last ⊞ Arrange, until the owner moves, adds or closes a card. */
+  /** Positions from before the last ⊞ Arrange, until a card is moved, resized, added or closed. */
   arrangeUndo?: Record<string, { x: number; y: number }>
   // actions
   init(): Promise<void>
@@ -135,7 +135,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   onNodesChange(changes) {
-    const moved = changes.some((c) => c.type === 'position' || c.type === 'remove')
+    const moved = changes.some((c) => c.type === 'position' || c.type === 'remove' || (c.type === 'dimensions' && c.resizing))
     set(moved && get().arrangeUndo ? { nodes: applyNodeChanges(changes, get().nodes), arrangeUndo: undefined } : { nodes: applyNodeChanges(changes, get().nodes) })
     if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) scheduleSync(get)
     else if (changes.some((c) => c.type === 'dimensions')) scheduleSync(get)
@@ -198,7 +198,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const def = normalizeEngine(s.settings.defaultEngine)
     const nodes = generated.map((n) => (n.data.kind === 'claude' || n.data.kind === 'conductor') && !n.data.engine && def ? { ...n, data: { ...n.data, engine: def } } : n).map(toBoardNode)
     const edges: BoardEdge[] = generatedEdges.map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ nodes: [...keep, ...nodes], edges: [...keepEdges, ...edges], selectedNodeId: null, selectedEdgeId: null })
+    set({ nodes: [...keep, ...nodes], edges: [...keepEdges, ...edges], selectedNodeId: null, selectedEdgeId: null, arrangeUndo: undefined })
     scheduleSync(get)
   },
 
@@ -207,12 +207,13 @@ export const useBoard = create<BoardState>((set, get) => ({
     scheduleSync(get)
   },
   resizeNode(id, width, height) {
-    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, width, height, style: { ...(n.style ?? {}), width, height } } : n)) })
+    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, width, height, style: { ...(n.style ?? {}), width, height } } : n)), arrangeUndo: undefined })
     scheduleSync(get)
   },
   arrange() {
     const s = get()
     const cards = s.nodes.filter((n) => n.data.kind !== 'external')
+    if (!cards.length) return
     const pos = arrangeGrid(cards.map((n) => ({ id: n.id, kind: n.data.kind, title: n.data.title, width: rectOf(n).width, height: rectOf(n).height })))
     const before = Object.fromEntries(cards.map((n) => [n.id, { ...n.position }]))
     set({ nodes: s.nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n)), arrangeUndo: before })
@@ -232,7 +233,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   async removeNode(id) {
     const n = get().nodes.find((x) => x.id === id)
     if (n && (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor' || n.data.kind === 'command')) await api().pty.kill(id)
-    set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId })
+    set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId, arrangeUndo: undefined })
     scheduleSync(get)
   },
   removeEdge(id) {

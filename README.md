@@ -12,6 +12,8 @@ Ouroboros does not call any model API itself. It launches the CLIs you already p
 
 > 한국어 요약은 맨 아래 [한국어 안내](#한국어-안내)에 있습니다.
 
+**New here?** [docs/TUTORIAL.md](docs/TUTORIAL.md) walks you from install to a Conductor running a small pipeline in about an hour. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Contents
@@ -26,7 +28,7 @@ Ouroboros does not call any model API itself. It launches the CLIs you already p
   - [Engines: Claude Code, Codex, Gemini](#engines-claude-code-codex-gemini)
   - [Windows, workspaces and persistence](#windows-workspaces-and-persistence)
 - [Install](#install)
-- [Daily use](#daily-use)
+- [Daily use](#daily-use) · first hour: [docs/TUTORIAL.md](docs/TUTORIAL.md)
 - [Settings](#settings)
 - [Security and privacy](#security-and-privacy)
 - [Build from source](#build-from-source)
@@ -34,6 +36,7 @@ Ouroboros does not call any model API itself. It launches the CLIs you already p
 - [Development](#development)
 - [Release process](#release-process)
 - [Limitations and roadmap](#limitations-and-roadmap)
+- [Changelog](CHANGELOG.md)
 - [License](#license)
 - [한국어 안내](#한국어-안내)
 
@@ -277,7 +280,7 @@ The smoke test launches the real app under Playwright, drives it through the JSO
 
 ## Release process
 
-Bump `version` in `package.json` and push. `.github/workflows/release.yml` creates the `v<version>` tag, runs typecheck, build and tests on `windows-latest`, packages with electron-builder and uploads the installer, the portable exe, the blockmap and `latest.yml` to a GitHub Release in one step. The in-app updater reads `latest.yml`.
+Add the version's entry to `CHANGELOG.md` (Added / Changed / Fixed / Security / Verified, newest first), bump `version` in `package.json` as the last commit, and push. `.github/workflows/release.yml` creates the `v<version>` tag, runs typecheck, build and tests on `windows-latest`, packages with electron-builder and uploads the installer, the portable exe, the blockmap and `latest.yml` to a GitHub Release in one step. The in-app updater reads `latest.yml`. The workflow fires on any branch push that changes `package.json`, so a bump on a feature branch releases that branch.
 
 ## Limitations and roadmap
 
@@ -300,6 +303,8 @@ MIT — see `LICENSE`.
 **설치**: [Releases](https://github.com/blee170/Ouroboros/releases)에서 `Ouroboros-Setup-<버전>.exe` 받아 설치(관리자 권한 불필요). 서명이 없어 SmartScreen이 한 번 묻습니다 → *추가 정보 → 실행*. 이후 업데이트는 앱 안의 ⚙ → *Check for updates*.
 
 **준비물**: Git for Windows, 그리고 쓸 CLI 로그인 (`claude`, 선택적으로 `codex`(Node.js 필요), `gemini`).
+
+**처음이라면**: [docs/TUTORIAL.md](docs/TUTORIAL.md)가 설치부터 총괄 카드가 작은 파이프라인을 돌리는 데까지 한 시간 코스로 안내합니다(영문, 단계 제목만 따라가도 됩니다). 버전별 변경 내역은 [CHANGELOG.md](CHANGELOG.md).
 
 **기본 흐름**
 1. 프로젝트 폴더 열기 → 캔버스 우클릭으로 카드 추가.

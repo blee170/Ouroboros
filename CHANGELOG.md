@@ -1,0 +1,244 @@
+# Changelog
+
+All notable changes to Ouroboros, newest first. Every entry names a GitHub Release (`v<version>`), and a version without a release is said so. Dates are the day the version was tagged (KST). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
+
+## [Unreleased]
+
+- Documentation: this changelog and `docs/TUTORIAL.md`, a first-hour guide.
+
+## [0.6.0] — 2026-10-24
+
+The "away from the keyboard" release: a reply viewer so you can read what a card wrote, and an Autonomous mode so the board keeps working while you sleep. 0.5.0 and 0.5.1 below were tagged on the branch but never released on their own; they ship here.
+
+### Added
+- **Autonomous mode** (🌙 in the toolbar). A preflight sheet shows the end time (HH:MM, +4 h / +8 h / 10:00 presets, clamped to 36 h), the dispatch cap, the stall timeout and exactly what happens to every live card. During the run the PC stays awake, every Claude card is relaunched in auto mode on the same conversation (`--resume`), every card launched gets a `permissions.deny` list (push, merge, rebase, reset --hard, branch -D, clean, force-add; gh pr merge / workflow run / release / api; npm publish, docker push, vercel, wrangler, firebase / netlify / fly deploy, terraform apply, supabase db push / reset, prisma migrate deploy / reset; rm -rf /, ~; editing `.ouroboros.json`, Claude settings or `~/.claude`; the board browser's click and type tools), in both the Bash and the PowerShell tool namespace and also with git/gh options before the subcommand (`git -C x push`). A card that asks a question, needs a permission or fails is **parked**, never answered for you; the Conductor is briefed to move on. Caps: new cards per run, re-makes per role. A silent card is nudged, then parked; a card that never comes up in 3 min is parked; a usage limit gets a "continue" every 15 min. The run ends at the deadline, on ■, or once nothing has worked for 15 min. The **morning report** (waiting on you first, then every card with its branch, uncommitted diff size and last reply, auto-mode denials, stalls, timeline) lands on the canvas as a note and in `%APPDATA%\Ouroboros\autonomy\<project>\run-<stamp>.md` next to a JSONL event log.
+- **Reply viewer** (0.5.1): the Inspector's *Last reply* renders the card's reply as markdown (tables, code, lists), file paths in it open with one click (folders and plain file types open, anything executable is only revealed in Explorer), with **Copy** and **Pop out** (the reply becomes a note card). Note cards render markdown too; ✎ or a double-click edits them.
+- **Fonts** (0.5.0): Pretendard for the UI and D2Coding for terminals are bundled (OFL), so Korean text looks the same on every machine.
+
+### Changed
+- **One-row toolbar** (0.5.0): a status strip (working / need you / idle / ended, each a jump to the first such card), the card kinds behind one *More* menu, labels collapsing at 1480 / 1180 / 1040 px, a ✓ *Saved* tick instead of a blinking label.
+- **Side panel** (0.5.0): the Roster on top (capped at 48 %, scrolls), the Inspector below in sections (Card · Work · Launch · Last reply), SVG icons for actions, Escape closes dialogs after saving the field you were in.
+- During an autonomous run only Claude cards can be created (a terminal or command card is a shell past every rule; Codex and Gemini have no deny rules), nothing is typed into terminal or command cards, no card answers a parked permission prompt, and `restore_checkpoint move_head` is refused.
+- The report says plainly what the rails are not: the deny rules match the command as typed (an alias, a wrapper script, `curl` to a deploy hook or a nested `bash -c` is not caught), Edit rules do not bind shell writes, your own MCP servers stay reachable, and only the auto-mode classifier's denials are reported (rule denials are not reported by the CLI). Keep production credentials out of worker folders.
+
+### Fixed
+- Card-in animation no longer fights React Flow's placement (opacity only); the first card no longer lands under the toolbar.
+- Autonomous mode, from the bug hunt: a relaunched card keeps its own conversation and never gets a bare `--continue` (which, in the project root, clones the Conductor's conversation); a card cut mid-turn is told to carry on; the forced auto mode is no longer written into the card (it ends with the run, and a requested bypass never comes back); dispatches are counted once the card exists; the report is written synchronously at stop so a closing window keeps it; a failed write is said in the note; parked cards no longer hold the run open; the usage-limit "continue" stops once the card moves; a card inside a long tool call gets three stall periods.
+
+### Security
+- Reply viewer: inline code is escaped (marked hands it over raw), `//host` images are blocked (an SMB NTLM leak on `file://`), middle-click cannot open `file:` URLs (window-open handler is http(s) only, `will-navigate` is blocked), opening a path goes through an allowlist of plain file types; UNC and device paths are refused.
+- Morning report: every card-supplied string (title, park reason, branch, detail) is one line with pipes escaped, so a card cannot forge rows or sections; the timeline keeps its last 300 events in the note (the log file has all).
+
+### Verified
+- 168 vitest tests, typecheck, build; built-app probes of the viewer (render, path open, copy, pop out, the exploits above) and of the first cut of Autonomous mode (start, pill, deny rules + hook in a launched card's settings, stop → report note); two real `claude -p` runs of the generated deny rules on Claude Code 2.1.309 (`git push` and `git -C . push` denied, a commit message containing "push" allowed).
+- Not verified: a real overnight run; relaunch with `--resume` on a live board; the Conductor obeying the brief; a built-app probe after the bug-hunt fixes.
+
+## [0.5.1] — 2026-10-24 (no release; in 0.6.0)
+
+Reply viewer. See 0.6.0.
+
+## [0.5.0] — 2026-10-24 (no release; in 0.6.0)
+
+UI polish: bundled Korean fonts, one-row toolbar, sectioned side panel. See 0.6.0.
+
+## [0.4.1] — 2026-10-24
+
+### Fixed
+- Terminal cards showed a black band under the last row: xterm 6 paints its viewport black by default; it is transparent now.
+
+## [0.4.0] — 2026-10-24
+
+The first step of the autonomy roadmap (A: worker lifecycle), after the research in `docs/RESEARCH.md` §9.
+
+### Added
+- **Dispatched cards retire themselves**: a card the Conductor (or a team lead) created carries `parentId` and `createdAt`; once its report line to the parent has fired it retires after *Retire after* minutes (Settings, default 5); a card that never reports retires 30 min after it ends. **Keep** (pin) in the Inspector exempts a card.
+- **Caps in code**: *Max workers per lead* (Settings, default 6) and a dispatch depth of 2 (Conductor → team → worker) are enforced by `create_agent`, counting worktree creates still in flight; a refused call changes nothing.
+- 🧹 Tidy reuses the same rules (`src/shared/tidy.ts`): reported cards, protection for cards mid-turn and their partners, scope.
+- `docs/RESEARCH.md` §9: how agent teams, Codex cloud, Devin, Cursor background agents, Gas Town and Ralph loops keep multi-agent work going, what Claude Code 2.1.309 offers (TeammateIdle / TaskCompleted hooks, `--autocompact`, `--fork-session`), and the revised roadmap A → E.
+
+### Verified
+- 129 tests; built-app probe with terminal cards (cap, parentId, depth, fresh ≠ exited, scoped exited candidates). Not verified: a real Claude card retiring 5 min after its report.
+
+## [0.3.11] — 2026-10-24
+
+### Fixed
+- Announcements with a cloud voice (0.3.9) still spoke the Windows voice: the renderer's CSP had no `media-src`, so `blob:` audio was blocked and the player fell back. `media-src 'self' blob:` added; a 4.9 s Gemini clip plays to the end.
+
+## [0.3.10] — 2026-10-24
+
+### Changed
+- Settings dialog: 600 px, sections with headings, a 112 px label column that never wraps mid-word ("Announ ce" is gone), hints under the fields, paths that wrap.
+
+## [0.3.9] — 2026-10-24
+
+### Added
+- **Voice engines** for announcements: Windows (offline, default), Gemini TTS, OpenAI or ElevenLabs with your own key (stored with Electron `safeStorage`), a voice and a style, 🔊 *Test*. Clips are cached in `%APPDATA%\Ouroboros\tts\`; a failed cloud call falls back to the Windows voice and the Test button shows the error.
+
+## [0.3.8] — 2026-10-24
+
+### Changed
+- ⊞ **Arrange** v2 lays the board out along its lines: lanes by the longest report-line path, the Conductor right of the deepest worker, browsers and notes in a side lane, each lane a column-major grid; ↶ undoes it.
+
+## [0.3.7] — 2026-10-24
+
+### Added
+- The Roster composer takes screenshots (paste) and files (drop) as chips and sends them the way each card pastes: Claude cards get the image through the clipboard + Claude Code's own `Alt+V` (`[Image #N]`), other cards get the path.
+
+## [0.3.6] — 2026-10-24
+
+### Fixed
+- Ctrl+V in a Claude card attached nothing: the terminal typed the image's path, which Claude Code treats as text. An image on the clipboard now sends `Alt+V`, Claude Code's paste, and the card shows `[Image #1]`. `KeyV` is matched by code so the Korean IME works.
+
+## [0.3.5] — 2026-10-23
+
+### Fixed
+- Cards stuck on "Working · compacting context": Claude Code compacts while idle too and sends no Stop afterwards. Compaction now changes nothing unless the card was already working.
+
+## [0.3.4] — 2026-10-23
+
+### Added
+- **Announcements**: when the Conductor (or any card, by setting) finishes a turn of 10 s or more, a toast with the first line of the reply and/or a spoken "<card> finished, please check the report" (Windows voices; Korean and English). "Needs you" is spoken once per card per minute; "all cards have finished" once a run settles. The reply itself is never read out.
+- `/voice` in the slash list for Claude cards (Claude Code's own dictation).
+- New cards take the first free grid cell instead of overlapping; ⊞ **Arrange** (v1, rows) and ↶ Undo.
+
+### Fixed
+- From the bug hunt: a turn that ended without a Stop (API failure, Esc) no longer makes the next quick exchange count as long work; "all cards have finished" waits for cards that are still booting; Undo arrange clears when a card is resized or closed, so Undo cannot stack cards on top of each other.
+
+## [0.3.3] — 2026-10-23
+
+### Changed
+- Terminal cards stay sharp at every zoom: the grid and the PTY are fitted at scale 1 only when the card is resized, zoom changes the font through a render scale (0.55 … 2.5); zoomed out far a card shows its last reply in large type; ↓ jumps back to the latest output.
+
+## [0.3.2] — 2026-10-23
+
+Merged to `main` as PR #2 together with 0.3.1.
+
+### Fixed
+- From a functional bug hunt: browser cards loaded every page twice (OAuth callbacks broke); Ctrl+C with a selection copies instead of interrupting the agent; Ctrl+R no longer reloads the whole board and Ctrl+W no longer closes the window; a restart no longer marks the fresh process "Ended"; a launch that fails prints the error in the card instead of staying on "Starting"; an unreadable `.ouroboros.json` is copied aside before it is replaced; long strings wrap, dialogs scroll, menus stay on screen.
+
+### Added
+- `/` in the Roster composer lists built-in commands, `~/.claude` and project skills and plugin skills (`plugin:name`); one browser card per URL; Settings paths wrap.
+- Updates install silently when you restart from the app.
+
+## [0.3.1] — 2026-10-22
+
+### Added
+- **Checkpoints**: a git snapshot of a card's folder (every non-gitignored file, committed or not) under `refs/ouroboros/checkpoints/*`, taken without touching the working tree or the index; restore brings the files back and first saves a "before restore" snapshot so a restore can be undone; MCP tools `create_checkpoint`, `list_checkpoints`, `restore_checkpoint`, `delete_checkpoint`, which the Conductor uses before risky stages. Junctions are refused; assume-unchanged and ignored-in-the-way files are handled.
+- Briefs published by any card open on the canvas (📄 on the Conductor reopens the latest); Conductor briefs stay on the canvas by default.
+- `create_agent` reuses a card with the same title in the same folder instead of making a twin.
+- Lines glow while the card they feed is working on that handoff.
+
+### Fixed
+- External sessions (Claude Code started outside the app) appear only in the window of their project, never in another project's window.
+- Checkpoint restore holes from the bug hunt (case-only renames on Windows, `index.lock` races with the app's own `git status`, a merge in progress).
+
+## [0.3.0] — 2026-10-22
+
+Merged to `main` as PR #1.
+
+### Added
+- **Engines setup for ChatGPT or Gemini users**: Welcome and Settings → *Engines* detect `claude`, `codex` and `gemini` (installed, version, signed in), show copyable install and sign-in commands and an *Open sign-in terminal* button; a default engine for new cards.
+- Inspector: switch a card between Agent and Conductor (it resumes its session with the board tools).
+
+## [0.2.11] — 2026-10-22
+
+### Fixed
+- Terminal creation is serialised with a 350 ms gap: creating several ConPTYs in the same instant is a fragile spot on Windows when a Conductor asks for many cards at once.
+
+## [0.2.10] — 2026-10-22
+
+### Fixed
+- A native crash (0xe0000008) traced to node-pty: never write, resize or kill a PTY after it exited, skip no-op resizes, use node-pty's bundled ConPTY on Windows 2004+. `%APPDATA%\Ouroboros\main.log` records PTY spawn/exit/kill and lost processes; local crash dumps are kept (nothing uploaded). Settings shows both paths.
+
+## [0.2.9] — 2026-10-22
+
+### Added
+- Browser cards resize from any edge; size presets.
+- README full write-up (architecture, engines, security), MIT license; the API token is optional for local tools.
+
+## [0.2.8] — 2026-10-22
+
+### Fixed
+- In-app update check; a *Saved* indicator.
+
+## [0.2.7] — 2026-10-22
+
+### Added
+- **Codex and Gemini cards** with the same hooks, lines and board tools: `out/main/agent-hook.js` turns Codex `notify` and Gemini hooks into the app's hook events; Codex `-c notify` / MCP / developer instructions, permission map, `resume <thread-id>`; Gemini per-card settings through `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, `--approval-mode` map, `-r` resume. A role prompt typed as a message is a role turn: its reply ends idle and fires no lines.
+
+## [0.2.6] — 2026-10-22
+
+### Added
+- **Changes review**: a `+n −m` badge on cards, per-file diff in the Inspector, revert, "ask the card to review its diff"; `get_changes` MCP tool so the Conductor reviews a worker's result before scoring it.
+- Context meter on Claude cards from the session transcript's last usage.
+- Roster grouped by Needs you / Ready / Working / Idle / Ended with group select; Ctrl+1…9 jumps, Ctrl+F finds by title.
+- `create_agent board_tools=true` and `set_board_tools` so team-lead cards wire their own sub-cards.
+
+## [0.2.5] — 2026-10-22
+
+### Added
+- One project per window, several windows: each window owns its board and API scope; the hook server routes each card's events to the window that owns it, so a Conductor sees only its own window. `Ouroboros.exe <folder>` opens another window.
+- Paste an image or drop files onto a card: the path is typed into the prompt. claude.ai briefs open in the system browser (claude.ai refuses sign-in inside embedded browsers).
+
+## [0.2.4] — 2026-10-22
+
+### Added
+- Chrome / Edge bookmarks in browser cards.
+
+## [0.2.3] — 2026-10-22
+
+### Added
+- 🧹 **Tidy**: close finished or idle cards (by age, scope).
+
+## [0.2.2] — 2026-10-22 (no release)
+
+### Added
+- **Command cards**: any CLI as a node (Aside, Codex, a script) with a `{{prompt}}` template; auto-opened briefs.
+
+## [0.2.1] — 2026-10-22
+
+### Fixed
+- Launcher test on Windows temp paths.
+
+## [0.2.0] — 2026-10-22
+
+### Added
+- **In-app updates** from GitHub Releases; the release workflow runs on version bumps and creates the tag itself.
+- The Conductor reports finished work back automatically (report lines); its operating procedure and self-setup tools; it wires handoff lines itself; the board MCP server builds as one self-contained file and runs with the system node.
+- Guard against cloning the Conductor: no `--continue` in a Conductor's folder, no double pull.
+
+## [0.1.x] — 2026-10-21
+
+The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
+
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.6.0
+[0.5.1]: https://github.com/blee170/Ouroboros/compare/v0.4.1...v0.6.0
+[0.5.0]: https://github.com/blee170/Ouroboros/compare/v0.4.1...v0.6.0
+[0.4.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.4.1
+[0.4.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.4.0
+[0.3.11]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.11
+[0.3.10]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.10
+[0.3.9]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.9
+[0.3.8]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.8
+[0.3.7]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.7
+[0.3.6]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.6
+[0.3.5]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.5
+[0.3.4]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.4
+[0.3.3]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.3
+[0.3.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.2
+[0.3.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.1
+[0.3.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.3.0
+[0.2.11]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.11
+[0.2.10]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.10
+[0.2.9]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.9
+[0.2.8]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.8
+[0.2.7]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.7
+[0.2.6]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.6
+[0.2.5]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.5
+[0.2.4]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.4
+[0.2.3]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.3
+[0.2.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.1
+[0.2.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.2.0

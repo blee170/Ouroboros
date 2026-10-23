@@ -62,6 +62,9 @@ textarea { resize: vertical; font-family: Consolas, monospace; font-size: 12px; 
 .terminal-host { position: absolute; top: 0; left: 0; transform-origin: 0 0; background: #0b0d13; box-sizing: border-box; }
 /* the padding sits on .xterm, where the fit addon subtracts it: on the host it was counted as rows and the last row overflowed */
 .terminal-host .xterm { height: 100%; padding: 4px 0 0 6px; box-sizing: border-box; }
+/* xterm paints its scroll viewport black and the theme background never reaches it; the rows fitted at zoom 1 and
+   drawn with a pixel-rounded font leave a strip under the last row, which showed as a black band */
+.terminal-host .xterm .xterm-viewport { background-color: transparent; }
 /* zoomed far out (contextual zoom): a summary in large type replaces the unreadable terminal */
 /* the header keeps its size in far mode: a taller header would shrink the terminal area and resize the PTY */
 .agent-node.far .terminal-host { visibility: hidden; }

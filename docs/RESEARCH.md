@@ -133,3 +133,65 @@ Zapier Copilot/Canvas, Make AI, n8n AI Builder, Gumloop, Google Opal, Power Auto
 **채택 규칙** (`src/shared/announce.ts`): 대상 off/총괄만(기본)/전부 · 토스트·음성 각각 · 턴 10초 미만 무시 · 문장은 고정("○○ 작업이 끝났습니다. 보고를 확인해 주세요" — 답변 본문은 절대 안 읽음; 네 명의 의견 수렴 후 Jev 선택 a 0.69/grounded 0.80) · 한글이 제목/답변에 있으면 한국어, 한국어 음성 없으면 영어 문장으로 폴백 · needs-you는 카드당 60초에 한 번 음성 · 여러 카드가 돈 뒤 5초 정적이면 "모든 카드 작업이 끝났습니다"(마지막 턴이 이미 개별로 알려졌으면 생략) · 음성 엔진은 설정에서 고름(기본 Windows; Gemini/OpenAI/ElevenLabs는 본인 키, safeStorage 암호화, 문장별 `userData/tts/` 캐시, 실패 시 Windows 음성 폴백 + 설정에 이유 표시).
 
 **알려진 한계**: tap 모드 마이크가 열린 채면 TTS 문장이 받아쓰기에 섞인다(README에 적음) · 알림은 창 포커스와 무관하게 나간다(설정 없음, 단순 유지).
+
+## 9. 자율 운영(팀·워커 수명·컨텍스트·자율성) 조사 (2026-10-24, 0.4 계획 전) — 검증한 사실
+
+**질문**: "팀 카드가 워커를 스스로 띄우고 거두고, 컨텍스트가 차면 스스로 넘기고, 사장님은 결정 게이트에서만" — 이 방향이 맞는지, 2025–26 선행 사례에서 무엇이 되고 무엇이 망했는지. 세 갈래(팀/워커 오케스트레이션 · 컨텍스트 한계 · 자율성 경계)를 Opus 리서치 3개로 병렬 조사, 아래는 교차 확인된 것만.
+
+### 9.1 세 시스템 이상에서 반복되는 패턴 (= 베낄 것)
+
+| 패턴 | 어디서 | 우로보로스 현재 |
+|---|---|---|
+| **에이전트 밖의 내구성 작업 원장**(work ledger): 워커가 항목을 claim하고 상태·의존을 갱신 | Gas Town beads · Claude Code agent teams 태스크 리스트(의존·파일 락) · Anthropic 기능 목록 JSON(`passes`만 바뀜) · MS Magentic task ledger · OpenAI 저장소 내 실행 계획 | **없음** — `set_note` 자유 마크다운은 덮어써짐 |
+| **명시적 완료 신호로 은퇴**, idle 시간은 폴백 | `gt done`(브랜치 푸시→머지 요청→자기 세션 종료) · agent-teams 종료 핸드셰이크+idle 알림에 최종 답 포함 · Codex는 모든 결과 대기 | **idle 시간만** — `tidy_board`는 done/idle 30분 |
+| **역할·헌장은 세션과 분리된 파일** | `.claude/agents/*.md` · `.codex/agents/*.toml` · Gas Town identity/sandbox/session 3층 · CrewAI role/backstory | 카드 안 `role_prompt`뿐, 팀 헌장 파일 없음 |
+| **정체·조기종료 감시(watchdog)** | Gas Town 3분 heartbeat → `GUPP_VIOLATION` · Magentic `max_stall_count`→재계획 · agent-teams `TeammateIdle` exit 2 · Anthropic "기능 목록 대조 전엔 못 멈춤" | **없음** |
+| **매니저는 조율·전달만, 구현·요약 금지** | agent-teams 리드가 직접 구현해버리는 실패 · CrewAI 매니저가 모든 태스크 실행 · LangGraph "전화 놀이"(`forward_message`로 ~50% 개선) · Gas Town Witness | 프롬프트 규칙만("Do not do the coding yourself") |
+| **워커당 worktree + 단일 머지 단계** | Gas Town Refinery · 서브에이전트 `isolation: worktree` · Claude Squad · Conductor · Codex 동시 쓰기 충돌 경고 | worktree 있음, 머지 큐 없음 |
+| **스폰 프롬프트가 전체 맥락을 들고 감** | agent-teams 팀원은 리드 히스토리 상속 안 함 · Anthropic 리서치 브리프(목표·형식·경계) | 있음(`role_prompt`+`prompt`) |
+| **동시성·깊이 상한을 코드로** | agent-teams 3–5명·중첩 금지 · Codex `max_concurrent_threads_per_session` · Gas Town 20–30 | 프롬프트 권고만 |
+
+### 9.2 실패한 것 (= 안 할 것)
+
+- **Gas Town**(Yegge, 2026-01 → 2026-09 중단): 영속 워커 풀 → 좀비 워커·stale 브랜치 219개, Witness 단일 병목, "expensive as hell", 모델이 Gas Town 자체를 자꾸 손대서("just two more things") 유지에 "too much elbow grease". 남긴 교훈은 **beads(원장)뿐**이라고 본인이 정리.
+- **동등한 에이전트 떼·여러 쓰기 주체·락 파일**: Cognition "mostly a distraction"(2026-04-22), Cursor "bottleneck, risk-averse".
+- **LLM 매니저 혼자 맡기기**: CrewAI 매니저가 모든 태스크를 직접 함/`coworker not found`; 단계별 명시 지시로만 고쳐짐.
+- **AutoGPT류 무한 루프·자원 고갈**; 테스트 없이 "완료" 선언(Anthropic 2025-11-26, Cursor).
+- **자체 권한 분류기**: Anthropic 것도 false-negative 17%(2026-03-25) → 벤더 모드만 쓴다.
+- Claude Code agent teams 한계: in-process 팀원 resume 불가, Windows Terminal 분할 미지원, 중첩 금지 → **우로보로스 캔버스+`--resume`+`set_board_tools` 중첩은 이미 그 틈을 메운다**.
+
+### 9.3 컨텍스트 한계 — 사실
+
+| 항목 | 사실 | 출처 |
+|---|---|---|
+| CC 자동 compact | 윈도 미설정 시 모델 한계에서 발동(네이티브 1M 모델 ~967K). `CLAUDE_CODE_AUTO_COMPACT_WINDOW`(100K–1M, 최우선) · `--autocompact <auto\|tokens>`(2.1.309 확인) · `autoCompactWindow` · `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`(낮추기만). `DISABLE_AUTO_COMPACT=1`. | code.claude.com/docs/en/env-vars, model-config |
+| idle compact | ~54분 idle & ≥200K면 조용히 압축(인터랙티브 기본 on). `idleCompaction:false`로 끔 — **캔버스 idle 카드가 몰래 압축될 수 있음** | settings-reference#idlecompaction |
+| PreCompact 훅 | `trigger` manual/auto, exit 2 또는 `decision:"block"`으로 차단 가능하나 **복구 compact 차단 시 요청 실패**; `systemMessage` 버려져 요약 방향 못 정함. PostCompact엔 `compact_summary` 들어옴 | docs/en/hooks |
+| SessionStart 훅 | `source`: startup/resume/compact/fork, `additionalContext` 주입, resume/fork엔 `context_tokens` | docs/en/hooks |
+| 신호 | JSONL `compact_boundary` 레코드(`compactMetadata{trigger,preTokens,postTokens,durationMs}`); 로컬 샘플 497,898→25,441 토큰 97초. 통계줄 `used_percentage`는 자동압축 윈도 아닌 전체 윈도 기준 | 로컬 관측, statusline 문서 |
+| `--fork-session` | **전체 히스토리 복사** → 새 컨텍스트가 아님 | cli-reference |
+| Codex / Gemini | Codex `model_auto_compact_token_limit`, `compact_prompt`, `codex resume/fork` · Gemini `model.compressionThreshold` 기본 **0.5**, `/compress`, `/chat save`, `checkpointing` | 각 문서 |
+| compact vs 핸드오프 | Anthropic: "compaction isn't sufficient"(지시 전달 불완전) → 진행 파일+커밋+세션당 기능 1개. Factory 측정(36,611 메시지): 어떤 압축도 **파일 변경 흔적(artifact trail) 2.2–2.5/5**로 가장 약함. 컨텍스트 커질수록 18개 모델 전부 성능 저하(Chroma context-rot) | anthropic.com/engineering/effective-harnesses-for-long-running-agents, factory.com/news/evaluating-compression, trychroma.com/research/context-rot |
+
+### 9.4 자율성 사다리에서 우로보로스 위치
+
+L1 감독형 → L2 태스크 에이전트(마커·체크포인트·diff) → **L3 파이프라인(조건 라인·루프 가드·사람 게이트·보고 라인·wait) = 충족** → L4 자가 편성 팀(원장·워치독·예산·새 컨텍스트·단일 머지) = **절반**(팀장·tidy·note 있음 / 원장·워치독·예산·컨텍스트 순환 없음) → L5 자가 지시(스케줄·트리거·자율 지표·롤백) = 없음. 측정 지표: 개입/세션(Anthropic 5.4→3.3), 무인 분/개입, 게이트 요청/일, 체크포인트 복원률, 머지당 비용.
+
+### 9.5 하네스 vs CLI vs 모델 경계
+
+지금 가능: 원장 · 작업/임계 기준 워커 은퇴와 재스폰 · 정체 워치독 · worktree+단일 머저 · 기계적 게이트(테스트 실행, 다른 엔진 리뷰어) · Stop 훅 `decision:"block"` 계속 진행(Claude만; Codex/Gemini [미확인]). CLI 기능 필요: 하드 비용 상한(`--max-budget-usd`는 print 모드만) · 무인 권한 안전(벤더 분류기) · PC 꺼진 동안 실행(벤더 scheduled tasks). 모델 발전 필요: 표류·조기 완료·만지작거림 수렴(판정자+새 시작으로 완화만).
+
+### 9.6 원래 계획 대비 바뀐 것
+
+| 원안(이 세션 초안) | 조사 후 |
+|---|---|
+| Tidy: 파견 플래그 + idle N분 | **완료 신호로 은퇴**(보고 라인이 상위에 전달됨 + done)가 기본, idle은 폴백. 상주 카드는 opt-in으로만 |
+| 팀 = 컨덕터 + `appendSystemPrompt` 헌장 | 헌장은 **파일**(`.ouroboros/teams/<slug>.md`) + 팀 진행 로그(태스크 닫힐 때 한 줄, 시작 시 앞 200줄 주입) + 보고는 **원문 그대로** 위로 + 워커 수·깊이(총괄→팀→워커) 상한을 코드로 |
+| 컨텍스트: 75%/90% 배너 | **절대 토큰** 밴드(<150K / 150–250K 인계 준비 / >250K 다음 경계에서 인계), 스폰 시 `--autocompact` 백스톱, 인계는 **경계에서만**(턴 종료 ∧ 커밋/스테이지 완료 ∧ 백그라운드 없음), 노트는 카드 자신이 작성, 옛 세션은 `--resume` 가능하게 보존, 사장님 카드는 클릭 없이는 절대 안 함, 자동 인계 계보당 3회 상한 |
+| (없음) | **작업 원장**(`task_create/claim/update/list`, 상태·의존·부모)이 백본 — 두 리서치 모두 1순위 |
+| (없음) | **정체 워치독**: Working인데 훅 이벤트 N분 없음 / needs-you N분 / 같은 라인 반복 → 부모에 `[card stalled]`, 3회면 총괄+알림 |
+| (없음) | 완료 게이트: 코딩 태스크는 `RESULT:` 마커 + `get_changes` 비어있지 않아야 완료 |
+
+**안 만들 것**: 영속 워커 풀 · 동등 에이전트 떼/여러 쓰기 주체 · 자체 권한 분류기 · 워커가 우로보로스/보드 설정 편집 · 구독 돌려쓰기 · 테마 역할명 잔뜩 · 자체 클라우드 실행층 · 사장님 없는 main 머지/배포.
+
+**미확인**: Codex/Gemini의 Stop-훅 대응물 · `contextWindowFor`가 Opus 4.7+를 1M으로 안 잡을 가능성(실제 모델 id에 따라) · compact vs 핸드오프 직접 비교 측정 없음.

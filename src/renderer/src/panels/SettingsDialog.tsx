@@ -3,7 +3,11 @@ import { useBoard } from '@/store/board'
 import type { AppInfo, UpdateStatus } from '@shared/protocol'
 import { EnginesPanel } from './EnginesPanel'
 import { announceSettings } from '@shared/announce'
+import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
+import type { TtsKeyEngine } from '@shared/protocol'
 import { speak, voiceFor } from '@/lib/speak'
+
+const NO_KEYS: Record<TtsKeyEngine, boolean> = { gemini: false, openai: false, elevenlabs: false }
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useBoard((s) => s.settings)
@@ -14,13 +18,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [token, setToken] = useState('')
   const [hasToken, setHasToken] = useState(false)
   const announce = announceSettings(settings)
+  const tts = ttsSettings(settings)
+  const [ttsKeys, setTtsKeys] = useState(NO_KEYS)
+  const [ttsKey, setTtsKey] = useState('')
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
       setInfo(i)
       setHasToken(Boolean(i.hasUpdateToken))
     })
+    void window.ouroboros.tts.keys().then(setTtsKeys)
     return window.ouroboros.update.onStatus(setUpd)
   }, [])
+  const saveTtsKey = async (engine: TtsKeyEngine): Promise<void> => {
+    const r = await window.ouroboros.tts.setKey(engine, ttsKey)
+    setTtsKeys((k) => ({ ...k, [engine]: r.hasKey }))
+    setTtsKey('')
+    setMsg(r.hasKey ? `${TTS_ENGINES[engine].label} key saved (encrypted). Press 🔊 Test.` : 'Key cleared.')
+  }
+  const testVoice = async (): Promise<void> => {
+    const ko = tts.engine !== 'windows' || Boolean(voiceFor('ko'))
+    setMsg(tts.engine === 'windows' ? '' : 'Fetching the test sentence…')
+    const err = await speak({ kind: 'finished', title: ko ? '총괄' : 'Conductor', lang: ko ? 'ko' : 'en' })
+    setMsg(err ? `${err} — the Windows voice spoke instead.` : tts.engine === 'windows' ? '' : 'Spoken with the chosen engine.')
+  }
   const saveToken = async (): Promise<void> => {
     const r = await window.ouroboros.update.setToken(token)
     setHasToken(r.hasToken)
@@ -63,11 +83,51 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={announce.toast} onChange={(e) => void setSettings({ announceToast: e.target.checked })} /> Desktop toast with the first line of the reply
           </label>
           <label className="row">
-            <input type="checkbox" checked={announce.voice} onChange={(e) => void setSettings({ announceVoice: e.target.checked })} /> Speak it with a Windows voice ({voiceFor('ko') ? 'Korean voice installed' : 'no Korean voice: English only'})
-            <button className="btn" onClick={() => speak({ kind: 'finished', title: voiceFor('ko') ? '총괄' : 'Conductor', lang: voiceFor('ko') ? 'ko' : 'en' })}>
+            <input type="checkbox" checked={announce.voice} onChange={(e) => void setSettings({ announceVoice: e.target.checked })} /> Speak it
+            <button className="btn" onClick={() => void testVoice()}>
               🔊 Test
             </button>
           </label>
+          <label className="row">
+            Voice engine
+            <select
+              value={tts.engine}
+              onChange={(e) => {
+                setTtsKey('')
+                void setSettings({ ttsEngine: e.target.value as TtsEngine, ttsVoice: undefined })
+              }}
+            >
+              {(Object.keys(TTS_ENGINES) as TtsEngine[]).map((e) => (
+                <option key={e} value={e}>
+                  {TTS_ENGINES[e].label}
+                </option>
+              ))}
+            </select>
+            {tts.engine === 'windows' && <span className="muted small">{voiceFor('ko') ? 'Korean voice installed' : 'no Korean voice: English only'}</span>}
+          </label>
+          {tts.engine !== 'windows' && (
+            <>
+              <label className="row">
+                API key
+                <input className="text" type="password" placeholder={ttsKeys[tts.engine] ? '•••••• (saved)' : TTS_ENGINES[tts.engine].keyHint} value={ttsKey} onChange={(e) => setTtsKey(e.target.value)} />
+                <button className="btn" onClick={() => void saveTtsKey(tts.engine as TtsKeyEngine)}>
+                  {ttsKey ? 'Save' : ttsKeys[tts.engine] ? 'Clear' : 'Save'}
+                </button>
+              </label>
+              <label className="row">
+                Voice
+                <input key={tts.engine} className="text" placeholder={TTS_ENGINES[tts.engine].defaultVoice} defaultValue={settings.ttsVoice ?? ''} onBlur={(e) => void setSettings({ ttsVoice: e.target.value.trim() || undefined })} />
+                <span className="muted small">{TTS_ENGINES[tts.engine].voiceHint}</span>
+              </label>
+              {tts.engine !== 'elevenlabs' && (
+                <label className="row">
+                  Style
+                  <input className="text" placeholder={DEFAULT_STYLE} defaultValue={settings.ttsStyle ?? ''} onBlur={(e) => void setSettings({ ttsStyle: e.target.value.trim() || undefined })} />
+                </label>
+              )}
+              <div className="muted small">Your own subscription: the key is stored encrypted and sent only to that engine. Each sentence is fetched once and kept under the app's data folder; if the engine fails, the Windows voice speaks instead.</div>
+            </>
+          )}
           <div className="muted small">Voice input: in a Claude card type <code>/voice</code> (or <code>/voice tap</code>), then hold or tap Space and speak — Claude Code's own dictation, Korean included, with a claude.ai sign-in.</div>
         </div>
         <label className="row">

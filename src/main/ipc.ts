@@ -2,7 +2,7 @@ import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipc
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
-import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
@@ -20,6 +20,7 @@ import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
+import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
 import { selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
@@ -972,6 +973,19 @@ export function registerIpc(ctx: MainContext): void {
     const enc = encryptToken(String(token ?? '').trim())
     store.setSettings({ githubTokenEnc: enc || undefined })
     return { ok: true, hasToken: Boolean(enc) }
+  })
+
+  const TTS_KEY_ENGINES: TtsKeyEngine[] = ['gemini', 'openai', 'elevenlabs']
+  ipcMain.handle(IPC.ttsSynthesize, (_e, text: string) => synthesize(store.getSettings(), String(text ?? '').trim()))
+  ipcMain.handle(IPC.ttsSetKey, (_e, engine: TtsKeyEngine, key: string) => {
+    if (!TTS_KEY_ENGINES.includes(engine)) return { ok: false, hasKey: false }
+    const settings = store.getSettings()
+    store.setSettings(ttsKeyPatch(settings, engine, String(key ?? '')))
+    return { ok: true, hasKey: Boolean(ttsKeyFor(store.getSettings(), engine)) }
+  })
+  ipcMain.handle(IPC.ttsKeys, () => {
+    const settings = store.getSettings()
+    return Object.fromEntries(TTS_KEY_ENGINES.map((e) => [e, Boolean(ttsKeyFor(settings, e))])) as Record<TtsKeyEngine, boolean>
   })
 }
 

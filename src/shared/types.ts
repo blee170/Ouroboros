@@ -192,6 +192,14 @@ export interface AppSettings {
   announceToast?: boolean
   /** Speak the announcement with a Windows voice (default on). */
   announceVoice?: boolean
+  /** Voice engine for spoken announcements: windows (default, offline) | gemini | openai | elevenlabs. */
+  ttsEngine?: 'windows' | 'gemini' | 'openai' | 'elevenlabs'
+  /** Voice name / id for the chosen engine (empty = the engine's default). */
+  ttsVoice?: string
+  /** Delivery hint for engines that take one (Gemini style, OpenAI instructions). */
+  ttsStyle?: string
+  /** Per-engine API keys, stored encrypted (same scheme as githubTokenEnc). */
+  ttsKeysEnc?: Partial<Record<'gemini' | 'openai' | 'elevenlabs', string>>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

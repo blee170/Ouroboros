@@ -119,6 +119,11 @@ const api: OuroborosApi = {
     install: () => ipcRenderer.invoke(IPC.updateInstall),
     setToken: (token) => ipcRenderer.invoke(IPC.updateSetToken, token),
     onStatus: (cb) => on(IPC.updateStatus, cb)
+  },
+  tts: {
+    synthesize: (text) => ipcRenderer.invoke(IPC.ttsSynthesize, text),
+    setKey: (engine, key) => ipcRenderer.invoke(IPC.ttsSetKey, engine, key),
+    keys: () => ipcRenderer.invoke(IPC.ttsKeys)
   }
 }
 

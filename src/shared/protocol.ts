@@ -47,6 +47,9 @@ export const IPC = {
   updateInstall: 'update:install',
   updateSetToken: 'update:setToken',
   updateStatus: 'update:status',
+  ttsSynthesize: 'tts:synthesize',
+  ttsSetKey: 'tts:setKey',
+  ttsKeys: 'tts:keys',
   tidyCandidates: 'tidy:candidates',
   bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
@@ -384,6 +387,17 @@ export interface OuroborosApi {
     setToken(token: string): Promise<{ ok: boolean; hasToken: boolean }>
     onStatus(cb: (s: UpdateStatus) => void): () => void
   }
+  tts: {
+    /** Audio for `text` from the engine chosen in Settings (cached per sentence); `ok: false` for Windows voices or an engine error. */
+    synthesize(text: string): Promise<TtsResult>
+    /** Store (encrypted) an engine's API key; empty string clears it. */
+    setKey(engine: TtsKeyEngine, key: string): Promise<{ ok: boolean; hasKey: boolean }>
+    /** Which engines have a key saved. */
+    keys(): Promise<Record<TtsKeyEngine, boolean>>
+  }
 }
+
+export type TtsKeyEngine = 'gemini' | 'openai' | 'elevenlabs'
+export type TtsResult = { ok: true; bytes: Uint8Array; mime: string } | { ok: false; error: string }
 
 export type { HandoffEdgeData }

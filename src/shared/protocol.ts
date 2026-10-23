@@ -1,4 +1,5 @@
 import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
+import type { AnnouncePayload } from './announce'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -61,7 +62,8 @@ export const IPC = {
   boardRemoveEdge: 'board:removeEdge',
   boardSetNote: 'board:setNote',
   boardUpdateNode: 'board:updateNode',
-  externalSession: 'external:session'
+  externalSession: 'external:session',
+  announce: 'announce'
 } as const
 
 export interface PtySpawnOptions {
@@ -277,6 +279,8 @@ export interface OuroborosApi {
     /** Main changed a card's options (e.g. a conductor enabled board tools); restart=true relaunches it. */
     onUpdateNode(cb: (p: { nodeId: string; data: Partial<NodeData>; restart: boolean }) => void): () => void
     onExternalSession(cb: (p: ExternalSessionPayload) => void): () => void
+    /** Main decided something is worth saying out loud (a card finished, needs you, the board settled). */
+    onAnnounce(cb: (p: AnnouncePayload) => void): () => void
     fireHandoff(edgeId: string): Promise<{ ok: boolean; error?: string }>
     listAgents(): Promise<AgentSnapshot[]>
   }

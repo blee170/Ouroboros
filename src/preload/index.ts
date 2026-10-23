@@ -31,6 +31,7 @@ const api: OuroborosApi = {
     onSetNote: (cb) => on(IPC.boardSetNote, cb),
     onUpdateNode: (cb) => on(IPC.boardUpdateNode, cb),
     onExternalSession: (cb) => on(IPC.externalSession, cb),
+    onAnnounce: (cb) => on(IPC.announce, cb),
     fireHandoff: (edgeId) => ipcRenderer.invoke(IPC.handoffFire, edgeId),
     listAgents: () => ipcRenderer.invoke(IPC.agentsList)
   },

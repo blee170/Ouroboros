@@ -55,6 +55,8 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 |---|---|
 | **Cards** | Real PTY terminals (PowerShell / cmd / Git Bash / WSL / any shell) or agent sessions on an infinite canvas with zoom, minimap, Ctrl+1…9 jumps, Ctrl+F search. Terminals redraw sharp at every zoom without resizing the program inside; zoomed far out a card shows its last reply in large type; ↓ jumps back to the latest output. |
 | **Status** | Starting / Idle / Working / Needs you / Done / Ended per card, with desktop toasts and taskbar flashing when a card needs a human. |
+| **Announcements** | When the Conductor (or, if you choose, any card) finishes a turn of 10 s or more: a toast with the first line of the reply and/or a spoken "<card> finished, please check the report" (Windows voices; Korean when a Korean voice is installed). "Needs you" is spoken too, and "all cards have finished" once a run of several cards settles. The reply itself is never read out — long reports are on the canvas. |
+| **Voice input** | Claude cards take Claude Code's own dictation: `/voice` (hold Space) or `/voice tap`, Korean included, free with a claude.ai sign-in. `/` in the Roster composer lists it. |
 | **Lines** | Drag port to port. Auto (fires on the source's finished reply) or manual (▶). Template with `{{last_assistant_message}}`, `{{source_title}}`, … Condition as substring or `/regex/`. 8 s cooldown, max 6 fires / 5 min per line. A line flashes when it fires and glows while the card it feeds is working on that handoff. |
 | **Conductor** | A card with the board MCP server: `list_agents`, `read_output`, `send_prompt`, `create_agent`, `remove_agent`, `wait_for_agents`, `connect_agents` / `fire_handoff` / `remove_handoff`, `set_note`, `tidy_board`, `get_changes`, `create_checkpoint` / `restore_checkpoint`, `set_board_tools`, `browser_*`. Ships with an operating procedure (intake → setup → run → report), a default pipeline and human gates (`APPROVED BY OWNER`). |
 | **Engines** | Each agent card runs **Claude Code** (default), **OpenAI Codex CLI** or **Gemini CLI**. Same status, lines, reports and board tools for all three. |
@@ -195,13 +197,15 @@ Linux builds (`npm run dist:linux`) are used for the automated tests; macOS is u
 3. **Draw lines** from a card's right port to another's left port; set mode, condition and template in the Inspector.
 4. **Conduct**: put a Conductor in the middle and give it the goal. It creates and wires what it needs, runs the stages, relays questions and reports. Or press **✨ Build board** to generate a starting board from your folder and Claude Code history.
 5. **Review**: click a card's `+n −m` badge to see its diff, revert files or ask it to review itself. Use the Roster to see what needs you.
-6. **Clean up**: 🧹 Tidy closes finished cards (or enable auto-tidy).
+6. **Clean up**: 🧹 Tidy closes finished cards (or enable auto-tidy); ⊞ Arrange lines the rest up.
+7. **Hands-free**: leave the window; the Conductor's finished turns are announced (⚙ Announcements). To talk instead of type, run `/voice` in a Claude card and hold Space (set `language` to Korean in Claude Code's `/config` for Korean dictation). In tap mode the microphone stays open until you tap again, so an announcement spoken meanwhile is dictated too — hold mode or ⚙ voice off avoids that.
 
 ## Settings
 
 ⚙ in the toolbar:
 
 - Desktop notifications when a card needs you.
+- Announcements: whose finished turns (nothing / Conductor / every card), toast on/off, voice on/off, 🔊 Test. Only Windows SAPI voices are available to the app (Heami for Korean, Zira for English); the Windows 11 "natural" voices are not exposed to third-party apps.
 - Keep running in the tray when the last window is closed.
 - Track Claude Code sessions started outside Ouroboros (writes one HTTP hook into `~/.claude/settings.json`; needs port 47821 free).
 - Open claude.ai briefs in the system browser instead of a browser card (off by default; turn it on only if claude.ai refuses to sign in inside the card — the card's ↗ button opens any page outside too).

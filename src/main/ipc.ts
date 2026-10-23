@@ -8,6 +8,7 @@ import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type 
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
+import { BoardDone, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
 import type { Board } from './board'
 import { findBriefUrl } from './briefs'
 import { listSkills } from './skills'
@@ -448,6 +449,73 @@ function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayloa
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
 }
 
+/**
+ * Tell the owner when work is done: a toast and/or a spoken sentence when a card finishes a turn (Conductor
+ * replies by default, every card if asked), "needs you" spoken too, and "all cards have finished" once a
+ * run of several cards settles. The reply itself is never read out; its first line goes in the toast.
+ */
+function installAnnouncer(ctx: MainContext, s: WindowSession): void {
+  const board = s.board
+  const workingSince = new Map<string, number>()
+  const lastTurnMs = new Map<string, number>()
+  const spokenNeedsYou = new Map<string, number>()
+  const done = new BoardDone()
+  let settleTimer: ReturnType<typeof setTimeout> | null = null
+  const anyBusy = (): boolean => [...board.nodes.values()].some((n) => n.data.status === 'working' || n.data.status === 'needs-you')
+  const deliver = (p: AnnouncePayload, body: string | undefined, prefs: { toast: boolean; voice: boolean }): void => {
+    if (prefs.toast && Notification.isSupported()) {
+      const note = new Notification({ title: phrase(p), body })
+      note.on('click', () => {
+        if (!s.win.isDestroyed()) {
+          s.win.show()
+          s.win.focus()
+        }
+      })
+      note.show()
+    }
+    if (prefs.voice) sendToRenderer(s, IPC.announce, p)
+  }
+  board.on('status', (p: AgentStatusPayload) => {
+    if (p.status === 'working') {
+      if (!workingSince.has(p.nodeId)) workingSince.set(p.nodeId, p.at)
+      done.working()
+    } else if (p.status !== 'needs-you') {
+      // the turn is over: remember how long it ran for the Stop that follows this status
+      const since = workingSince.get(p.nodeId)
+      if (since !== undefined) lastTurnMs.set(p.nodeId, p.at - since)
+      workingSince.delete(p.nodeId)
+    }
+    if (p.status === 'needs-you') {
+      const prefs = announceSettings(ctx.store.getSettings())
+      const n = board.nodes.get(p.nodeId)
+      // the toast for this already comes from notifyNeedsYou; here only the voice, once a minute per card
+      if (prefs.voice && prefs.target !== 'off' && n && p.at - (spokenNeedsYou.get(p.nodeId) ?? 0) >= NEEDS_YOU_REPEAT_MS) {
+        spokenNeedsYou.set(p.nodeId, p.at)
+        deliver({ kind: 'needs-you', title: n.data.title, lang: langFor(n.data.title, p.statusDetail) }, undefined, { toast: false, voice: true })
+      }
+    }
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = setTimeout(() => {
+      settleTimer = null
+      if (!done.settle(anyBusy())) return
+      const prefs = announceSettings(ctx.store.getSettings())
+      if (prefs.target === 'off') return
+      deliver({ kind: 'all-done', title: '', lang: langFor(...[...board.nodes.values()].map((n) => n.data.title)) }, undefined, prefs)
+    }, SETTLE_MS)
+  })
+  board.on('stop', (nodeId: string, message: string) => {
+    const n = board.nodes.get(nodeId)
+    if (!n) return
+    const prefs = announceSettings(ctx.store.getSettings())
+    const elapsed = lastTurnMs.get(nodeId)
+    lastTurnMs.delete(nodeId)
+    const announced = announcesStop(n.data.kind, elapsed, prefs)
+    done.stopped(announced)
+    if (!announced) return
+    deliver({ kind: 'finished', title: n.data.title, lang: langFor(n.data.title, message) }, firstLine(message) || undefined, prefs)
+  })
+}
+
 const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
 
 /** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
@@ -579,6 +647,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   }
   s.api = createApiHandlers(ctx, s)
   s.fireHandoff = installHandoffRunner(ctx, s)
+  installAnnouncer(ctx, s)
   board.on('status', (p: AgentStatusPayload) => {
     sendToRenderer(s, IPC.agentStatus, p)
     if (p.status === 'needs-you') notifyNeedsYou(ctx, s, p)

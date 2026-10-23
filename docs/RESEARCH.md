@@ -115,3 +115,20 @@ Zapier Copilot/Canvas, Make AI, n8n AI Builder, Gumloop, Google Opal, Power Auto
 
 출처: openai/codex `codex-rs/hooks/src/legacy_notify.rs`, `codex-rs/utils/cli/src/config_override.rs`, `codex-rs/rmcp-client/src/utils.rs`, `codex-rs/core/config.schema.json`; google-gemini/gemini-cli `docs/hooks/reference.md`, `docs/cli/cli-reference.md`, `docs/cli/settings.md`, `docs/tools/mcp-server.md`, `packages/cli/src/config/settings.ts`, `packages/cli/src/config/settingsSchema.ts`, `packages/core/src/hooks/hookRunner.ts`.
 미검증: Codex TUI의 "준비됨" 출력 문구(없어서 출력 후 4초 정적을 준비로 간주), `codex resume` 앞에 둔 전역 플래그(`-m`, 승인 플래그) 수용 여부.
+
+## 8. 음성 입력·완료 알림 조사 (2026-10-23, 0.3.4) — 검증한 사실
+
+**결론**: 음성 *입력*은 Claude Code 내장 `/voice`를 쓰고(코드 0줄), 우로보로스는 *알림*(토스트+음성)만 만든다. 자체 STT는 보류.
+
+| 항목 | 사실 | 출처 |
+|---|---|---|
+| Claude Code `/voice` | v2.1.69+ 내장 받아쓰기. Space 홀드(기본) 또는 `/voice tap`(2.1.116+). 한국어 포함 20개 언어, `language` 설정을 따름. 오디오는 Anthropic 서버에서 전사(로컬 아님), **claude.ai 로그인 필요**(API 키·Bedrock 불가), 토큰 소모 없음. Windows 네이티브 지원. 녹음은 claude 프로세스의 네이티브 모듈이 직접 → 터미널이 xterm이어도 무관. | https://code.claude.com/docs/en/voice-dictation |
+| Electron Web Speech API | `webkitSpeechRecognition`은 Electron에서 `network` 에러(Chromium이 Google 서버를 쓰는데 Electron엔 키가 없음). 온디바이스 인식(`processLocally`)도 Electron이 `unavailable` 스텁 처리. | electron/electron#46143, electron/electron#52955 |
+| Windows Win+H | Claude Code TUI에서는 "no text box selected"로 실패. | anthropics/claude-code#37095 |
+| 자체 STT 후보(보류) | 로컬 whisper.cpp 애드온(`@kutalia/whisper-node-addon`, 프리빌드·Vulkan; small 466 MB, 한국어 CER ~18%) · Groq `whisper-large-v3-turbo` $0.04/시간(키 필요 → "자체 모델 호출 없음" 원칙과 충돌). Codex/Gemini 카드에 음성이 필요해질 때 다시 본다. | micdrop.dev/blog/local-speech-to-text-node, console.groq.com/docs/speech-to-text |
+| TTS | 렌더러 `speechSynthesis`는 Electron에서 동작하나 **SAPI 음성만** 노출(이 PC: Microsoft Heami Desktop ko-KR, Zira en-US). Windows 11 "자연 음성"·Edge 온라인 음성은 서드파티 앱에 안 열림(WebView2Feedback#2660). `getVoices()`는 첫 호출에 비어 있을 수 있어 `voiceschanged`를 기다린다. | MicrosoftEdge/WebView2Feedback#2660, super-productivity#6437 |
+| 선행 사례 공통 패턴 | 소리/토스트/음성 각각 토글(claude-code#45619 제안), 창 포커스 시 억제(Herdr), 10초 미만 작업은 안 알림(docker-agent `sound_threshold`), 매 턴 알림은 짜증(claude-code#87351), 300자 넘으면 "보고서 확인" 문구(heard.dev 가이드). VoiceMode MCP(mbailey/voicemode, MIT)는 양방향 대화형 — 총괄과 "통화"가 필요해지면 후보. | 각 저장소 |
+
+**채택 규칙** (`src/shared/announce.ts`): 대상 off/총괄만(기본)/전부 · 토스트·음성 각각 · 턴 10초 미만 무시 · 문장은 고정("○○ 작업이 끝났습니다. 보고를 확인해 주세요" — 답변 본문은 절대 안 읽음; 네 명의 의견 수렴 후 Jev 선택 a 0.69/grounded 0.80) · 한글이 제목/답변에 있으면 한국어, 한국어 음성 없으면 영어 문장으로 폴백 · needs-you는 카드당 60초에 한 번 음성 · 여러 카드가 돈 뒤 5초 정적이면 "모든 카드 작업이 끝났습니다"(마지막 턴이 이미 개별로 알려졌으면 생략).
+
+**알려진 한계**: tap 모드 마이크가 열린 채면 TTS 문장이 받아쓰기에 섞인다(README에 적음) · 알림은 창 포커스와 무관하게 나간다(설정 없음, 단순 유지).

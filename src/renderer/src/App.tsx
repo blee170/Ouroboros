@@ -6,6 +6,7 @@ import { Toolbar } from './panels/Toolbar'
 import { Inspector } from './panels/Inspector'
 import { Roster } from './panels/Roster'
 import { Welcome } from './panels/Welcome'
+import { speak } from './lib/speak'
 
 export default function App() {
   const projectRoot = useBoard((s) => s.projectRoot)
@@ -27,6 +28,7 @@ export default function App() {
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),
+      api.board.onAnnounce(speak),
       api.board.onSetNote((p) => useBoard.getState().updateNodeData(p.nodeId, { note: p.note })),
       api.board.onUpdateNode((p) => {
         const s = useBoard.getState()

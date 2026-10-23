@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
 import type { AppInfo, UpdateStatus } from '@shared/protocol'
 import { EnginesPanel } from './EnginesPanel'
+import { announceSettings } from '@shared/announce'
+import { speak, voiceFor } from '@/lib/speak'
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useBoard((s) => s.settings)
@@ -11,6 +13,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [upd, setUpd] = useState<UpdateStatus | null>(null)
   const [token, setToken] = useState('')
   const [hasToken, setHasToken] = useState(false)
+  const announce = announceSettings(settings)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
       setInfo(i)
@@ -46,6 +49,27 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <label className="row">
           <input type="checkbox" checked={settings.notifications} onChange={(e) => void setSettings({ notifications: e.target.checked })} /> Desktop notifications when an agent needs you
         </label>
+        <div className="block">
+          <div className="muted small">Announcements · when a card finishes a turn of 10 s or more; "needs you" and "all cards have finished" are spoken too</div>
+          <label className="row">
+            Announce
+            <select value={announce.target} onChange={(e) => void setSettings({ announce: e.target.value as 'off' | 'conductor' | 'all' })}>
+              <option value="off">nothing</option>
+              <option value="conductor">Conductor replies</option>
+              <option value="all">every card's replies</option>
+            </select>
+          </label>
+          <label className="row">
+            <input type="checkbox" checked={announce.toast} onChange={(e) => void setSettings({ announceToast: e.target.checked })} /> Desktop toast with the first line of the reply
+          </label>
+          <label className="row">
+            <input type="checkbox" checked={announce.voice} onChange={(e) => void setSettings({ announceVoice: e.target.checked })} /> Speak it with a Windows voice ({voiceFor('ko') ? 'Korean voice installed' : 'no Korean voice: English only'})
+            <button className="btn" onClick={() => speak({ kind: 'finished', title: voiceFor('ko') ? '총괄' : 'Conductor', lang: voiceFor('ko') ? 'ko' : 'en' })}>
+              🔊 Test
+            </button>
+          </label>
+          <div className="muted small">Voice input: in a Claude card type <code>/voice</code> (or <code>/voice tap</code>), then hold or tap Space and speak — Claude Code's own dictation, Korean included, with a claude.ai sign-in.</div>
+        </div>
         <label className="row">
           <input type="checkbox" checked={settings.minimizeToTray} onChange={(e) => void setSettings({ minimizeToTray: e.target.checked })} /> Keep running in tray when the window is closed
         </label>

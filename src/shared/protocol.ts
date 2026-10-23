@@ -321,10 +321,11 @@ export interface OuroborosApi {
   shell: {
     openExternal(url: string): Promise<void>
     /**
-     * Open a file or folder a card wrote about with its default app (Explorer for folders); a relative path
-     * resolves against `cwd`, `~` against the home folder. `reveal` shows it in its folder instead (executables).
+     * Open a file or folder a card wrote about: folders and plain file types with their app, anything that
+     * could run (scripts, installers, shortcuts, unknown types) only revealed in its folder. A relative path
+     * resolves against `cwd`, `~` against the home folder; URLs, UNC and device paths are refused.
      */
-    openPath(path: string, cwd?: string, reveal?: boolean): Promise<{ ok: boolean; path: string; error?: string }>
+    openPath(path: string, cwd?: string): Promise<{ ok: boolean; path: string; error?: string; revealed?: boolean }>
   }
   brief: {
     /** Show a URL in this window's "📄 Briefs" browser card (created on first use). */

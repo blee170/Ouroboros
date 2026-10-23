@@ -54,10 +54,12 @@ function createWindow(ctx: MainContext, projectRoot?: string): WindowSession {
     ctx.windows.remove(session.id)
     session.dispose()
   })
+  // links in rendered replies and notes are agent-written: only the web may open, and only outside this window
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {

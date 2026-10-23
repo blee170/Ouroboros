@@ -38,6 +38,7 @@ import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-h
 import { getChanges, getDiff, revertFile } from './git-changes'
 import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
 import { normalizePath, type SessionRegistry } from './windows'
+import { openMode, resolveOpenPath } from './open-path'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -910,17 +911,18 @@ export function registerIpc(ctx: MainContext): void {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url)
     return undefined
   })
-  // a path out of a card's reply, clicked by the owner: open it where it lives, never run it
-  ipcMain.handle(IPC.shellOpenPath, async (_e, p: string, cwd?: string, reveal?: boolean) => {
-    if (typeof p !== 'string' || !p || /^[a-z][a-z0-9+.-]*:(?![\\/])/i.test(p) || p.includes('\0')) return { ok: false, path: String(p), error: 'Not a path' }
-    const abs = /^~([\\/]|$)/.test(p) ? join(homedir(), p.slice(1)) : isAbsolute(p) ? p : resolve(cwd && isAbsolute(cwd) ? cwd : homedir(), p)
-    if (!existsSync(abs)) return { ok: false, path: abs, error: 'Not found' }
-    if (reveal) {
-      shell.showItemInFolder(abs)
-      return { ok: true, path: abs }
+  // a path out of a card's reply, clicked by the owner: main decides where it resolves and whether it is
+  // opened or only revealed (scripts, installers, shortcuts and unknown types are never run from a click)
+  ipcMain.handle(IPC.shellOpenPath, async (_e, p: unknown, cwd?: unknown) => {
+    const r = resolveOpenPath(p, cwd, homedir())
+    if (!r.ok) return { ok: false, path: String(p), error: r.error }
+    if (!existsSync(r.abs)) return { ok: false, path: r.abs, error: 'Not found' }
+    if (openMode(r.abs, statSync(r.abs).isDirectory()) === 'reveal') {
+      shell.showItemInFolder(r.abs)
+      return { ok: true, path: r.abs, revealed: true }
     }
-    const err = await shell.openPath(abs)
-    return err ? { ok: false, path: abs, error: err } : { ok: true, path: abs }
+    const err = await shell.openPath(r.abs)
+    return err ? { ok: false, path: r.abs, error: err } : { ok: true, path: r.abs }
   })
 
   ipcMain.handle(IPC.settingsGet, () => store.getSettings())

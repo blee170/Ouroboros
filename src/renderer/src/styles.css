@@ -132,6 +132,7 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 .note-body:focus { outline: none; }
 .note-view { overflow: auto; min-height: 0; cursor: text; }
 .note-view:empty::before { content: 'Empty note · double-click to write'; color: var(--muted); }
+.note-status { flex: none; padding: 4px 10px; font-size: 11px; color: var(--muted); background: #16160f; border-top: 1px solid #5b5520; overflow-wrap: anywhere; }
 
 /* Rendered markdown: a card's reply in the Inspector, a note on the canvas */
 .reply { display: flex; flex-direction: column; gap: 8px; }

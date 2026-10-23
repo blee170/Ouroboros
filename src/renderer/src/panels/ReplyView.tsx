@@ -20,15 +20,15 @@ export function ReplyView({ text, cwd, title }: { text: string; cwd?: string; ti
   return (
     <div className="reply">
       <div className="reply-actions">
-        <button className="btn small" onClick={() => (copyText(text), setNote('Copied'))} title="Copy the reply as text">
+        <button className="btn small" onClick={() => void copyText(text).then((ok) => setNote(ok ? 'Copied' : 'Copy failed'))} title="Copy the reply as text">
           <Icon name="copy" size={14} /> Copy
         </button>
-        <button className="btn small" onClick={() => addNode('note', { title: `${title} · reply`, note: text })} title="Put this reply on the canvas as a note card">
+        <button className="btn small" onClick={() => addNode('note', { title: `${title} · reply`, note: text, cwd })} title="Put this reply on the canvas as a note card (its paths open relative to this card's folder)">
           <Icon name="external" size={14} /> Pop out
         </button>
         {note && <span className="muted small">{note}</span>}
       </div>
-      <div className="md" dangerouslySetInnerHTML={{ __html: html }} onClick={(e) => void onMarkdownClick(e, cwd).then((m) => m && setNote(m))} />
+      <div className="md" dangerouslySetInnerHTML={{ __html: html }} onClick={(e) => void onMarkdownClick(e, cwd).then((m) => m && setNote(m), (err: Error) => setNote(err.message))} />
     </div>
   )
 }

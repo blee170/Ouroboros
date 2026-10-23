@@ -8,7 +8,7 @@ import { Marked, type Tokens } from 'marked'
 
 /** A run that may be a path: letters, digits, the characters paths use, both slashes and the drive colon. */
 const CANDIDATE = /[\p{L}\p{N}_.@~%+()\\/:-]+/gu
-const EXECUTABLE = /\.(exe|bat|cmd|ps1|msi|com|scr|vbs|jse?|wsf|lnk|pif|reg)$/i
+const DOMAIN_TAIL = /\.(ai|com|net|org|io|co|kr|dev|app|info|me|us|uk|jp|cn|de|fr|xyz|cloud|sh|gg|tv)$/i
 
 /** Trailing sentence punctuation is not part of the path; a trailing slash is. */
 function trimPath(s: string): string {
@@ -24,7 +24,9 @@ function trimPath(s: string): string {
  * three segments, or a trailing slash. URLs and bare numbers (dates) never.
  */
 export function looksLikePath(s: string): boolean {
-  if (!/[\\/]/.test(s) || s.includes('://') || !/\p{L}/u.test(s)) return false
+  // a bare file name with an extension (CARD.md, package.json) resolves against the card's folder; domains do not count
+  if (!/[\\/]/.test(s)) return /^\.?[\p{L}\p{N}_@()%+-]{2,}(\.[\p{L}\p{N}_-]+)*\.[a-z0-9]{1,6}$/iu.test(s) && !DOMAIN_TAIL.test(s)
+  if (s.includes('://') || !/\p{L}/u.test(s)) return false
   if (/^([A-Za-z]:|~|\.{1,2})[\\/]/.test(s)) return s.length > 3
   if (/^[\\/]/.test(s)) return false // a bare "/foo" on Windows is more often prose than a path
   const segs = s.split(/[\\/]/)
@@ -44,11 +46,6 @@ export function linkifyPaths(escaped: string): string {
   })
 }
 
-/** `true` when a click on this path must reveal it in its folder rather than run it. */
-export function isExecutablePath(p: string): boolean {
-  return EXECUTABLE.test(p)
-}
-
 const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
 const md = new Marked({
@@ -56,7 +53,8 @@ const md = new Marked({
   breaks: true,
   renderer: {
     codespan({ text }: Tokens.Codespan): string {
-      return `<code>${linkifyPaths(text)}</code>`
+      // the token text is raw: escape it here (the default renderer does), then link
+      return `<code>${linkifyPaths(escapeHtml(text))}</code>`
     },
     text(token: Tokens.Text | Tokens.Escape): string {
       if ('tokens' in token && token.tokens) return this.parser.parseInline(token.tokens)

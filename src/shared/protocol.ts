@@ -8,6 +8,7 @@ export const IPC = {
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   ptyKill: 'pty:kill',
+  ptyPasteImage: 'pty:pasteImage',
   claudeLaunch: 'claude:launch',
   boardSync: 'board:sync',
   workspaceLoad: 'workspace:load',
@@ -260,6 +261,11 @@ export interface OuroborosApi {
     write(nodeId: string, data: string): void
     resize(nodeId: string, cols: number, rows: number): void
     kill(nodeId: string): Promise<void>
+    /**
+     * Attach an image file to a Claude Code card's prompt as an [Image #N] chip: the image is put on the
+     * clipboard and the card gets Claude Code's own paste key (Alt+V). Resolves once the chip shows.
+     */
+    pasteImage(nodeId: string, path: string): Promise<{ ok: boolean; error?: string }>
     onData(cb: (nodeId: string, data: string) => void): () => void
     onExit(cb: (nodeId: string, code: number) => void): () => void
   }

@@ -52,10 +52,43 @@ export function Roster() {
     select(id, null)
   }
   const targets = nodes.filter((n) => checked[n.id] && n.data.kind !== 'external')
-  const broadcast = (): void => {
-    if (!text.trim() || !targets.length) return
-    for (const n of targets) typePrompt(n.id, text)
-    setText('')
+  // Screenshots pasted or files dropped into the composer travel with the prompt: a Claude Code card gets an
+  // image as its own [Image #N] chip, every other card (and any non-image file) gets the path typed in.
+  const [files, setFiles] = useState<string[]>([])
+  const [sending, setSending] = useState(false)
+  const quote = (p: string): string => (/[\s"']/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)
+  const isImage = (p: string): boolean => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p)
+  const onComposerPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+    const images = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'))
+    if (!images.length) return
+    e.preventDefault()
+    void Promise.all(images.map(async (f) => window.ouroboros.files.saveImage(new Uint8Array(await f.arrayBuffer()), f.type.split('/')[1] || 'png'))).then((paths) => setFiles((cur) => [...cur, ...paths]))
+  }
+  const onComposerDrop = (e: React.DragEvent<HTMLTextAreaElement>): void => {
+    const paths = [...(e.dataTransfer?.files ?? [])].map((f) => window.ouroboros.files.pathFor(f)).filter(Boolean)
+    if (!paths.length) return
+    e.preventDefault()
+    setFiles((cur) => [...cur, ...paths])
+  }
+  const broadcast = async (): Promise<void> => {
+    if ((!text.trim() && !files.length) || !targets.length || sending) return
+    setSending(true)
+    try {
+      for (const n of targets) {
+        const claude = (n.data.kind === 'claude' || n.data.kind === 'conductor') && (n.data.engine ?? 'claude') === 'claude'
+        const typed: string[] = []
+        for (const p of files) {
+          if (claude && isImage(p) && (await window.ouroboros.pty.pasteImage(n.id, p)).ok) continue
+          typed.push(quote(p))
+        }
+        const prompt = [text.trim(), ...typed].filter(Boolean).join(' ')
+        if (prompt) typePrompt(n.id, prompt)
+      }
+      setText('')
+      setFiles([])
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -98,9 +131,14 @@ export function Roster() {
           ref={inputRef}
           rows={3}
           value={text}
-          placeholder="Type a prompt for all checked agents… ( / lists commands and skills)"
+          placeholder="Type a prompt for all checked agents… ( / lists commands and skills; paste or drop screenshots)"
           onFocus={loadSkills}
           onKeyDown={onComposerKey}
+          onPaste={onComposerPaste}
+          onDrop={onComposerDrop}
+          onDragOver={(e) => {
+            if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+          }}
           onChange={(e) => {
             setText(e.target.value)
             setPick(0)
@@ -118,8 +156,20 @@ export function Roster() {
             ))}
           </ul>
         )}
-        <button className="btn" disabled={!targets.length || !text.trim()} onClick={broadcast}>
-          Send to {targets.length}
+        {files.length > 0 && (
+          <ul className="attach-list">
+            {files.map((p, i) => (
+              <li key={`${p}-${i}`} className="attach" title={p}>
+                {isImage(p) ? '🖼' : '📎'} {p.split(/[\\/]/).pop()}
+                <button className="link" title="Remove" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="btn" disabled={!targets.length || (!text.trim() && !files.length) || sending} onClick={() => void broadcast()}>
+          {sending ? 'Sending…' : `Send to ${targets.length}`}
         </button>
       </div>
     </div>

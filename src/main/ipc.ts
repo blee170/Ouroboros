@@ -1,5 +1,5 @@
-import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
 import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
@@ -829,6 +829,28 @@ export function registerIpc(ctx: MainContext): void {
     return file
   }
   ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => savePasted(bytes, ext))
+  // The Roster composer's screenshots go to a Claude Code card the way Claude Code itself pastes them: the image
+  // on the clipboard, then its paste key (Alt+V = ESC v); the prompt shows "[Image #N]". One card at a time.
+  ipcMain.handle(IPC.ptyPasteImage, async (e, nodeId: string, path: string): Promise<{ ok: boolean; error?: string }> => {
+    const s = sessionOf(e)
+    if (!s || !s.board.nodes.has(nodeId) || !ctx.ptys.isAlive(nodeId)) return { ok: false, error: 'card is not running' }
+    if (!isAbsolute(path) || !existsSync(path)) return { ok: false, error: 'image file not found' }
+    const ext = path.split('.').pop()?.toLowerCase() ?? ''
+    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/png'
+    const chips = (): number => (stripAnsi(s.board.getOutput(nodeId)).match(/\[Image #\d+\]/g) ?? []).length
+    const before = chips()
+    const keepText = (await clipboard.readText()).trim()
+    try {
+      await clipboard.write([new ClipboardItem({ [type]: new Blob([readFileSync(path)], { type }) })])
+    } catch (err) {
+      return { ok: false, error: `clipboard: ${String(err)}` }
+    }
+    ctx.ptys.write(nodeId, '\x1bv')
+    const deadline = Date.now() + 4000
+    while (Date.now() < deadline && chips() <= before) await new Promise((r) => setTimeout(r, 100))
+    if (keepText) await clipboard.writeText(keepText).catch(() => undefined)
+    return chips() > before ? { ok: true } : { ok: false, error: 'the card did not take the image (is Claude Code at its prompt?)' }
+  })
   ipcMain.handle(IPC.skillsList, (_e, cwd: string) => listSkills(typeof cwd === 'string' ? cwd : ''))
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)

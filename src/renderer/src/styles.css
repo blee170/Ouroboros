@@ -195,6 +195,8 @@ body.ouro-dragging webview { pointer-events: none; }
 .roster-group .link.small { margin-left: auto; font-size: 11px; }
 /* slash-command picker under the composer */
 .skill-list { list-style: none; margin: 4px 0; padding: 2px 0; max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+.attach-list { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.attach { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; max-width: 100%; overflow-wrap: anywhere; }
 .skill-item { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; cursor: pointer; font-size: 12px; min-width: 0; }
 .skill-item.active, .skill-item:hover { background: rgba(255,255,255,0.08); }
 .skill-item .name { white-space: nowrap; }

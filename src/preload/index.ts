@@ -66,6 +66,12 @@ const api: OuroborosApi = {
   brief: {
     open: (url) => ipcRenderer.invoke(IPC.briefOpen, url)
   },
+  autonomy: {
+    start: (config) => ipcRenderer.invoke(IPC.autonomyStart, config),
+    stop: () => ipcRenderer.invoke(IPC.autonomyStop),
+    state: () => ipcRenderer.invoke(IPC.autonomyState),
+    onChange: (cb) => on(IPC.autonomyChanged, cb)
+  },
   changes: {
     summary: (cwd) => ipcRenderer.invoke(IPC.changesSummary, cwd),
     diff: (cwd, file) => ipcRenderer.invoke(IPC.changesDiff, cwd, file),

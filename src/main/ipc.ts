@@ -1,11 +1,11 @@
-import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { nanoid } from 'nanoid'
 import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
-import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
+import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady } from '@shared/status'
@@ -39,6 +39,8 @@ import { getChanges, getDiff, revertFile } from './git-changes'
 import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
 import { normalizePath, type SessionRegistry } from './windows'
 import { openMode, resolveOpenPath } from './open-path'
+import { Autonomy, type AutonomyHost } from './autonomy'
+import type { AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -49,6 +51,8 @@ export interface WindowSession {
   /** Project folder this window opened with (command line / "open in new window"). */
   initialProject?: string
   api: ApiHandlers
+  /** This window's Autonomous mode run (off until the owner starts one). */
+  autonomy: Autonomy
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
   readonly projectRoot: string
@@ -302,6 +306,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       }
       // caps are enforced here, not left to the prompt: depth (Conductor → team → worker) and live workers per lead.
       // Checked before an ended twin is replaced, so a refused call changes nothing.
+      const autonomyRefusal = s.autonomy.dispatchRefusal(title, Boolean(twin))
+      if (autonomyRefusal) return { error: autonomyRefusal }
       if (parentId) {
         const refusal = dispatchRefusal(board.snapshot(), parentId, ctx.store.getSettings().maxWorkersPerLead ?? DEFAULT_MAX_WORKERS, pendingCreates.get(parentId) ?? 0)
         if (refusal) return { error: refusal }
@@ -332,7 +338,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           ? undefined
           : {
               appendSystemPrompt: input.role_prompt?.trim() || undefined,
-              permissionMode: input.permission_mode as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
+              // during an autonomous run every new card runs in auto mode (plan stays plan): nobody is there to answer
+              permissionMode: s.autonomy.permissionMode(input.permission_mode) as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
               model: input.model || undefined,
               continue: wantContinue || undefined,
               resume: input.resume || undefined,
@@ -559,6 +566,50 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
   })
 }
 
+/** What an autonomous run may do to this window: restart cards, close them, drop a note, keep the PC awake, tell the owner. */
+function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
+  const board = s.board
+  return {
+    board,
+    agents: () => board.snapshot(),
+    sendPrompt: (id, text) => sendPrompt(ctx, s, id, text),
+    removeCard: (id) => removeCard(ctx, s, id),
+    relaunch: (id, claude) => {
+      const n = board.nodes.get(id)
+      if (n) n.data.claude = claude
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: { claude }, restart: true })
+    },
+    addNote: (title, note) => sendToRenderer(s, IPC.boardAddNode, { id: nanoid(10), width: 600, height: 640, data: { kind: 'note', title, cwd: board.projectRoot, note } } satisfies AddNodePayload),
+    changed: (state) => sendToRenderer(s, IPC.autonomyChanged, state),
+    toast: (title, body) => {
+      if (Notification.isSupported()) {
+        const note = new Notification({ title, body })
+        note.on('click', () => {
+          if (!s.win.isDestroyed()) {
+            s.win.show()
+            s.win.focus()
+          }
+        })
+        note.show()
+      }
+      if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+    },
+    keepAwake: () => {
+      const id = powerSaveBlocker.start('prevent-app-suspension')
+      return () => {
+        if (powerSaveBlocker.isStarted(id)) powerSaveBlocker.stop(id)
+      }
+    },
+    get dir() {
+      return join(app.getPath('userData'), 'autonomy', basename(board.projectRoot || 'no-project').replace(/[^\w.-]+/g, '_'))
+    },
+    evidence: async (cwd) => {
+      const c = await getChanges(cwd)
+      return c.repo ? { branch: c.branch, added: c.added, removed: c.deleted, files: c.files.length } : undefined
+    }
+  }
+}
+
 const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
 
 /** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
@@ -674,12 +725,14 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     board,
     initialProject,
     api: null as unknown as ApiHandlers,
+    autonomy: null as unknown as Autonomy,
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
     get projectRoot() {
       return board.projectRoot
     },
     dispose() {
+      s.autonomy.dispose()
       for (const id of board.nodes.keys()) {
         ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
@@ -689,6 +742,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     }
   }
   s.api = createApiHandlers(ctx, s)
+  s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
   board.on('status', (p: AgentStatusPayload) => {
@@ -789,7 +843,8 @@ export function registerIpc(ctx: MainContext): void {
         nodeId: opts.nodeId,
         kind: opts.kind,
         engine,
-        claude: opts.claude,
+        // during an autonomous run every Claude launch is auto mode (plan stays plan), the owner's own cards included
+        claude: { ...opts.claude, permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'] },
         shell,
         baseUrl: hookServer.baseUrl,
         token: hookServer.token,
@@ -798,7 +853,8 @@ export function registerIpc(ctx: MainContext): void {
         nodeBin: findNodeBinary(),
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
-        title: opts.title
+        title: opts.title,
+        settingsExtra: s.autonomy.settingsFragment()
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env }))
@@ -1007,6 +1063,16 @@ export function registerIpc(ctx: MainContext): void {
     if (s) for (const id of ids) if (await s.api.removeAgent(id)) removed++
     return { removed }
   })
+  ipcMain.handle(IPC.autonomyStart, (e, config: AutonomyConfig) => {
+    const s = sessionOf(e)
+    if (!s) return null
+    const until = Number(config?.until)
+    if (!Number.isFinite(until) || until <= Date.now()) return s.autonomy.public()
+    const clamp = (v: unknown, lo: number, hi: number, d: number): number => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d)
+    return s.autonomy.start({ until, maxDispatches: clamp(config.maxDispatches, 0, 500, 20), maxRetriesPerTitle: clamp(config.maxRetriesPerTitle, 0, 20, 3), stallMinutes: clamp(config.stallMinutes, 0, 240, 10) })
+  })
+  ipcMain.handle(IPC.autonomyStop, (e) => sessionOf(e)?.autonomy.stop('stopped by the owner') ?? null)
+  ipcMain.handle(IPC.autonomyState, (e) => sessionOf(e)?.autonomy.public() ?? null)
   // dispatched cards retire on their own once their report is in (every window, once a minute); owner-made cards never
   setInterval(() => {
     if ((store.getSettings().retireMinutes ?? DEFAULT_RETIRE_MINUTES) <= 0) return

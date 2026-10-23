@@ -7,6 +7,25 @@ describe('buildHookSettings', () => {
     expect(s.hooks.Stop[0].hooks[0].url).toBe('http://127.0.0.1:1234/hook/node1')
     expect(s.hooks.PreToolUse[0].matcher).toBe('*')
     expect(s.hooks.Stop[0].matcher).toBeUndefined()
+    expect(s.hooks.PermissionDenied).toHaveLength(1) // Autonomous mode's report counts denials
+  })
+})
+
+describe('prepareLaunch', () => {
+  it('writes the extra settings (deny rules) beside the hooks', async () => {
+    const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { prepareLaunch } = await import('../src/main/claude-launcher')
+    const tmpDir = mkdtempSync(join(tmpdir(), 'ouro-launch-'))
+    try {
+      const l = prepareLaunch({ nodeId: 'n1', kind: 'claude', claude: {}, shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 't', tmpDir, execPath: 'x', mcpScriptPath: 'm.js', settingsExtra: { permissions: { deny: ['Bash(git push*)'] } } })
+      const written = JSON.parse(readFileSync(l.settingsPath!, 'utf8')) as { hooks: unknown; permissions: { deny: string[] } }
+      expect(written.hooks).toBeTruthy()
+      expect(written.permissions.deny).toEqual(['Bash(git push*)'])
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 })
 

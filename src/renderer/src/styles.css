@@ -79,6 +79,15 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 /* the bar never wraps: secondary buttons go icon-only first, then the state strip drops its words, numbers stay */
 @media (max-width: 1480px) { .toolbar .btn.collapsible .tb-label { display: none; } }
 .btn.saved { color: var(--ok); border-color: var(--ok); }
+/* Autonomous mode: the pill replaces the button while a run is on; never collapsed, it is the one thing to see at a glance */
+.auto-pill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 10px; border-radius: 14px; border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent); font-size: 12px; white-space: nowrap; }
+.auto-pill .parked { border: 1px solid var(--warn); background: transparent; color: var(--warn); border-radius: 10px; padding: 1px 7px; font-size: 11px; cursor: pointer; }
+.auto-pill .icon-btn { color: var(--accent); padding: 2px 4px; }
+.auto-pill .icon-btn:hover { color: var(--danger); }
+.auto-dialog .field .ctl .hint { white-space: normal; flex: 1; min-width: 0; }
+.auto-plan { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
+.auto-plan li { margin: 3px 0; }
+.auto-plan .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 2px; vertical-align: middle; }
 @media (max-width: 1180px) { .toolbar .status-strip .w { display: none; } .toolbar .btn:not(.project-btn) .tb-label { display: none; } .toolbar .status-strip .ended { display: none; } .toolbar .project-btn { max-width: 140px; } }
 /* the window's minimum is 900px: the brand and the project name go before Settings is pushed off */
 @media (max-width: 1040px) { .toolbar .brand { display: none; } .toolbar .project-btn .tb-label { display: none; } }

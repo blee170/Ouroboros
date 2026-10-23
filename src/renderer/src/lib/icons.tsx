@@ -31,8 +31,12 @@ export type IconName =
   | 'check'
   | 'copy'
   | 'pencil'
+  | 'moon'
+  | 'stop'
 
 const PATHS: Record<IconName, string> = {
+  moon: 'M16 12.5A6.5 6.5 0 0 1 7.5 4a6.5 6.5 0 1 0 8.5 8.5z',
+  stop: 'M5 5h10v10H5z',
   check: 'M4 10.5l4 4 8-9',
   copy: 'M7 7h9v9H7zM4 13V4h9',
   pencil: 'M4 16l1-4 8-8 3 3-8 8zM12 5l3 3',

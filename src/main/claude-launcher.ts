@@ -12,6 +12,7 @@ const HOOK_EVENTS = [
   'PostToolUse',
   'PostToolUseFailure',
   'Notification',
+  'PermissionDenied',
   'Stop',
   'StopFailure',
   'SubagentStart',
@@ -153,12 +154,14 @@ export function prepareLaunch(params: {
   claudeBin?: string
   /** Card title → `--name` session display name. */
   title?: string
+  /** More for the card's `--settings` file (Autonomous mode writes its `permissions.deny` rules here). */
+  settingsExtra?: Record<string, unknown>
 }): PreparedLaunch {
   mkdirSync(params.tmpDir, { recursive: true })
   const engine = params.engine ?? 'claude'
   if (engine === 'codex' || engine === 'gemini') return prepareEngineLaunch(engine, params)
   const settingsPath = join(params.tmpDir, `${params.nodeId}.settings.json`)
-  writeFileSync(settingsPath, JSON.stringify(buildHookSettings(params.baseUrl, params.nodeId), null, 2))
+  writeFileSync(settingsPath, JSON.stringify({ ...buildHookSettings(params.baseUrl, params.nodeId), ...(params.settingsExtra ?? {}) }, null, 2))
   let mcpConfigPath: string | undefined
   const claude: ClaudeOptions = { ...params.claude }
   const mcpServers: Record<string, unknown> = { ...(claude.mcpServers ?? {}) }

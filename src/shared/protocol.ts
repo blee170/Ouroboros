@@ -1,5 +1,6 @@
 import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
 import type { AnnouncePayload } from './announce'
+import type { AutonomyConfig, AutonomyPublic } from './autonomy'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -55,7 +56,11 @@ export const IPC = {
   bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
   browserUnregister: 'browser:unregister',
+  autonomyStart: 'autonomy:start',
+  autonomyStop: 'autonomy:stop',
+  autonomyState: 'autonomy:state',
   // main -> renderer (send)
+  autonomyChanged: 'autonomy:changed',
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
   agentStatus: 'agent:status',
@@ -330,6 +335,14 @@ export interface OuroborosApi {
   brief: {
     /** Show a URL in this window's "📄 Briefs" browser card (created on first use). */
     open(url: string): Promise<void>
+  }
+  autonomy: {
+    /** Start a run (keep-awake, deadline, caps, deny rules, parking, report); live Claude cards are relaunched in auto mode. */
+    start(config: AutonomyConfig): Promise<AutonomyPublic | null>
+    /** End the run now: the report lands on the canvas as a note and in the user-data folder. */
+    stop(): Promise<AutonomyPublic | null>
+    state(): Promise<AutonomyPublic | null>
+    onChange(cb: (p: AutonomyPublic) => void): () => void
   }
   changes: {
     summary(cwd: string): Promise<ChangesSummary>

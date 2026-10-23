@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } from '@shared/protocol'
+import type { AutonomyPublic } from '@shared/autonomy'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
@@ -58,7 +59,10 @@ interface BoardState {
   workingSince: Record<string, number>
   /** Positions from before the last ⊞ Arrange, until a card is moved, resized, added or closed. */
   arrangeUndo?: Record<string, { x: number; y: number }>
+  /** This window's Autonomous mode run, as main reports it. */
+  autonomy: AutonomyPublic
   // actions
+  setAutonomy(p: AutonomyPublic): void
   init(): Promise<void>
   openProject(root: string): Promise<void>
   onNodesChange(changes: NodeChange<BoardNode>[]): void
@@ -119,6 +123,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   inspectorOpen: true,
   viewport: undefined,
   workingSince: {},
+  autonomy: { on: false, dispatches: 0, parked: [] },
+  setAutonomy(p) {
+    set({ autonomy: p })
+  },
 
   async init() {
     const settings = await api().settings.get()

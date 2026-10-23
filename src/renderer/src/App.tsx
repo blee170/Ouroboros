@@ -24,7 +24,9 @@ export default function App() {
       if (info.initialProject && !useBoard.getState().projectRoot) void useBoard.getState().openProject(info.initialProject)
     })
     const api = window.ouroboros
+    void api.autonomy.state().then((p) => p && useBoard.getState().setAutonomy(p))
     const offs = [
+      api.autonomy.onChange((p) => useBoard.getState().setAutonomy(p)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),

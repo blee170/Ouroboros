@@ -7,6 +7,12 @@ import { CARD_KINDS, ENGINE_GLYPH, ENGINE_LABEL } from '@/lib/cardKinds'
 import { SettingsDialog } from './SettingsDialog'
 import { BoardBuilder } from './BoardBuilder'
 import { TidyDialog } from './TidyDialog'
+import { AutonomyDialog } from './AutonomyDialog'
+
+const hhmm = (t: number): string => {
+  const d = new Date(t)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -40,6 +46,8 @@ export function Toolbar() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [builderOpen, setBuilderOpen] = useState(false)
   const [tidyOpen, setTidyOpen] = useState(false)
+  const [autoOpen, setAutoOpen] = useState(false)
+  const autonomy = useBoard((s) => s.autonomy)
   // the menu is fixed-positioned under its button: the bar clips its own overflow, so a child dropdown would be cut off
   const [moreOpen, setMoreOpen] = useState<{ left: number; top: number } | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
@@ -176,6 +184,25 @@ export function Toolbar() {
         </div>
       </div>
       <div className="tb-group">
+        {autonomy.on ? (
+          <div className="auto-pill" title={`Autonomous mode until ${hhmm(autonomy.until ?? 0)} · ${autonomy.dispatches}/${autonomy.maxDispatches} new cards · ${autonomy.parked.length} waiting on you${autonomy.parked.length ? ': ' + autonomy.parked.map((p) => p.title).join(', ') : ''}`}>
+            <Icon name="moon" size={14} />
+            <span>until {hhmm(autonomy.until ?? 0)}</span>
+            {autonomy.parked.length > 0 && (
+              <button className="parked" onClick={() => jumpTo('needs-you')} title="Cards parked for you: jump to the first">
+                {autonomy.parked.length} parked
+              </button>
+            )}
+            <button className="icon-btn" onClick={() => void window.ouroboros.autonomy.stop()} title="Stop the autonomous run now (the report lands on the canvas)" aria-label="Stop autonomous mode">
+              <Icon name="stop" size={12} />
+            </button>
+          </div>
+        ) : (
+          <button className="btn collapsible" disabled={!projectRoot} onClick={() => setAutoOpen(true)} title="Autonomous mode: keep the board working while you are away, with rails and a morning report">
+            <Icon name="moon" />
+            <span className="tb-label">Autonomous</span>
+          </button>
+        )}
         <button className={`btn collapsible${justSaved ? ' saved' : ''}`} onClick={persist} disabled={!projectRoot} title={savedAt ? `Saved ${new Date(savedAt).toLocaleTimeString()} · also auto-saved after every change` : 'Save .ouroboros.json now (changes are auto-saved too)'}>
           <Icon name={justSaved ? 'check' : 'save'} />
           <span className="tb-label">{justSaved ? 'Saved' : 'Save'}</span>
@@ -216,6 +243,7 @@ export function Toolbar() {
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {builderOpen && <BoardBuilder onClose={() => setBuilderOpen(false)} />}
       {tidyOpen && <TidyDialog onClose={() => setTidyOpen(false)} />}
+      {autoOpen && <AutonomyDialog onClose={() => setAutoOpen(false)} />}
     </div>
   )
 }

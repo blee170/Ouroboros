@@ -340,8 +340,11 @@ export interface OuroborosApi {
     pathFor(file: File): string
     /** Save pasted image bytes under the app's temp folder; returns the path. */
     saveImage(bytes: Uint8Array, ext: string): Promise<string>
-    /** What Ctrl+V should paste: the clipboard image saved to a file (`path`), else its text. */
-    pasteClipboard(): Promise<{ path?: string; text?: string }>
+    /**
+     * What Ctrl+V should paste: the clipboard text, else its image saved to a file (`path`) — or, with
+     * saveImage=false, just `image: true` so the card can let Claude Code paste the image itself.
+     */
+    pasteClipboard(saveImage?: boolean): Promise<{ path?: string; text?: string; image?: boolean }>
   }
   skills: {
     /** Slash commands a Claude Code card in `cwd` offers (built-ins, user, project, plugins). */

@@ -12,7 +12,7 @@ import { useCardChanges, useSessionUsage } from '@/lib/useCardInfo'
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
   const zoom = useStore((s) => s.transform[2])
-  const handle = useTerminal(id, ref, zoom)
+  const handle = useTerminal(id, ref, zoom, (data.kind === 'claude' || data.kind === 'conductor') && (data.engine ?? 'claude') === 'claude')
   const restartNode = useBoard((s) => s.restartNode)
   const removeNode = useBoard((s) => s.removeNode)
   const updateNodeData = useBoard((s) => s.updateNodeData)

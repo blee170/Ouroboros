@@ -20,9 +20,11 @@ export { BASE_FONT_SIZE }
  * Mounts an xterm.js terminal into `containerRef`, pipes it to the PTY of `nodeId`
  * and keeps the PTY size in sync with the DOM size. Returns the handle once ready.
  */
-export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDivElement | null>, initialZoom = 1): TerminalHandle | null {
+export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDivElement | null>, initialZoom = 1, claudeImagePaste = false): TerminalHandle | null {
   const [handle, setHandle] = useState<TerminalHandle | null>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
+  const claudePasteRef = useRef(claudeImagePaste)
+  claudePasteRef.current = claudeImagePaste
 
   useEffect(() => {
     const el = containerRef.current
@@ -83,11 +85,16 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
         term.clearSelection()
         return false
       }
-      if (e.key.toLowerCase() !== 'v') return true
+      // e.code as well: with a Korean IME active, e.key is not always the Latin letter
+      if (e.key.toLowerCase() !== 'v' && e.code !== 'KeyV') return true
       e.preventDefault()
-      void api.files.pasteClipboard().then((r) => {
-        if (r.path) typePaths([r.path])
-        else if (r.text) term.paste(r.text)
+      // A Claude Code card pastes the image itself (Alt+V = ESC v on Windows): the image becomes an
+      // [Image #N] chip in the prompt instead of a file path the model has to go and read.
+      const claude = claudePasteRef.current
+      void api.files.pasteClipboard(!claude).then((r) => {
+        if (r.text) term.paste(r.text)
+        else if (r.image && claude) api.pty.write(nodeId, '\x1bv')
+        else if (r.path) typePaths([r.path])
       })
       return false
     })

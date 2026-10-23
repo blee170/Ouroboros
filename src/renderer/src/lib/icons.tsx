@@ -6,6 +6,7 @@ import type { SVGProps } from 'react'
  * (open, save, tidy, settings…) is drawn here so the bar is one weight and one colour.
  */
 export type IconName =
+  | 'help'
   | 'folder'
   | 'window'
   | 'plus'
@@ -61,7 +62,8 @@ const PATHS: Record<IconName, string> = {
   down: 'M10 4v12M5 11l5 5 5-5',
   revert: 'M4 7h8a4 4 0 0 1 0 8H9M4 7l3-3M4 7l3 3',
   external: 'M8 4H4v12h12v-4M11 3h6v6M17 3l-8 8',
-  panel: 'M3 4h14v12H3zM12 4v12'
+  panel: 'M3 4h14v12H3zM12 4v12',
+  help: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM7.9 8.2a2.2 2.2 0 0 1 4.3.5c0 1.4-2.2 1.7-2.2 3.1M10 14.6h.01'
 }
 
 export function Icon({ name, size = 16, ...rest }: { name: IconName; size?: number } & SVGProps<SVGSVGElement>) {

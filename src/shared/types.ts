@@ -204,6 +204,8 @@ export interface AppSettings {
   claudeLinksExternal?: boolean
   /** Engine new agent/conductor cards use when none is chosen (claude by default). */
   defaultEngine?: AgentEngine
+  /** The first-run guide (? in the toolbar) was shown once; it opens by itself only while this is unset. */
+  tourSeen?: boolean
   /** Whose finished turns are announced: off | conductor (default) | all agent cards. */
   announce?: 'off' | 'conductor' | 'all'
   /** Desktop toast with the first line of the reply (default on). */

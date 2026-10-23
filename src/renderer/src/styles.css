@@ -88,6 +88,16 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 .auto-plan { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
 .auto-plan li { margin: 3px 0; }
 .auto-plan .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 2px; vertical-align: middle; }
+.help-dialog { width: 560px; }
+.help-steps { margin: 0; padding-left: 22px; font-size: 12.5px; line-height: 1.55; }
+.help-steps li { margin: 6px 0; }
+.help-steps li::marker { color: var(--accent); font-weight: 600; }
+.help-keys { border-collapse: collapse; font-size: 12px; }
+.help-keys td { padding: 3px 12px 3px 0; vertical-align: top; }
+.help-keys kbd { font-family: var(--font-mono); font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.help-links { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
+.help-links .hint { display: inline; margin: 0; }
+.help-dialog .row.right { align-items: center; justify-content: space-between; margin-top: 12px; }
 @media (max-width: 1180px) { .toolbar .status-strip .w { display: none; } .toolbar .btn:not(.project-btn) .tb-label { display: none; } .toolbar .status-strip .ended { display: none; } .toolbar .project-btn { max-width: 140px; } }
 /* the window's minimum is 900px: the brand and the project name go before Settings is pushed off */
 @media (max-width: 1040px) { .toolbar .brand { display: none; } .toolbar .project-btn .tb-label { display: none; } }

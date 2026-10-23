@@ -6,6 +6,8 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Added
+- **First-run guide**: `?` in the toolbar opens a Help dialog with the first hour in seven steps, the shortcuts and links to the tutorial, README and changelog. It opens by itself once, the first time a project is open (`tourSeen` in settings), and from `?` after that.
 - Documentation: this changelog and `docs/TUTORIAL.md`, a first-hour guide.
 
 ## [0.6.0] — 2026-10-24

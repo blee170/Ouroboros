@@ -8,6 +8,7 @@ import { SettingsDialog } from './SettingsDialog'
 import { BoardBuilder } from './BoardBuilder'
 import { TidyDialog } from './TidyDialog'
 import { AutonomyDialog } from './AutonomyDialog'
+import { HelpDialog } from './HelpDialog'
 
 const hhmm = (t: number): string => {
   const d = new Date(t)
@@ -47,7 +48,18 @@ export function Toolbar() {
   const [builderOpen, setBuilderOpen] = useState(false)
   const [tidyOpen, setTidyOpen] = useState(false)
   const [autoOpen, setAutoOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const autonomy = useBoard((s) => s.autonomy)
+  // the first-run guide: once, the first time a project is open with the saved settings in hand (the defaults
+  // alone would show it to everyone on every start before their settings arrived)
+  const tourSeen = useBoard((s) => s.settings.tourSeen)
+  const settingsLoaded = useBoard((s) => s.settingsLoaded)
+  const setSettings = useBoard((s) => s.setSettings)
+  useEffect(() => {
+    if (!projectRoot || !settingsLoaded || tourSeen) return
+    setHelpOpen(true)
+    void setSettings({ tourSeen: true })
+  }, [projectRoot, settingsLoaded, tourSeen, setSettings])
   // the menu is fixed-positioned under its button: the bar clips its own overflow, so a child dropdown would be cut off
   const [moreOpen, setMoreOpen] = useState<{ left: number; top: number } | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
@@ -236,10 +248,14 @@ export function Toolbar() {
             ⬆ {upd.state === 'ready' ? `Restart for v${upd.version}` : upd.state === 'downloading' ? `${upd.percent ?? 0}%` : `v${upd.version} available`}
           </button>
         )}
+        <button className="btn" title="Help: your first hour, shortcuts, the tutorial" aria-label="Help" onClick={() => setHelpOpen(true)}>
+          <Icon name="help" />
+        </button>
         <button className="btn" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}>
           <Icon name="settings" />
         </button>
       </div>
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {builderOpen && <BoardBuilder onClose={() => setBuilderOpen(false)} />}
       {tidyOpen && <TidyDialog onClose={() => setTidyOpen(false)} />}

@@ -50,6 +50,8 @@ interface BoardState {
   nodes: BoardNode[]
   edges: BoardEdge[]
   settings: AppSettings
+  /** false until the saved settings arrived from main: before that `settings` is only the defaults */
+  settingsLoaded: boolean
   selectedNodeId: string | null
   selectedEdgeId: string | null
   rosterOpen: boolean
@@ -117,6 +119,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   nodes: [],
   edges: [],
   settings: DEFAULT_SETTINGS,
+  settingsLoaded: false,
   selectedNodeId: null,
   selectedEdgeId: null,
   rosterOpen: true,
@@ -130,7 +133,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   async init() {
     const settings = await api().settings.get()
-    set({ settings })
+    set({ settings, settingsLoaded: true })
   },
 
   async openProject(root) {

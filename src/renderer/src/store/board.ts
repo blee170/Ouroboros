@@ -5,7 +5,7 @@ import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } 
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
-import { arrangeGrid, defaultSize, placeNew, type Rect } from '@shared/layout'
+import { arrangeBoard, defaultSize, placeNew, type Rect } from '@shared/layout'
 
 export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external' | 'browser'>
 export type BoardEdge = Edge<HandoffEdgeData & { firing?: boolean }, 'handoff'>
@@ -70,7 +70,7 @@ interface BoardState {
   updateNodeData(id: string, patch: Partial<NodeData>): void
   /** Set a card's size (presets, ⤢ button). */
   resizeNode(id: string, width: number, height: number): void
-  /** ⊞: re-flow every card into neat rows (conductors, agents by title, notes, browsers). Undoable until the board changes. */
+  /** ⊞: lay the cards out in lanes along the lines (workers left, Conductor right, briefs and notes beside it). Undoable until the board changes. */
   arrange(): void
   undoArrange(): void
   updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
@@ -214,7 +214,10 @@ export const useBoard = create<BoardState>((set, get) => ({
     const s = get()
     const cards = s.nodes.filter((n) => n.data.kind !== 'external')
     if (!cards.length) return
-    const pos = arrangeGrid(cards.map((n) => ({ id: n.id, kind: n.data.kind, title: n.data.title, width: rectOf(n).width, height: rectOf(n).height })))
+    const pos = arrangeBoard(
+      cards.map((n) => ({ id: n.id, kind: n.data.kind, title: n.data.title, width: rectOf(n).width, height: rectOf(n).height })),
+      s.edges.map((e) => ({ source: e.source, target: e.target }))
+    )
     const before = Object.fromEntries(cards.map((n) => [n.id, { ...n.position }]))
     set({ nodes: s.nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n)), arrangeUndo: before })
     scheduleSync(get)

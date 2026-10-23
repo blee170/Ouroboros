@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GAP, GRID, arrangeGrid, defaultSize, placeNew, type ArrangeInput, type Rect } from '@shared/layout'
+import { GAP, GRID, arrangeBoard, defaultSize, placeNew, type ArrangeInput, type Rect } from '@shared/layout'
 
 const cell = (col: number, row: number): { x: number; y: number } => ({ x: GRID.originX + col * GRID.pitchX, y: GRID.originY + row * GRID.pitchY })
 const card = (col: number, row: number, size = defaultSize('claude')): Rect => ({ ...cell(col, row), ...size })
@@ -43,27 +43,53 @@ describe('placeNew', () => {
   })
 })
 
-describe('arrangeGrid', () => {
-  const c = (id: string, kind: ArrangeInput['kind'], title: string, size = defaultSize(kind)): ArrangeInput => ({ id, kind, title, ...size })
-
-  it('orders conductors, then agents by title, then notes, then browsers, in rows from the origin', () => {
-    const pos = arrangeGrid([c('n', 'note', 'Pipeline'), c('b', 'claude', 'Bravo'), c('w', 'browser', 'Briefs'), c('a', 'claude', 'Alpha'), c('k', 'conductor', 'Conductor'), c('t', 'terminal', 'Shell')])
-    expect(pos.k).toEqual(cell(0, 0))
-    expect(pos.a.x).toBeGreaterThan(pos.k.x)
-    expect(pos.b.x).toBeGreaterThan(pos.a.x)
-    expect(pos.t.x).toBeGreaterThan(pos.b.x)
-    expect(pos.a.y).toBe(pos.k.y)
-    // the fifth card wraps to a second row, which starts below the tallest card of the first
-    expect(pos.n.y).toBeGreaterThanOrEqual(pos.k.y + 400 + GAP)
-    expect(pos.n.x).toBe(GRID.originX)
-    expect(pos.w.x).toBeGreaterThan(pos.n.x)
-  })
-
-  it('never overlaps cards of mixed sizes and is deterministic', () => {
-    const cards = [c('1', 'claude', 'A', { width: 900, height: 700 }), c('2', 'claude', 'B'), c('3', 'claude', 'C', { width: 320, height: 200 }), c('4', 'note', 'N'), c('5', 'browser', 'W'), c('6', 'conductor', 'K', { width: 560, height: 820 }), c('7', 'command', 'Z')]
-    const pos = arrangeGrid(cards)
+describe('arrangeBoard', () => {
+  const c = (id: string, kind: ArrangeInput['kind'], title = id, size = defaultSize(kind)): ArrangeInput => ({ id, kind, title, ...size })
+  const noOverlap = (cards: ArrangeInput[], pos: Record<string, { x: number; y: number }>): void => {
     const rects = cards.map((k) => ({ ...pos[k.id], width: k.width, height: k.height }))
     for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) expect(touches(rects[i], rects[j])).toBe(false)
-    expect(arrangeGrid([...cards].reverse())).toEqual(pos)
+  }
+
+  it('puts the workers left of the Conductor they report to, and the briefs and notes beside the Conductor', () => {
+    const cards = [c('k', 'conductor', 'Conductor', { width: 560, height: 820 }), c('w1', 'claude', 'Implementer'), c('w2', 'claude', 'Reviewer'), c('b', 'browser', '📄 Briefs'), c('n', 'note', 'Pipeline')]
+    const pos = arrangeBoard(cards, [{ source: 'w1', target: 'k' }, { source: 'w2', target: 'k' }])
+    expect(pos.w1.x).toBe(GRID.originX)
+    expect(pos.w2.x).toBe(GRID.originX)
+    expect(pos.w2.y).toBeGreaterThan(pos.w1.y) // a lane fills top to bottom
+    expect(pos.k.x).toBeGreaterThan(pos.w1.x + 560)
+    expect(pos.b.x).toBeGreaterThan(pos.k.x + 560) // briefs right next to the Conductor
+    expect(pos.n.x).toBe(pos.b.x) // notes share the side lane, after the browser cards
+    expect(pos.n.y).toBeGreaterThan(pos.b.y)
+    noOverlap(cards, pos)
+  })
+
+  it('follows a chain of lines lane by lane and survives a loop', () => {
+    const cards = [c('a', 'claude'), c('b', 'claude'), c('d', 'claude'), c('k', 'conductor')]
+    const pos = arrangeBoard(cards, [{ source: 'a', target: 'b' }, { source: 'b', target: 'd' }, { source: 'd', target: 'k' }, { source: 'k', target: 'a' }])
+    expect(pos.a.x).toBeLessThan(pos.b.x)
+    expect(pos.b.x).toBeLessThan(pos.d.x)
+    expect(pos.d.x).toBeLessThan(pos.k.x)
+    noOverlap(cards, pos)
+  })
+
+  it('keeps a lineless Conductor to the right of the agents, and lays a fresh board out without lines', () => {
+    const cards = [c('k', 'conductor'), c('w', 'claude'), c('t', 'terminal')]
+    const pos = arrangeBoard(cards, [])
+    expect(pos.k.x).toBeGreaterThan(pos.w.x)
+    expect(pos.k.x).toBeGreaterThan(pos.t.x)
+    noOverlap(cards, pos)
+    expect(arrangeBoard([c('k', 'conductor')], []).k).toEqual(cell(0, 0))
+  })
+
+  it('fills a big lane as a small grid, never overlaps mixed sizes, and is deterministic', () => {
+    const workers = Array.from({ length: 12 }, (_, i) => c(`w${i}`, 'claude', `Worker ${String(i).padStart(2, '0')}`, { width: 560, height: 300 + (i % 3) * 120 }))
+    const cards = [...workers, c('k', 'conductor', 'Conductor', { width: 900, height: 700 }), c('b', 'browser', 'Briefs'), c('n', 'note', 'Pipeline', { width: 320, height: 200 })]
+    const edges = workers.map((w) => ({ source: w.id, target: 'k' }))
+    const pos = arrangeBoard(cards, edges)
+    const xs = new Set(workers.map((w) => pos[w.id].x))
+    expect(xs.size).toBe(3) // 12 workers → 3 columns × 4 rows
+    expect(Math.max(...workers.map((w) => pos[w.id].x)) + 560).toBeLessThan(pos.k.x)
+    noOverlap(cards, pos)
+    expect(arrangeBoard([...cards].reverse(), [...edges].reverse())).toEqual(pos)
   })
 })

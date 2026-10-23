@@ -11,10 +11,13 @@ const hhmm = (t: number): string => {
 
 /** "HH:MM" today, or tomorrow when that time has passed. */
 function atClock(hhmmText: string, now = Date.now()): number | null {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmmText)
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmmText.trim())
   if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 23 || min > 59) return null
   const d = new Date(now)
-  d.setHours(Number(m[1]), Number(m[2]), 0, 0)
+  d.setHours(h, min, 0, 0)
   if (d.getTime() <= now + 60_000) d.setDate(d.getDate() + 1)
   return d.getTime()
 }
@@ -46,10 +49,15 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
       return
     }
     setBusy(true)
-    const r = await window.ouroboros.autonomy.start({ until: endAt, maxDispatches, maxRetriesPerTitle: DEFAULT_AUTONOMY.maxRetriesPerTitle, stallMinutes })
-    setBusy(false)
-    if (r?.on) onClose()
-    else setError('The run did not start (is the end time in the future?)')
+    try {
+      const r = await window.ouroboros.autonomy.start({ until: endAt, maxDispatches, maxRetriesPerTitle: DEFAULT_AUTONOMY.maxRetriesPerTitle, stallMinutes })
+      if (r?.on) onClose()
+      else setError('The run did not start (is the end time in the future?)')
+    } catch (err) {
+      setError(`The run did not start: ${(err as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -58,7 +66,7 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
         <h3 id="auto-title">
           <Icon name="moon" /> Autonomous mode
         </h3>
-        <div className="hint">The board keeps working while you are away. The app holds the rails: nobody answers for you, nothing leaves this machine, and you come back to a report.</div>
+        <div className="hint">The board keeps working while you are away. The app holds the rails: nobody answers for you, the obvious ways to push, merge, deploy or wipe are denied, and you come back to a report.</div>
         <div className="settings-section">
           <h4>Run</h4>
           <label className="field">
@@ -96,7 +104,8 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
           <ul className="auto-plan">
             {relaunch.map(({ n }) => (
               <li key={n.id}>
-                <span className="dot" style={{ background: 'var(--accent)' }} /> <b>{n.data.title}</b> restarts in auto mode with the deny rules ({n.data.sessionId ? 'same conversation' : '--continue'})
+                <span className="dot" style={{ background: 'var(--accent)' }} /> <b>{n.data.title}</b> restarts in auto mode with the deny rules ({n.data.sessionId || n.data.claude?.resume ? 'same conversation' : n.data.claude?.continue ? '--continue' : 'fresh conversation'})
+                {n.data.status === 'working' ? '; its current turn is cut and it is told to carry on' : ''}
                 {n.data.kind === 'conductor' ? '; it gets the autonomous-mode brief' : ''}
               </li>
             ))}
@@ -113,7 +122,8 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
           <h4>Rails</h4>
           <ul className="auto-plan">
             <li>A card that asks a question, needs a permission or hits an error is <b>parked</b>: never answered for you, listed first in the report. The run ends early once nothing has worked for {IDLE_END_MINUTES} min.</li>
-            <li>Every card launched during the run is denied: git push, merge, reset --hard, branch -D, clean; gh pr merge / workflow run / release; vercel, wrangler deploy, supabase db push, prisma migrate deploy; rm -rf /, ~; editing .ouroboros.json or Claude settings.</li>
+            <li>Every card launched during the run is denied: git push, merge, rebase, reset --hard, branch -D, clean, force-add; gh pr merge / workflow run / release / api; npm publish, docker push, vercel, wrangler, firebase / netlify / fly deploy, terraform apply, supabase db push / reset, prisma migrate deploy / reset; rm -rf /, ~; editing .ouroboros.json, Claude settings or ~/.claude; clicking or typing in the board browser. The rules match the command as typed (git -C, an alias, a wrapper script or a nested shell is not caught), so keep production credentials out of worker folders.</li>
+            <li>During the run only Claude cards can be created, nothing is typed into terminal or command cards, no card answers a parked permission prompt, and a checkpoint restore never moves HEAD.</li>
             <li>The PC stays awake. Stop any time with ■ in the toolbar. The report (waiting on you · every card's branch, diff and last reply · denials · stalls · timeline) lands on the canvas as a note and in the app's data folder.</li>
           </ul>
         </div>

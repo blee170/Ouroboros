@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Board } from '../src/main/board'
 import { Autonomy, type AutonomyHost } from '../src/main/autonomy'
-import { IDLE_END_MINUTES, NUDGE_PROMPT } from '../src/shared/autonomy'
+import { IDLE_END_MINUTES, LIMIT_PROMPT, NUDGE_PROMPT } from '../src/shared/autonomy'
 import type { NodeData } from '../src/shared/types'
 
 const T0 = 1_800_000_000_000
@@ -39,7 +39,8 @@ function setup() {
     now: () => clock
   }
   const auto = new Autonomy(host)
-  return { board, auto, calls, dir, tick: (ms: number) => (clock += ms), host }
+  vi.setSystemTime(clock) // the board stamps lastEventAt with Date.now(): keep it on the run's clock
+  return { board, auto, calls, dir, tick: (ms: number) => vi.setSystemTime((clock += ms)), host }
 }
 
 describe('Autonomy run', () => {
@@ -59,11 +60,35 @@ describe('Autonomy run', () => {
     expect(s.calls.awake).toBe(1)
     expect(s.calls.relaunched.map(([id]) => id).sort()).toEqual(['chief', 'w1'])
     const chief = s.calls.relaunched.find(([id]) => id === 'chief')![1] as Record<string, unknown>
-    expect(chief).toMatchObject({ permissionMode: 'auto', resume: 'sess-1', boardTools: true })
+    expect(chief).toMatchObject({ resume: 'sess-1', boardTools: true })
+    expect(chief).not.toHaveProperty('permissionMode') // forced at launch while the run is on, never written into the card
     const w1 = s.calls.relaunched.find(([id]) => id === 'w1')![1] as Record<string, unknown>
-    expect(w1).toMatchObject({ permissionMode: 'plan', continue: true })
+    expect(w1).toMatchObject({ permissionMode: 'plan' })
+    expect(w1.resume).toBeUndefined()
+    expect(w1.continue).toBeUndefined() // no session id and no earlier --continue: a bare --continue in the project root would clone another conversation
     expect(s.calls.removed).toEqual(['gem'])
     expect(readdirSync(s.dir).some((f) => f.endsWith('.jsonl'))).toBe(true)
+  })
+
+  it('tells a card that was mid-turn at relaunch to carry on once it is back', () => {
+    s.board.setStatus('w1', { status: 'working', statusDetail: 'thinking' })
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('w1', { status: 'idle', statusDetail: 'ready' })
+    vi.advanceTimersByTime(1500)
+    expect(s.calls.prompts.filter(([id]) => id === 'w1')).toHaveLength(1)
+    expect(s.calls.prompts.find(([id]) => id === 'w1')![1]).toMatch(/previous turn was cut/)
+  })
+
+  it('parks a card that never comes up and still ends early with it parked', async () => {
+    s.auto.start({ until: T0 + 10 * 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('w1', { status: 'starting', statusDetail: 'launching claude' })
+    s.board.setStatus('chief', { status: 'done' })
+    s.tick(4 * 60_000)
+    await s.auto.tick()
+    expect(s.auto.public().parked[0]).toMatchObject({ id: 'w1', reason: expect.stringMatching(/failed to start/) })
+    s.tick(IDLE_END_MINUTES * 60_000)
+    await s.auto.tick()
+    expect(s.auto.on).toBe(false)
   })
 
   it('briefs a relaunched Conductor once it is idle again', () => {
@@ -84,12 +109,30 @@ describe('Autonomy run', () => {
     s.board.setStatus('w1', { status: 'working' })
     expect(s.auto.public().parked).toEqual([])
     expect(s.auto.dispatchRefusal('Reviewer', false)).toBeNull()
+    expect(s.auto.public().dispatches).toBe(0) // a check costs nothing until the card exists
+    s.auto.countDispatch('Reviewer', false)
     expect(s.auto.dispatchRefusal('Reviewer', true)).toBeNull()
+    s.auto.countDispatch('Reviewer', true)
     expect(s.auto.dispatchRefusal('Reviewer', true)).toMatch(/dispatch cap/)
     expect(s.auto.public().dispatches).toBe(2)
     expect(s.auto.permissionMode('default')).toBe('auto')
     expect(s.auto.permissionMode('plan')).toBe('plan')
+    expect(s.auto.storedPermissionMode('plan')).toBe('plan')
+    expect(s.auto.storedPermissionMode('bypassPermissions')).toBeUndefined()
+    expect(s.auto.storedPermissionMode('auto')).toBeUndefined()
     expect(s.auto.settingsFragment()).toMatchObject({ permissions: { deny: expect.arrayContaining(['Bash(git push*)']) } })
+  })
+
+  it('refuses prompts to shells and to a parked permission prompt while the run is on, and nothing once it is off', async () => {
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    expect(s.auto.promptRefusal({ kind: 'terminal', status: 'idle' })).toMatch(/terminal or command/)
+    expect(s.auto.promptRefusal({ kind: 'command', status: 'idle' })).toMatch(/terminal or command/)
+    expect(s.auto.promptRefusal({ kind: 'claude', status: 'needs-you', statusDetail: 'permission: Allow Bash?' })).toMatch(/permission prompt/)
+    expect(s.auto.promptRefusal({ kind: 'claude', status: 'needs-you', statusDetail: 'which branch?' })).toBeNull()
+    expect(s.auto.promptRefusal({ kind: 'claude', status: 'working' })).toBeNull()
+    await s.auto.stop('test')
+    expect(s.auto.promptRefusal({ kind: 'terminal', status: 'idle' })).toBeNull()
+    expect(s.auto.storedPermissionMode('bypassPermissions')).toBe('bypassPermissions')
   })
 
   it('nudges a silent worker once, parks it after another silent period, and records denials', async () => {
@@ -98,15 +141,49 @@ describe('Autonomy run', () => {
     s.tick(11 * 60_000)
     await s.auto.tick()
     expect(s.calls.prompts).toContainEqual(['w1', NUDGE_PROMPT])
+    s.board.applyHook('w1', { hook_event_name: 'PermissionDenied', tool_name: 'Bash', tool_input: { command: 'git push origin main' } })
     s.tick(5 * 60_000)
     await s.auto.tick()
     expect(s.auto.public().parked).toEqual([])
     s.tick(6 * 60_000)
     await s.auto.tick()
     expect(s.auto.public().parked[0]).toMatchObject({ id: 'w1', reason: 'stalled: no activity for 20 min' })
-    s.board.applyHook('w1', { hook_event_name: 'PermissionDenied', tool_name: 'Bash', tool_input: { command: 'git push origin main' } })
+    expect(s.auto.on).toBe(false) // nothing else was busy for 20 min: the run ends with the stalled card parked
     const log = readFileSync(readdirSync(s.dir).map((f) => join(s.dir, f)).find((f) => f.endsWith('.jsonl'))!, 'utf8')
     expect(log).toMatch(/"kind":"deny".*git push origin main/)
+  })
+
+  it('lets a card inside a long tool call run three stall periods before the nudge', async () => {
+    s.auto.start({ until: T0 + 10 * 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('w1', { status: 'working', statusDetail: 'tool: Bash' })
+    s.tick(25 * 60_000)
+    await s.auto.tick()
+    expect(s.calls.prompts).toEqual([])
+    s.tick(6 * 60_000)
+    await s.auto.tick()
+    expect(s.calls.prompts).toContainEqual(['w1', NUDGE_PROMPT])
+  })
+
+  it('stops sending the usage-limit continue once the card went on by itself', async () => {
+    s.auto.start({ until: T0 + 10 * 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 0 })
+    s.board.setStatus('w1', { status: 'needs-you', statusDetail: 'error: usage limit' })
+    s.board.applyHook('w1', { hook_event_name: 'StopFailure', message: "You've hit your usage limit · resets at 3pm" })
+    s.tick(16 * 60_000)
+    await s.auto.tick()
+    expect(s.calls.prompts.filter(([, t]) => t === LIMIT_PROMPT)).toHaveLength(1)
+    s.board.setStatus('w1', { status: 'working' })
+    s.tick(16 * 60_000)
+    await s.auto.tick()
+    expect(s.calls.prompts.filter(([, t]) => t === LIMIT_PROMPT)).toHaveLength(1)
+  })
+
+  it('dispose writes the report at once, without waiting for evidence', () => {
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.auto.dispose()
+    expect(s.auto.on).toBe(false)
+    const report = readdirSync(s.dir).find((f) => f.endsWith('.md'))!
+    expect(readFileSync(join(s.dir, report), 'utf8')).toContain('Ended: **window closed**')
+    expect(s.calls.notes).toEqual([])
   })
 
   it('stops at the deadline: releases keep-awake, writes the report, puts it on the canvas as a note', async () => {
@@ -120,7 +197,7 @@ describe('Autonomy run', () => {
     expect(s.calls.notes[0][0]).toBe('Morning report')
     expect(md).toContain('Ended: **deadline reached**')
     expect(md).toContain('**w1** (w1)')
-    expect(md).toContain('branch `main`, +3 −1 in 1 files')
+    expect(md).toContain('branch main, +3 −1 in 1 files')
     expect(s.calls.toasts[0]).toMatch(/^Autonomous run ended: deadline reached\. 1 waiting on you/)
     const report = readdirSync(s.dir).find((f) => f.endsWith('.md'))!
     expect(existsSync(join(s.dir, report))).toBe(true)

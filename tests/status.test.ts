@@ -10,7 +10,7 @@ describe('reduceHook', () => {
     expect(reduceHook('done', { hook_event_name: 'SessionEnd' })?.status).toBe('ended')
   })
   it('turns permission/idle notifications into needs-you and ignores others', () => {
-    expect(reduceHook('working', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Allow Bash?' })).toMatchObject({ status: 'needs-you', statusDetail: 'Allow Bash?' })
+    expect(reduceHook('working', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Allow Bash?' })).toMatchObject({ status: 'needs-you', statusDetail: 'permission: Allow Bash?' })
     expect(reduceHook('working', { hook_event_name: 'Notification', notification_type: 'auth_success' })).toBeNull()
     expect(reduceHook('done', { hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' })?.status).toBe('done')
     expect(reduceHook('idle', { hook_event_name: 'Notification', notification_type: 'idle_prompt' })?.status).toBe('idle')

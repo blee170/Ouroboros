@@ -25,6 +25,8 @@ export const DEFAULT_AUTONOMY: Omit<AutonomyConfig, 'until'> = { maxDispatches: 
 export const IDLE_END_MINUTES = 15
 /** A card paused by a usage limit is told to continue this often. */
 export const LIMIT_RETRY_MINUTES = 15
+/** A relaunched or new card that shows no session after this long never came up (stale --resume id, trust prompt, crash). */
+export const START_GRACE_MINUTES = 3
 
 export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop'
 
@@ -80,34 +82,89 @@ export function newRunState(config: AutonomyConfig, now = Date.now()): RunState 
  * board or its own permission files. Paths outside a worktree are not expressible as a rule; the
  * worktree itself and `git` keep the blast radius.
  */
+/**
+ * Shell command prefixes denied during a run. Claude Code matches a rule against the command as typed
+ * (compound commands split, env prefixes and wrappers like `timeout` stripped), so `git push` is caught
+ * but `git -C x push`, an alias, a script that pushes or a nested `bash -c` is not: these are a guard
+ * against the obvious, not a sandbox.
+ */
+const SHELL_DENY_PREFIXES = [
+  'git push',
+  'git send-pack',
+  'git merge',
+  'git rebase',
+  'git reset --hard',
+  'git branch -D',
+  'git branch -d',
+  'git branch --delete',
+  'git worktree remove',
+  'git worktree prune',
+  'git clean',
+  'git stash drop',
+  'git stash clear',
+  'git tag -d',
+  'git update-ref -d',
+  'git reflog expire',
+  'git gc --prune',
+  'git filter-branch',
+  'git filter-repo',
+  'git add -f',
+  'git add --force',
+  'gh pr merge',
+  'gh workflow run',
+  'gh release',
+  'gh api',
+  'gh repo delete',
+  'gh secret',
+  'gh variable',
+  'npm publish',
+  'pnpm publish',
+  'docker push',
+  'vercel',
+  'npx vercel',
+  'wrangler',
+  'npx wrangler',
+  'firebase deploy',
+  'netlify deploy',
+  'fly deploy',
+  'terraform apply',
+  'supabase db push',
+  'npx supabase db push',
+  'supabase db reset',
+  'npx supabase db reset',
+  'supabase migration up',
+  'npx prisma migrate deploy',
+  'npx prisma migrate reset',
+  'npx prisma db push',
+  'prisma migrate deploy',
+  'prisma migrate reset',
+  'rm -rf /',
+  'rm -rf ~',
+  'rm -fr /',
+  'rm -fr ~'
+]
+
+/** `git -C x push` and `gh -R r pr merge` put options before the subcommand: a second, mid-pattern rule (verified on 2.1.309: it catches those and not `git commit -m "push notes"`). */
+const withOptionsBefore = (p: string): string[] => {
+  const m = /^(git|gh) (.+)$/.exec(p)
+  return m ? [p, `${m[1]} * ${m[2]}`] : [p]
+}
+
 export const WORKER_DENY_RULES: string[] = [
-  'Bash(git push*)',
-  'Bash(git merge*)',
-  'Bash(git reset --hard*)',
-  'Bash(git branch -D*)',
-  'Bash(git branch -d*)',
-  'Bash(git worktree remove*)',
-  'Bash(git clean*)',
-  'Bash(gh pr merge*)',
-  'Bash(gh workflow run*)',
-  'Bash(gh release*)',
-  'Bash(vercel*)',
-  'Bash(wrangler deploy*)',
-  'Bash(npx wrangler deploy*)',
-  'Bash(supabase db push*)',
-  'Bash(npx supabase db push*)',
-  'Bash(supabase migration up*)',
-  'Bash(npx prisma migrate deploy*)',
-  'Bash(npx prisma db push*)',
-  'Bash(rm -rf /*)',
-  'Bash(rm -rf ~*)',
-  'Bash(Remove-Item -Recurse*)',
+  // Claude Code's PowerShell tool has its own rule namespace (the CLI itself writes every rule twice); a run must hold in both
+  ...SHELL_DENY_PREFIXES.flatMap(withOptionsBefore).flatMap((p) => [`Bash(${p}*)`, `PowerShell(${p}*)`]),
+  'PowerShell(Remove-Item * -Recurse*)',
+  'PowerShell(Remove-Item -Recurse*)',
+  'PowerShell(rm * -r*)',
+  // Edit(...) rules cover every file-editing tool (Write included); a Write(...) rule only draws a warning at launch.
+  // Relative patterns are matched from the card's own folder; ~/.claude is the owner's: a planted hook there outlives the night.
   'Edit(**/.ouroboros.json)',
-  'Write(**/.ouroboros.json)',
   'Edit(**/.claude/settings.json)',
-  'Write(**/.claude/settings.json)',
   'Edit(**/.claude/settings.local.json)',
-  'Write(**/.claude/settings.local.json)'
+  'Edit(~/.claude/**)',
+  // the board's browser is the owner's signed-in browser: reading is fine, clicking Merge or Redeploy is not
+  'mcp__ouroboros__browser_click',
+  'mcp__ouroboros__browser_type'
 ]
 
 /** The settings fragment merged into a card's `--settings` file during a run. */
@@ -136,6 +193,7 @@ export type RelaunchAction = 'relaunch' | 'close' | 'keep'
  * terminals and command cards are left alone.
  */
 export function relaunchAction(a: Pick<AgentSnapshot, 'kind' | 'engine' | 'ptyAlive' | 'status'>): RelaunchAction {
+  if (a.status === 'ended') return 'keep' // /exit or a crash inside a live shell is still an ended card
   if (!a.ptyAlive && a.status !== 'starting') return 'keep'
   if (a.kind !== 'claude' && a.kind !== 'conductor') return 'keep'
   return a.engine === 'codex' || a.engine === 'gemini' ? 'close' : 'relaunch'
@@ -146,25 +204,35 @@ export interface StallAction {
   action: 'nudge' | 'park'
 }
 
-/** Working cards silent for a stall period: nudge once; one more silent period after the nudge parks them. */
+/**
+ * Working Claude cards silent for a stall period: nudge once; one more silent period after the nudge parks
+ * them. A card in the middle of a tool call (statusDetail "tool: …", a long build or test run) gets three
+ * periods, and command cards cannot take a nudge at all. Activity after a nudge resets it.
+ */
 export function stallActions(agents: AgentSnapshot[], state: RunState, now: number): StallAction[] {
-  const period = state.config.stallMinutes * 60_000
-  if (period <= 0) return []
+  const base = state.config.stallMinutes * 60_000
+  if (base <= 0) return []
   const out: StallAction[] = []
   for (const a of agents) {
-    if (a.status !== 'working' || state.parked[a.id]) continue
+    if (a.status !== 'working' || state.parked[a.id] || a.kind === 'command' || a.kind === 'terminal') continue
+    const period = /^tool\b/.test(a.statusDetail ?? '') ? 3 * base : base
     const last = a.lastEventAt ?? state.startedAt
     if (now - last < period) continue
     const nudgedAt = state.nudged[a.id]
-    if (nudgedAt === undefined) out.push({ id: a.id, action: 'nudge' })
+    if (nudgedAt === undefined || last > nudgedAt) out.push({ id: a.id, action: 'nudge' })
     else if (now - nudgedAt >= period) out.push({ id: a.id, action: 'park' })
   }
   return out
 }
 
-/** Nothing has been working or starting for IDLE_END_MINUTES: the run has nothing left to do. */
-export function endsEarly(agents: AgentSnapshot[], lastBusyAt: number, now: number): boolean {
-  const busy = agents.some((a) => a.status === 'working' || a.status === 'starting')
+/** Cards still 'starting' with no session event for START_GRACE_MINUTES: the launch never came up. */
+export function staleStarting(agents: AgentSnapshot[], state: RunState, now: number): AgentSnapshot[] {
+  return agents.filter((a) => a.status === 'starting' && !state.parked[a.id] && now - (a.lastEventAt ?? state.startedAt) >= START_GRACE_MINUTES * 60_000)
+}
+
+/** Nothing (parked cards aside) has been working or starting for IDLE_END_MINUTES: the run has nothing left to do. */
+export function endsEarly(agents: AgentSnapshot[], state: Pick<RunState, 'parked'>, lastBusyAt: number, now: number): boolean {
+  const busy = agents.some((a) => !state.parked[a.id] && (a.status === 'working' || a.status === 'starting'))
   return !busy && now - lastBusyAt >= IDLE_END_MINUTES * 60_000
 }
 
@@ -175,6 +243,7 @@ export function isUsageLimit(detail: string | undefined): boolean {
 
 export const NUDGE_PROMPT = 'Autonomous mode check-in: no activity from you for a while. If you are done, end your reply with RESULT: and the markers your role asks for. If you are stuck, say BLOCKED: and why, then stop. Do not wait for the owner; nobody is here until the run ends.'
 export const LIMIT_PROMPT = 'Autonomous mode: the limit may have reset. Continue where you left off; if it is still blocked, say BLOCKED: usage limit and stop.'
+export const RESUME_PROMPT = 'Autonomous mode started and restarted this session in auto mode; your previous turn was cut. Continue the task you were on from where it stands (check the files, do not redo finished work), and end with your report markers as usual.'
 
 export function autonomyBrief(until: number, maxDispatches: number): string {
   const end = new Date(until)
@@ -195,6 +264,12 @@ const hhmm = (t: number): string => {
 }
 const mins = (ms: number): string => `${Math.max(0, Math.round(ms / 60_000))} min`
 const firstLine = (s: string | undefined): string => (s ?? '').split('\n').find((l) => l.trim())?.trim().slice(0, 160) ?? ''
+// titles, reasons and branch names come from cards (a Conductor names cards and can rename them): no card gets to add
+// its own rows, sections or list items to the report
+const oneLine = (s: string | undefined): string => (s ?? '').replace(/[\r\n]+/g, ' ').trim()
+const cell = (s: string | undefined): string => oneLine(s).replace(/\|/g, '\\|')
+/** The last events kept in the report; the JSONL log has every one. */
+const TIMELINE_MAX = 300
 
 export interface CardEvidence {
   branch?: string
@@ -218,7 +293,7 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   const parked = Object.entries(state.parked)
   lines.push('## Waiting on you')
   if (parked.length === 0) lines.push('Nothing. No card asked a question or hit a wall.')
-  else for (const [id, p] of parked) lines.push(`- **${p.title}** (${id}) since ${hhmm(p.at)}: ${p.reason}`)
+  else for (const [id, p] of parked) lines.push(`- **${oneLine(p.title)}** (${id}) since ${hhmm(p.at)}: ${oneLine(p.reason)}`)
   lines.push('')
   lines.push('## Cards')
   lines.push('| Card | Status | Evidence | Last reply |')
@@ -226,23 +301,25 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   for (const a of agents) {
     if (a.kind === 'note' || a.kind === 'browser') continue
     const ev = evidence[a.id]
-    const evidenceText = [ev?.branch ? `branch \`${ev.branch}\`` : '', ev && (ev.added || ev.removed) ? `+${ev.added ?? 0} −${ev.removed ?? 0} in ${ev.files ?? 0} files` : '', ev && !ev.added && !ev.removed ? 'no uncommitted changes' : ''].filter(Boolean).join(', ') || '—'
+    const evidenceText = [ev?.branch ? `branch ${cell(ev.branch)}` : '', ev && ev.files ? `+${ev.added ?? 0} −${ev.removed ?? 0} in ${ev.files} files uncommitted` : '', ev && !ev.files ? 'working tree clean (committed work is on the branch)' : ''].filter(Boolean).join(', ') || '—'
     const parkedMark = state.parked[a.id] ? ' · parked' : ''
-    lines.push(`| ${a.title} | ${a.status}${parkedMark} | ${evidenceText} | ${firstLine(a.lastAssistantMessage).replace(/\|/g, '\\|') || '—'} |`)
+    lines.push(`| ${cell(a.title)} | ${a.status}${parkedMark} | ${evidenceText} | ${cell(firstLine(a.lastAssistantMessage)) || '—'} |`)
   }
   lines.push('')
   const denies = events.filter((e) => e.kind === 'deny')
   const refused = events.filter((e) => e.kind === 'refused')
   const stalls = events.filter((e) => e.kind === 'stall' || e.kind === 'nudge')
   const limits = events.filter((e) => e.kind === 'limit')
+  const who = (e: RunEvent): string => oneLine(e.title ?? e.card)
   lines.push('## Rails')
-  lines.push(`- Denied actions: ${denies.length}${denies.length ? ' — ' + denies.slice(0, 8).map((e) => `${e.title ?? e.card}: ${e.detail ?? ''}`).join('; ') : ''}`)
-  lines.push(`- Refused dispatches: ${refused.length}${refused.length ? ' — ' + refused.slice(0, 5).map((e) => e.detail ?? '').join('; ') : ''}`)
-  lines.push(`- Stalls: ${stalls.length}${stalls.length ? ' — ' + stalls.slice(0, 8).map((e) => `${e.title ?? e.card} ${e.kind} at ${hhmm(e.at)}`).join('; ') : ''}`)
-  lines.push(`- Usage limits: ${limits.length}${limits.length ? ' — ' + limits.slice(0, 5).map((e) => `${e.title ?? e.card} at ${hhmm(e.at)}`).join('; ') : ''}`)
+  lines.push(`- Auto-mode denials (Claude Code's classifier; rule denials are not reported by the CLI): ${denies.length}${denies.length ? ' — ' + denies.slice(0, 8).map((e) => `${who(e)}: ${oneLine(e.detail)}`).join('; ') : ''}`)
+  lines.push(`- Refused dispatches: ${refused.length}${refused.length ? ' — ' + refused.slice(0, 5).map((e) => oneLine(e.detail)).join('; ') : ''}`)
+  lines.push(`- Stalls: ${stalls.length}${stalls.length ? ' — ' + stalls.slice(0, 8).map((e) => `${who(e)} ${e.kind} at ${hhmm(e.at)}`).join('; ') : ''}`)
+  lines.push(`- Usage limits: ${limits.length}${limits.length ? ' — ' + limits.slice(0, 5).map((e) => `${who(e)} at ${hhmm(e.at)}`).join('; ') : ''}`)
   lines.push('')
   lines.push('## Timeline')
-  for (const e of events) lines.push(`- ${hhmm(e.at)} ${e.kind}${e.title ? ` · ${e.title}` : ''}${e.detail ? ` — ${e.detail}` : ''}`)
+  if (events.length > TIMELINE_MAX) lines.push(`_${events.length - TIMELINE_MAX} earlier events are in the log file only._`)
+  for (const e of events.slice(-TIMELINE_MAX)) lines.push(`- ${hhmm(e.at)} ${e.kind}${e.title ? ` · ${oneLine(e.title)}` : ''}${e.detail ? ` — ${oneLine(e.detail)}` : ''}`)
   lines.push('')
   lines.push('_A green status is not success: open the branch and the diff before you trust a card._')
   return lines.join('\n')

@@ -109,6 +109,9 @@ const launchLineLength = new Map<string, number>()
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
   const n = s.board.nodes.get(nodeId)
+  // during an autonomous run a shell is a way around every deny rule: nothing is typed into terminal or command
+  // cards (a line into one is refused too), and a parked permission prompt is never answered by a card
+  if (s.autonomy.on && n && s.autonomy.promptRefusal(n.data)) return false
   if (n?.data.kind === 'command') {
     if (running.has(nodeId)) return false // busy: one command at a time
     const shell = n.data.shell || ctx.store.getSettings().defaultShell || defaultShell()
@@ -306,6 +309,11 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       }
       // caps are enforced here, not left to the prompt: depth (Conductor → team → worker) and live workers per lead.
       // Checked before an ended twin is replaced, so a refused call changes nothing.
+      // autonomous run: Claude cards only. A terminal or command card is a shell past every deny rule; Codex and Gemini
+      // have no deny rules and 'auto' would mean yolo there (an omitted engine means Claude during the run). Then the caps.
+      if (s.autonomy.on && kind !== 'claude') return { error: 'Autonomous mode: no terminal or command cards during a run (a shell has no rails). Use a Claude card.' }
+      const engine = s.autonomy.on ? normalizeEngine(input.engine) : normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine)
+      if (s.autonomy.on && engine) return { error: `Autonomous mode: no ${engine} cards during a run (no deny rules for that engine). Omit the engine or pass engine=claude.` }
       const autonomyRefusal = s.autonomy.dispatchRefusal(title, Boolean(twin))
       if (autonomyRefusal) return { error: autonomyRefusal }
       if (parentId) {
@@ -338,8 +346,9 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           ? undefined
           : {
               appendSystemPrompt: input.role_prompt?.trim() || undefined,
-              // during an autonomous run every new card runs in auto mode (plan stays plan): nobody is there to answer
-              permissionMode: s.autonomy.permissionMode(input.permission_mode) as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
+              // during an autonomous run the launch forces auto mode (plan stays plan) without writing it into the card:
+              // the card keeps its requested mode for after the run, and a requested bypass never comes back then
+              permissionMode: s.autonomy.storedPermissionMode(input.permission_mode) as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
               model: input.model || undefined,
               continue: wantContinue || undefined,
               resume: input.resume || undefined,
@@ -351,7 +360,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         height: 400,
         data: {
           kind,
-          engine: claude ? normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine) : undefined,
+          engine: claude ? engine : undefined,
           title,
           cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
           worktree,
@@ -369,6 +378,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (input.report_to && board.nodes.has(input.report_to)) {
         createHandoffEdge(s, { source: id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
       }
+      s.autonomy.countDispatch(title, Boolean(replaced)) // counted once the card exists: a failed worktree or per-lead cap above costs nothing
       return { id, cwd, worktree: worktree?.path, replaced }
     },
     removeAgent: async (id) => {
@@ -416,6 +426,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const n = board.nodes.get(id)
       if (!n) return null
       const folder = folderOf(board, n)
+      if (moveHead && s.autonomy.on) return { folder, ok: false, error: 'Autonomous mode: move_head is a human gate (it rewinds the branch); restore the files only, or leave it for the owner' }
       const busy = busyIn(ctx, folder)
       if (busy) return { folder, ok: false, error: `"${busy.title}" (${busy.id}) is working or waiting for the owner in that folder; wait for it or stop it first` }
       return { folder, ...(await restoreCheckpoint(folder, checkpointId, { moveHead, cardId: id })) }
@@ -839,6 +850,8 @@ export function registerIpc(ctx: MainContext): void {
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const engine = opts.engine ?? 'claude'
+      // during an autonomous run only Claude launches: the deny rules are Claude settings, and 'auto' would mean yolo elsewhere
+      if (s.autonomy.on && engine !== 'claude') return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -1066,7 +1079,7 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.autonomyStart, (e, config: AutonomyConfig) => {
     const s = sessionOf(e)
     if (!s) return null
-    const until = Number(config?.until)
+    const until = Math.min(Number(config?.until), Date.now() + 36 * 3_600_000) // a run is a night or a day, never a forgotten week
     if (!Number.isFinite(until) || until <= Date.now()) return s.autonomy.public()
     const clamp = (v: unknown, lo: number, hi: number, d: number): number => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d)
     return s.autonomy.start({ until, maxDispatches: clamp(config.maxDispatches, 0, 500, 20), maxRetriesPerTitle: clamp(config.maxRetriesPerTitle, 0, 20, 3), stallMinutes: clamp(config.stallMinutes, 0, 240, 10) })

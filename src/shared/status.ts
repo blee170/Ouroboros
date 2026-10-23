@@ -41,7 +41,9 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): Sta
     case 'Notification': {
       const type = typeof event.notification_type === 'string' ? event.notification_type : ''
       if (NEEDS_YOU_NOTIFICATIONS.has(type)) {
-        return { status: 'needs-you', statusDetail: detailOf(event) ?? type, sessionId }
+        // a permission prompt is marked as such: during an autonomous run no card may answer one
+        const detail = detailOf(event) ?? type
+        return { status: 'needs-you', statusDetail: type === 'permission_prompt' ? `permission: ${detail}` : detail, sessionId }
       }
       // idle_prompt just means "no input for a while": keep Done if it finished, otherwise Idle
       if (type === 'idle_prompt') return { status: prev === 'done' ? 'done' : 'idle', statusDetail: prev === 'done' ? 'finished · idle' : 'idle', sessionId }

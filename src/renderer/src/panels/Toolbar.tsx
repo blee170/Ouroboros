@@ -101,13 +101,13 @@ export function Toolbar() {
     setTimeout(() => void rf.fitView({ duration: 400, padding: 0.08 }), 50)
   }
   // the state strip is the product signal: a click on "need you" jumps to the first such card, the others open the Roster
-  const jumpTo = (...statuses: string[]): void => {
-    const hit = nodes.find((n) => statuses.includes(n.data.status ?? ''))
-    if (hit) {
-      void rf.fitView({ nodes: [{ id: hit.id }], duration: 300, padding: 0.3 })
-      select(hit.id, null)
+  const jumpToNode = (id: string | undefined): void => {
+    if (id && nodes.some((n) => n.id === id)) {
+      void rf.fitView({ nodes: [{ id }], duration: 300, padding: 0.3 })
+      select(id, null)
     } else if (!rosterOpen) toggleRoster()
   }
+  const jumpTo = (...statuses: string[]): void => jumpToNode(nodes.find((n) => statuses.includes(n.data.status ?? ''))?.id)
 
   // A window holds one project: picking another folder while one is open opens it in a new window.
   const pick = async (): Promise<void> => {
@@ -189,7 +189,7 @@ export function Toolbar() {
             <Icon name="moon" size={14} />
             <span>until {hhmm(autonomy.until ?? 0)}</span>
             {autonomy.parked.length > 0 && (
-              <button className="parked" onClick={() => jumpTo('needs-you')} title="Cards parked for you: jump to the first">
+              <button className="parked" onClick={() => jumpToNode(autonomy.parked[0].id)} title="Cards parked for you: jump to the first">
                 {autonomy.parked.length} parked
               </button>
             )}

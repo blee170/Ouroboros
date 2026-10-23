@@ -15,6 +15,14 @@ describe('reduceHook', () => {
     expect(reduceHook('done', { hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' })?.status).toBe('done')
     expect(reduceHook('idle', { hook_event_name: 'Notification', notification_type: 'idle_prompt' })?.status).toBe('idle')
   })
+  it('keeps a card idle or done through an idle compaction, and working through a mid-turn one', () => {
+    // Claude Code compacts while idle ("Compacted while idle, before the prompt cache expired") with no Stop after it
+    expect(reduceHook('done', { hook_event_name: 'PreCompact', trigger: 'auto' })).toBeNull()
+    expect(reduceHook('done', { hook_event_name: 'PostCompact' })).toBeNull()
+    expect(reduceHook('idle', { hook_event_name: 'PreCompact', trigger: 'manual' })).toBeNull()
+    expect(reduceHook('working', { hook_event_name: 'PreCompact' })).toMatchObject({ status: 'working', statusDetail: 'compacting context' })
+    expect(reduceHook('working', { hook_event_name: 'PostCompact' })).toMatchObject({ status: 'working', statusDetail: 'working' })
+  })
   it('ignores unknown events', () => {
     expect(reduceHook('idle', { hook_event_name: 'SomethingNew' })).toBeNull()
   })

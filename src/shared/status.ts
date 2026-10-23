@@ -31,10 +31,13 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): Sta
     case 'PostToolUseFailure':
     case 'SubagentStart':
     case 'SubagentStop':
-    case 'PostCompact':
       return { status: 'working', statusDetail: prev === 'working' ? undefined : 'working', sessionId }
+    // Compaction is not a turn: Claude Code also compacts while idle ("Compacted while idle, before the prompt
+    // cache expired"), and no Stop follows that, so a card that was not working must stay idle/done.
     case 'PreCompact':
-      return { status: 'working', statusDetail: 'compacting context', sessionId }
+      return prev === 'working' ? { status: 'working', statusDetail: 'compacting context', sessionId } : null
+    case 'PostCompact':
+      return prev === 'working' ? { status: 'working', statusDetail: 'working', sessionId } : null
     case 'Notification': {
       const type = typeof event.notification_type === 'string' ? event.notification_type : ''
       if (NEEDS_YOU_NOTIFICATIONS.has(type)) {

@@ -5,6 +5,7 @@ import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } 
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
+import { arrangeGrid, defaultSize, placeNew, type Rect } from '@shared/layout'
 
 export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external' | 'browser'>
 export type BoardEdge = Edge<HandoffEdgeData & { firing?: boolean }, 'handoff'>
@@ -21,6 +22,12 @@ function rfType(kind: NodeKind): BoardNode['type'] {
   if (kind === 'external') return 'external'
   if (kind === 'browser') return 'browser'
   return 'agent'
+}
+
+/** The rectangle a card really takes on the canvas (its measured size once rendered). */
+function rectOf(n: BoardNode): Rect {
+  const d = defaultSize(n.data.kind)
+  return { x: n.position.x, y: n.position.y, width: n.measured?.width ?? n.width ?? d.width, height: n.measured?.height ?? n.height ?? d.height }
 }
 
 function toBoardNode(n: WorkspaceNode): BoardNode {
@@ -49,6 +56,8 @@ interface BoardState {
   viewport?: Viewport
   /** When each card last entered "working" (ms). Runtime only (never synced or saved); drives the line glow. */
   workingSince: Record<string, number>
+  /** Positions from before the last ⊞ Arrange, until the owner moves, adds or closes a card. */
+  arrangeUndo?: Record<string, { x: number; y: number }>
   // actions
   init(): Promise<void>
   openProject(root: string): Promise<void>
@@ -61,6 +70,9 @@ interface BoardState {
   updateNodeData(id: string, patch: Partial<NodeData>): void
   /** Set a card's size (presets, ⤢ button). */
   resizeNode(id: string, width: number, height: number): void
+  /** ⊞: re-flow every card into neat rows (conductors, agents by title, notes, browsers). Undoable until the board changes. */
+  arrange(): void
+  undoArrange(): void
   updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
   removeNode(id: string): Promise<void>
   removeEdge(id: string): void
@@ -123,7 +135,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   onNodesChange(changes) {
-    set({ nodes: applyNodeChanges(changes, get().nodes) })
+    const moved = changes.some((c) => c.type === 'position' || c.type === 'remove')
+    set(moved && get().arrangeUndo ? { nodes: applyNodeChanges(changes, get().nodes), arrangeUndo: undefined } : { nodes: applyNodeChanges(changes, get().nodes) })
     if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) scheduleSync(get)
     else if (changes.some((c) => c.type === 'dimensions')) scheduleSync(get)
   },
@@ -142,10 +155,11 @@ export const useBoard = create<BoardState>((set, get) => ({
     const id = partial.id ?? nanoid(10)
     const s = get()
     const cwd = partial.cwd ?? s.projectRoot
-    const count = s.nodes.filter((n) => n.data.kind !== 'external').length
-    const position = partial.position ?? { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 }
     const isNote = kind === 'note'
     const isBrowser = kind === 'browser'
+    const size = { width: isNote ? 300 : isBrowser ? 640 : 560, height: isNote ? 220 : isBrowser ? 480 : 400 }
+    // the first grid cell nothing overlaps: a closed card frees its cell, a resized one keeps new cards out
+    const position = partial.position ?? placeNew(s.nodes.filter((n) => n.data.kind !== 'external').map(rectOf), size)
     const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : kind === 'command' ? 'Command' : basename(cwd)
     const { position: _p, id: _id, select = true, ...rest } = partial
     const data: NodeData = {
@@ -165,12 +179,11 @@ export const useBoard = create<BoardState>((set, get) => ({
       id,
       type: rfType(kind),
       position,
-      width: isNote ? 300 : isBrowser ? 640 : 560,
-      height: isNote ? 220 : isBrowser ? 480 : 400,
+      ...size,
       dragHandle: '.node-header',
       data
     }
-    set(select ? { nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null } : { nodes: [...s.nodes, node] })
+    set(select ? { nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null, arrangeUndo: undefined } : { nodes: [...s.nodes, node], arrangeUndo: undefined })
     scheduleSync(get)
     return id
   },
@@ -195,6 +208,20 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
   resizeNode(id, width, height) {
     set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, width, height, style: { ...(n.style ?? {}), width, height } } : n)) })
+    scheduleSync(get)
+  },
+  arrange() {
+    const s = get()
+    const cards = s.nodes.filter((n) => n.data.kind !== 'external')
+    const pos = arrangeGrid(cards.map((n) => ({ id: n.id, kind: n.data.kind, title: n.data.title, width: rectOf(n).width, height: rectOf(n).height })))
+    const before = Object.fromEntries(cards.map((n) => [n.id, { ...n.position }]))
+    set({ nodes: s.nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n)), arrangeUndo: before })
+    scheduleSync(get)
+  },
+  undoArrange() {
+    const before = get().arrangeUndo
+    if (!before) return
+    set({ nodes: get().nodes.map((n) => (before[n.id] ? { ...n, position: before[n.id] } : n)), arrangeUndo: undefined })
     scheduleSync(get)
   },
   updateEdgeData(id, patch) {
@@ -302,7 +329,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       set({ nodes: get().nodes.filter((x) => x.id !== id) })
       return
     }
-    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, engine: 'claude', claude: { resume: n.data.sessionId }, position: { x: 80, y: 80 } })
+    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, engine: 'claude', claude: { resume: n.data.sessionId } })
     set({ nodes: get().nodes.filter((x) => x.id !== id) })
   },
 

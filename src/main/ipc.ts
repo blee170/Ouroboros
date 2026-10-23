@@ -2,7 +2,7 @@ import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell, ty
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { nanoid } from 'nanoid'
-import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
@@ -235,10 +235,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         const dup = input.url ? browserShowing(ctx, board, input.url) : undefined
         if (dup) return { id: dup }
         const id = nanoid(10)
-        const count = board.nodes.size
-        const node: WorkspaceNode = {
+        const node: AddNodePayload = {
           id,
-          position: { x: 80 + (count % 4) * 560, y: 80 + Math.floor(count / 4) * 420 },
           width: 640,
           height: 480,
           data: { kind: 'browser', title: input.title || 'Browser', cwd: board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' }
@@ -296,7 +294,6 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         worktree = wt
         cwd = wt.path
       }
-      const count = board.nodes.size
       // Guard: --continue in a folder where a conductor already lives would clone the conductor's own
       // conversation (and re-run whatever it was doing). Start fresh there instead.
       const conductorHere = [...board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
@@ -312,9 +309,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
               resume: input.resume || undefined,
               boardTools: input.board_tools || undefined
             }
-      const node: WorkspaceNode = {
+      const node: AddNodePayload = {
         id,
-        position: { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 },
         width: 560,
         height: 400,
         data: {

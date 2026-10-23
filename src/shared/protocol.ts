@@ -93,6 +93,9 @@ export interface BoardSyncPayload {
   edges: WorkspaceEdge[]
 }
 
+/** A card added by main (Conductor tools, browser_open): without a position the renderer puts it in the first free grid cell. */
+export type AddNodePayload = Omit<WorkspaceNode, 'position'> & { position?: WorkspaceNode['position'] }
+
 export interface AgentStatusPayload {
   nodeId: string
   status: AgentStatus
@@ -266,7 +269,7 @@ export interface OuroborosApi {
     onAgentStatus(cb: (p: AgentStatusPayload) => void): () => void
     onHookEvent(cb: (p: HookEventPayload) => void): () => void
     onHandoffFired(cb: (p: HandoffFiredPayload) => void): () => void
-    onAddNode(cb: (node: WorkspaceNode) => void): () => void
+    onAddNode(cb: (node: AddNodePayload) => void): () => void
     onAddEdge(cb: (edge: WorkspaceEdge) => void): () => void
     onRemoveNode(cb: (nodeId: string) => void): () => void
     onRemoveEdge(cb: (edgeId: string) => void): () => void

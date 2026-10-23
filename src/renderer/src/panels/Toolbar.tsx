@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useReactFlow } from '@xyflow/react'
 import type { UpdateStatus } from '@shared/protocol'
 import { useBoard } from '@/store/board'
 import { SettingsDialog } from './SettingsDialog'
@@ -42,6 +43,14 @@ export function Toolbar() {
   const nodes = useBoard((s) => s.nodes)
   const needs = nodes.filter((n) => n.data.status === 'needs-you').length
   const working = nodes.filter((n) => n.data.status === 'working').length
+  const arrange = useBoard((s) => s.arrange)
+  const undoArrange = useBoard((s) => s.undoArrange)
+  const canUndoArrange = useBoard((s) => Boolean(s.arrangeUndo))
+  const rf = useReactFlow()
+  const arrangeAndFit = (): void => {
+    arrange()
+    setTimeout(() => void rf.fitView({ duration: 400, padding: 0.08 }), 50)
+  }
 
   // A window holds one project: picking another folder while one is open opens it in a new window.
   const pick = async (): Promise<void> => {
@@ -96,6 +105,15 @@ export function Toolbar() {
       <button className="btn" disabled={!projectRoot} title="Close finished or idle cards" onClick={() => setTidyOpen(true)}>
         🧹 Tidy
       </button>
+      {canUndoArrange ? (
+        <button className="btn" title="Put the cards back where they were before Arrange" onClick={undoArrange}>
+          ↶ Undo arrange
+        </button>
+      ) : (
+        <button className="btn" disabled={!projectRoot || nodes.length === 0} title="Line the cards up in rows: conductors, then agents by title, then notes, then browsers" onClick={arrangeAndFit}>
+          ⊞ Arrange
+        </button>
+      )}
       <button className="btn" onClick={toggleRoster}>
         Roster
       </button>

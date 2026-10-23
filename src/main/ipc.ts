@@ -21,8 +21,13 @@ import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
 import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
+
+/** Dispatched cards are retired this long after their report reached the card that made them. */
+const DEFAULT_RETIRE_MINUTES = 5
+/** Live dispatched cards one lead may have at once. */
+const DEFAULT_MAX_WORKERS = 6
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
-import { selectTidyCandidates } from '@shared/tidy'
+import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
 import { logPath } from './diagnostics'
 import { detectEngines } from './engines'
@@ -187,6 +192,8 @@ function busyIn(ctx: MainContext, folder: string): { id: string; title: string }
 export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandlers {
   const board = s.board
   const pendingPrompts = new Map<string, string>()
+  /** lead id → creations still waiting on a worktree; they hold a slot under the lead's cap */
+  const pendingCreates = new Map<string, number>()
   board.on('status', (p: AgentStatusPayload) => {
     const pending = pendingPrompts.get(p.nodeId)
     // a typed role prompt goes first; its (suppressed) Stop brings the card back to idle, then the task
@@ -258,6 +265,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     },
     createAgent: async (input) => {
       const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
+      const parentId = input.created_by && board.nodes.has(input.created_by) ? input.created_by : undefined
       let cwd = input.cwd || board.projectRoot || app.getPath('home')
       const title = input.title || basename(cwd)
       const kind = input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude'
@@ -282,19 +290,36 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           if (input.report_to && board.nodes.has(input.report_to) && !board.edges.some((e) => e.source === twin.id && e.target === input.report_to)) {
             createHandoffEdge(s, { source: twin.id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
           }
+          // a dispatched card taken over by another lead now belongs to that lead; an owner-made card stays the owner's
+          if (parentId && twin.data.parentId && twin.data.parentId !== parentId) {
+            twin.data.parentId = parentId
+            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { parentId }, restart: false })
+          }
           return { id: twin.id, cwd: twin.data.worktree?.path || twin.data.cwd, worktree: twin.data.worktree?.path, reused: true }
         }
-        if (!alive || status === 'ended') {
-          removeCard(ctx, s, twin.id)
-          replaced = twin.id
-        }
+      }
+      // caps are enforced here, not left to the prompt: depth (Conductor → team → worker) and live workers per lead.
+      // Checked before an ended twin is replaced, so a refused call changes nothing.
+      if (parentId) {
+        const refusal = dispatchRefusal(board.snapshot(), parentId, ctx.store.getSettings().maxWorkersPerLead ?? DEFAULT_MAX_WORKERS, pendingCreates.get(parentId) ?? 0)
+        if (refusal) return { error: refusal }
+      }
+      if (twin) {
+        removeCard(ctx, s, twin.id)
+        replaced = twin.id
       }
       const id = nanoid(10)
       let worktree: WorkspaceNode['data']['worktree']
       if (input.worktree) {
-        const wt = await createWorktree(cwd, title)
-        worktree = wt
-        cwd = wt.path
+        // the worktree takes seconds; parallel creates by the same lead count against its cap meanwhile
+        if (parentId) pendingCreates.set(parentId, (pendingCreates.get(parentId) ?? 0) + 1)
+        try {
+          const wt = await createWorktree(cwd, title)
+          worktree = wt
+          cwd = wt.path
+        } finally {
+          if (parentId) pendingCreates.set(parentId, Math.max(0, (pendingCreates.get(parentId) ?? 1) - 1))
+        }
       }
       // Guard: --continue in a folder where a conductor already lives would clone the conductor's own
       // conversation (and re-run whatever it was doing). Start fresh there instead.
@@ -322,7 +347,9 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
           worktree,
           claude,
-          commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined
+          commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined,
+          parentId,
+          createdAt: Date.now()
         }
       }
       if (input.prompt) pendingPrompts.set(id, input.prompt)
@@ -390,14 +417,20 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const folder = folderOf(board, n)
       return { folder, ...(await deleteCheckpoint(folder, checkpointId)) }
     },
-    tidy: async (olderThanMinutes, dryRun) => {
-      // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
-      const protect = new Set<string>()
-      for (const e of board.edges) {
-        const src = board.nodes.get(e.source)
-        if (src?.data.status === 'working') protect.add(e.target)
-      }
-      const candidates = selectTidyCandidates(board.snapshot(), { olderThanMinutes, protect })
+    tidy: async (opts, dryRun) => {
+      const settings = ctx.store.getSettings()
+      const agents = board.snapshot()
+      const lines = board.edges.map((e) => ({ source: e.source, target: e.target, lastFiredAt: e.data.lastFiredAt }))
+      const candidates = selectTidyCandidates(agents, {
+        // a lead asking for its own workers wants the reported ones gone now; the grace is for the unattended run
+        retireMinutes: opts.scope ? 0 : (settings.retireMinutes ?? DEFAULT_RETIRE_MINUTES),
+        olderThanMinutes: opts.olderThanMinutes || settings.autoTidyMinutes || 30,
+        includeOwn: opts.includeOwn,
+        scope: opts.scope,
+        auto: opts.auto,
+        reported: reportedCards(agents, lines),
+        protect: protectedCards(agents, lines)
+      })
       let removed = 0
       if (!dryRun) {
         for (const c of candidates) {
@@ -952,17 +985,17 @@ export function registerIpc(ctx: MainContext): void {
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
   ipcMain.handle(IPC.enginesDetect, () => detectEngines())
-  ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number) => (await sessionOf(e)?.api.tidy(minutes, true))?.candidates ?? [])
+  ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number, includeOwn: boolean) => (await sessionOf(e)?.api.tidy({ olderThanMinutes: minutes, includeOwn }, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
     const s = sessionOf(e)
     let removed = 0
     if (s) for (const id of ids) if (await s.api.removeAgent(id)) removed++
     return { removed }
   })
-  // optional auto-tidy, every window
+  // dispatched cards retire on their own once their report is in (every window, once a minute); owner-made cards never
   setInterval(() => {
-    const minutes = store.getSettings().autoTidyMinutes ?? 0
-    if (minutes > 0) for (const s of ctx.windows.all()) void s.api.tidy(minutes, false)
+    if ((store.getSettings().retireMinutes ?? DEFAULT_RETIRE_MINUTES) <= 0) return
+    for (const s of ctx.windows.all()) void s.api.tidy({ auto: true }, false)
   }, 60_000)
 
   ctx.updater.on('status', (st) => broadcast(ctx, IPC.updateStatus, st))

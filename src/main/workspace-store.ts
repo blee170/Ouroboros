@@ -19,7 +19,7 @@ export function sanitizeWorkspace(ws: Workspace): Workspace {
     projectRoot: ws.projectRoot,
     viewport: ws.viewport,
     nodes: ws.nodes.map((n) => {
-      const { status: _s, statusDetail: _d, lastAssistantMessage: _m, lastEventAt: _t, ptyAlive: _p, ...data } = n.data
+      const { status: _s, statusDetail: _d, lastAssistantMessage: _m, lastEventAt: _t, lastStopAt: _st, endedAt: _e, ptyAlive: _p, ...data } = n.data
       return { id: n.id, position: n.position, width: n.width, height: n.height, data }
     }),
     edges: ws.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { ...e.data } }))

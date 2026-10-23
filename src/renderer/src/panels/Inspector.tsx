@@ -72,6 +72,7 @@ export function Inspector() {
   }
 
   const d = node.data
+  const parentTitle = d.parentId ? nodes.find((n) => n.id === d.parentId)?.data.title : undefined
   const claude: ClaudeOptions = d.claude ?? {}
   const setClaude = (patch: Partial<ClaudeOptions>): void => updateNodeData(nodeId, { claude: { ...claude, ...patch } })
   const pickCwd = async (): Promise<void> => {
@@ -112,6 +113,12 @@ export function Inspector() {
           </label>
           <div className="muted small">Agents drive this card with the browser_* MCP tools (Conductor has them; enable "Board & browser tools" on other Claude cards). Logins persist in the shared browser profile.</div>
         </>
+      )}
+      {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && d.kind !== 'conductor' && (
+        <label className="row" title={d.parentId ? 'Dispatched cards are closed on their own a few minutes after their report reached the card that made them; pin to keep it' : 'Cards you made are never closed automatically; pinning also keeps it out of 🧹 Tidy'}>
+          <input type="checkbox" checked={Boolean(d.keep)} onChange={(e) => updateNodeData(nodeId, { keep: e.target.checked || undefined })} /> 📌 Keep
+          <span className="muted small">{d.parentId ? `dispatched by ${parentTitle ?? 'a card that is gone'}` : 'made by you'}</span>
+        </label>
       )}
       {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <ChangesPanel key={nodeId} nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />}
       {d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external' && <CheckpointsPanel key={nodeId} cwd={d.worktree?.path || d.cwd} />}

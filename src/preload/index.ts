@@ -110,7 +110,7 @@ const api: OuroborosApi = {
     list: (query) => ipcRenderer.invoke(IPC.bookmarksList, query)
   },
   tidy: {
-    candidates: (olderThanMinutes) => ipcRenderer.invoke(IPC.tidyCandidates, olderThanMinutes),
+    candidates: (olderThanMinutes, includeOwn) => ipcRenderer.invoke(IPC.tidyCandidates, olderThanMinutes, includeOwn === true),
     apply: (ids) => ipcRenderer.invoke(IPC.tidyApply, ids)
   },
   update: {

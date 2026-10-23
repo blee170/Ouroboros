@@ -4,6 +4,8 @@ import type { AgentStatusPayload, BoardSyncPayload, ExternalSessionPayload } fro
 import { reduceHook } from '@shared/status'
 
 const OUTPUT_CAP = 200_000
+/** A card made this recently with no process yet is starting (the renderer spawns it), not exited. */
+const STARTING_GRACE_MS = 60_000
 
 export interface NodeMeta {
   id: string
@@ -54,6 +56,8 @@ export class Board extends EventEmitter {
         data.statusDetail = prev.data.statusDetail ?? data.statusDetail
         data.lastAssistantMessage = prev.data.lastAssistantMessage ?? data.lastAssistantMessage
         data.lastEventAt = prev.data.lastEventAt ?? data.lastEventAt
+        data.lastStopAt = prev.data.lastStopAt ?? data.lastStopAt
+        data.endedAt = prev.data.endedAt ?? data.endedAt
         data.sessionId = data.sessionId ?? prev.data.sessionId
       }
       next.set(n.id, { id: n.id, data })
@@ -82,7 +86,11 @@ export class Board extends EventEmitter {
 
   setPtyAlive(nodeId: string, alive: boolean): void {
     if (alive) this.ptyAlive.add(nodeId)
-    else this.ptyAlive.delete(nodeId)
+    else {
+      this.ptyAlive.delete(nodeId)
+      const n = this.nodes.get(nodeId)
+      if (n) n.data.endedAt = Date.now()
+    }
   }
 
   nodeForSession(sessionId: string): string | undefined {
@@ -144,6 +152,9 @@ export class Board extends EventEmitter {
     }
     this.setStatus(nodeId, update)
     if (event.hook_event_name === 'Stop') {
+      // the turn's end, kept apart from lastEventAt: idle_prompt notifications keep moving that one
+      const n = this.nodes.get(nodeId)
+      if (n) n.data.lastStopAt = Date.now()
       this.emit('stop', nodeId, update.lastAssistantMessage ?? '')
     }
   }
@@ -181,12 +192,17 @@ export class Board extends EventEmitter {
         engine: n.data.engine,
         title: n.data.title,
         cwd: n.data.cwd,
-        status: n.data.status ?? (this.ptyAlive.has(n.id) ? 'idle' : 'ended'),
+        // a card whose process has not spawned yet is starting, not exited: the renderer mounts it a moment after main makes it
+        status: n.data.status ?? (this.ptyAlive.has(n.id) ? 'idle' : n.data.createdAt && Date.now() - n.data.createdAt < STARTING_GRACE_MS ? 'starting' : 'ended'),
         statusDetail: n.data.statusDetail,
         sessionId: n.data.sessionId,
         lastAssistantMessage: n.data.lastAssistantMessage,
         lastEventAt: n.data.lastEventAt,
-        ptyAlive: this.ptyAlive.has(n.id)
+        ptyAlive: this.ptyAlive.has(n.id),
+        parentId: n.data.parentId,
+        keep: n.data.keep,
+        lastStopAt: n.data.lastStopAt,
+        endedAt: n.data.endedAt
       })
     }
     return out

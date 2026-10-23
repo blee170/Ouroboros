@@ -173,6 +173,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       // engine: explicit > settings default; claude is stored as undefined
       // engine: an explicit value (including 'claude') wins; otherwise the settings default
       engine: kind === 'claude' || kind === 'conductor' ? normalizeEngine(rest.engine !== undefined ? rest.engine : s.settings.defaultEngine) : undefined,
+      createdAt: rest.createdAt ?? Date.now(),
       launchSeq: 0
     }
     const node: BoardNode = {

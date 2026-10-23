@@ -93,11 +93,21 @@ export interface NodeData {
   sessionId?: string
   /** Conductor cards: the last brief (claude.ai artifact, report URL) they published; the 📄 button reopens it. */
   lastBriefUrl?: string
+  /** The card that dispatched this one with create_agent. Dispatched cards are retired once their report is in; owner-made cards never are. */
+  parentId?: string
+  /** Owner's pin: never retired or tidied, dispatched or not. */
+  keep?: boolean
+  /** When the card was made; a card whose process has not started yet counts as starting, not exited, for a minute. */
+  createdAt?: number
   // --- runtime-only fields (not persisted) ---
   status?: AgentStatus
   statusDetail?: string
   lastAssistantMessage?: string
   lastEventAt?: number
+  /** When the last turn ended (Stop); unlike lastEventAt it does not move on idle notifications. */
+  lastStopAt?: number
+  /** When the process was seen exiting in this app run. */
+  endedAt?: number
   ptyAlive?: boolean
   [key: string]: unknown
 }
@@ -169,6 +179,10 @@ export interface AgentSnapshot {
   lastAssistantMessage?: string
   lastEventAt?: number
   ptyAlive: boolean
+  parentId?: string
+  keep?: boolean
+  lastStopAt?: number
+  endedAt?: number
 }
 
 export interface AppSettings {
@@ -180,8 +194,12 @@ export interface AppSettings {
   browserHome?: string
   /** Optional GitHub token (stored encrypted) for update downloads from a private fork. */
   githubTokenEnc?: string
-  /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
+  /** Legacy (≤ 0.3): idle threshold for auto-tidy; now only the fallback for dispatched cards that never report. */
   autoTidyMinutes?: number
+  /** Dispatched cards are retired this many minutes after their report reached the card that made them (default 5; 0 = never automatically). */
+  retireMinutes?: number
+  /** create_agent refuses when a card already has this many live dispatched cards (default 6). */
+  maxWorkersPerLead?: number
   /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default false: briefs stay on the canvas. */
   claudeLinksExternal?: boolean
   /** Engine new agent/conductor cards use when none is chosen (claude by default). */

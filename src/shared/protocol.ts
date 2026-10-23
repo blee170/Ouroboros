@@ -376,7 +376,8 @@ export interface OuroborosApi {
     list(query?: string): Promise<Array<{ folder: string; title: string; url: string }>>
   }
   tidy: {
-    candidates(olderThanMinutes: number): Promise<Array<{ id: string; title: string; reason: string }>>
+    /** Cards that can be closed: dispatched ones whose job is over; with includeOwn also the owner's own idle cards. */
+    candidates(olderThanMinutes: number, includeOwn?: boolean): Promise<Array<{ id: string; title: string; reason: string }>>
     apply(ids: string[]): Promise<{ removed: number }>
   }
   update: {

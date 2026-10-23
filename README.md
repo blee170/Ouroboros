@@ -72,7 +72,7 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Worktrees** | One git worktree + branch per card with one click (or `worktree=true` from the Conductor). |
 | **Several windows** | One window = one project folder, each with its own board; Conductors never see another window. |
 | **Roster** | Grouped like Claude Code's Agent View (Needs you / Ready to review / Working / Idle / Ended), multi-select broadcast. Typing `/` in the composer lists the commands and skills the cards offer (built-ins, `~/.claude`, the project, installed plugins as `plugin:name`); ↑↓ and Tab complete. |
-| **Tidy** | Close exited or long-idle cards (dialog, optional auto-tidy, `tidy_board`). |
+| **Tidy** | Cards a Conductor or team dispatches are retired on their own 5 minutes after their report reaches the card that made them (idle time is only the fallback for cards with no report line; a crashed card waits the same 5 minutes so you can read it); nothing is retired while the card that made it, or a card wired to it, is mid-turn. Cards you made yourself are never closed automatically, and 📌 Keep pins any card. 🧹 Tidy lists what would go (your own cards only when asked); `tidy_board` lets a team close its own workers, never another team's. A lead may have 6 live dispatched cards at once and the chain goes no deeper than Conductor → team → worker — `create_agent` refuses with the reason (`retireMinutes`, `maxWorkersPerLead` in `settings.json`). |
 | **Placement** | New cards (yours or the Conductor's) take the first free cell of the grid, never a cell another card covers. ⊞ Arrange lays the board out along its lines: cards nobody feeds on the left, the cards they report to (the Conductor) to their right, and the briefs and notes in a lane beside the Conductor, so lines run left to right; ↶ puts everything back until you move something. |
 | **Screenshots in** | Ctrl+V a screenshot into a Claude card and Claude Code attaches it as an `[Image #1]` chip, exactly as in the desktop app (Alt+V does the same). In terminal, command, Codex and Gemini cards the image is saved and its path typed; dropped files are typed as paths everywhere. The Roster composer takes screenshots and files too (paste or drop; chips under the box) and sends them the same way to every checked card. |
 | **External sessions** | Claude Code sessions started elsewhere (e.g. the Claude desktop app) appear as cards in the window of the project they run in (never in another project's window) and can be pulled into the canvas via `--resume`. |
@@ -197,7 +197,7 @@ Linux builds (`npm run dist:linux`) are used for the automated tests; macOS is u
 3. **Draw lines** from a card's right port to another's left port; set mode, condition and template in the Inspector.
 4. **Conduct**: put a Conductor in the middle and give it the goal. It creates and wires what it needs, runs the stages, relays questions and reports. Or press **✨ Build board** to generate a starting board from your folder and Claude Code history.
 5. **Review**: click a card's `+n −m` badge to see its diff, revert files or ask it to review itself. Use the Roster to see what needs you.
-6. **Clean up**: 🧹 Tidy closes finished cards (or enable auto-tidy); ⊞ Arrange lines the rest up.
+6. **Clean up**: dispatched cards retire themselves once their report is in; 🧹 Tidy for the rest; ⊞ Arrange lines the board up.
 7. **Hands-free**: leave the window; the Conductor's finished turns are announced (⚙ Announcements). To talk instead of type, run `/voice` in a Claude card and hold Space (set `language` to Korean in Claude Code's `/config` for Korean dictation). In tap mode the microphone stays open until you tap again, so an announcement spoken meanwhile is dictated too — hold mode or ⚙ voice off avoids that.
 
 ## Settings
@@ -209,7 +209,7 @@ Linux builds (`npm run dist:linux`) are used for the automated tests; macOS is u
 - Keep running in the tray when the last window is closed.
 - Track Claude Code sessions started outside Ouroboros (writes one HTTP hook into `~/.claude/settings.json`; needs port 47821 free).
 - Open claude.ai briefs in the system browser instead of a browser card (off by default; turn it on only if claude.ai refuses to sign in inside the card — the card's ↗ button opens any page outside too).
-- Default shell, browser home page, auto-tidy minutes.
+- Default shell, browser home page; auto-retire minutes and the live-worker cap live in the 🧹 Tidy dialog and `settings.json` (`retireMinutes`, `maxWorkersPerLead`).
 - Updates: *Check for updates*. The repository is public, so no token is needed; the token field remains for private forks (stored encrypted with Electron's `safeStorage`).
 
 ## Security and privacy

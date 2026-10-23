@@ -18,6 +18,7 @@ export const IPC = {
   dialogFolder: 'dialog:folder',
   windowOpen: 'window:open',
   shellOpenExternal: 'shell:openExternal',
+  shellOpenPath: 'shell:openPath',
   briefOpen: 'brief:open',
   filesSaveImage: 'files:saveImage',
   filesPasteClipboard: 'files:pasteClipboard',
@@ -319,6 +320,11 @@ export interface OuroborosApi {
   }
   shell: {
     openExternal(url: string): Promise<void>
+    /**
+     * Open a file or folder a card wrote about with its default app (Explorer for folders); a relative path
+     * resolves against `cwd`, `~` against the home folder. `reveal` shows it in its folder instead (executables).
+     */
+    openPath(path: string, cwd?: string, reveal?: boolean): Promise<{ ok: boolean; path: string; error?: string }>
   }
   brief: {
     /** Show a URL in this window's "📄 Briefs" browser card (created on first use). */

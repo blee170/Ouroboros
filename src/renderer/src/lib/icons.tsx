@@ -29,9 +29,13 @@ export type IconName =
   | 'external'
   | 'panel'
   | 'check'
+  | 'copy'
+  | 'pencil'
 
 const PATHS: Record<IconName, string> = {
   check: 'M4 10.5l4 4 8-9',
+  copy: 'M7 7h9v9H7zM4 13V4h9',
+  pencil: 'M4 16l1-4 8-8 3 3-8 8zM12 5l3 3',
   folder: 'M3 5.5A1.5 1.5 0 0 1 4.5 4h3l1.5 1.5h6.5A1.5 1.5 0 0 1 17 7v5.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 12.5z',
   window: 'M3 6h9v8H3zM7 6V4.5A1.5 1.5 0 0 1 8.5 3H16a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-3',
   plus: 'M10 4v12M4 10h12',

@@ -5,6 +5,7 @@ import { MCP_PRESETS, normalizeEngine, type ClaudeOptions, type McpServerSpec } 
 import { Icon } from '@/lib/icons'
 import { ChangesPanel } from './ChangesPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
+import { ReplyView } from './ReplyView'
 
 /** A titled group of fields; the same grammar as the Settings dialog. */
 function Section({ title, first, children, hint }: { title: string; first?: boolean; hint?: string; children: ReactNode }) {
@@ -370,7 +371,7 @@ export function Inspector() {
 
       {d.lastAssistantMessage && (
         <Section title="Last reply">
-          <div className="small clamp-6">{d.lastAssistantMessage}</div>
+          <ReplyView text={d.lastAssistantMessage} cwd={d.cwd} title={d.title} />
         </Section>
       )}
     </div>

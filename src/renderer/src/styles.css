@@ -54,7 +54,6 @@ button { font: inherit; color: inherit; }
 .small { font-size: 12px; }
 .mono { font-family: var(--font-mono); }
 .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.clamp-6 { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
 input.text, textarea, select { width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px; font: inherit; transition: border-color var(--t); }
 input.text:focus, textarea:focus, select:focus { border-color: var(--accent); outline: none; }
 textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
@@ -131,6 +130,35 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 .note-node.selected { border-color: #facc15; }
 .note-body { flex: 1; resize: none; border: none; border-radius: 0; background: #16160f; color: #f3e9b0; padding: 10px; font-family: var(--font-ui); font-size: 13px; }
 .note-body:focus { outline: none; }
+.note-view { overflow: auto; min-height: 0; cursor: text; }
+.note-view:empty::before { content: 'Empty note · double-click to write'; color: var(--muted); }
+
+/* Rendered markdown: a card's reply in the Inspector, a note on the canvas */
+.reply { display: flex; flex-direction: column; gap: 8px; }
+.reply-actions { display: flex; align-items: center; gap: 6px; }
+.reply .md { max-height: 50vh; overflow: auto; font-size: 12.5px; }
+.md { line-height: 1.5; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 0 0 8px; }
+.md h1, .md h2, .md h3, .md h4 { margin: 12px 0 6px; font-size: 13px; font-weight: 700; }
+.md h1 { font-size: 15px; }
+.md h2 { font-size: 14px; }
+.md ul, .md ol { padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md code { font-family: var(--font-mono); font-size: 11.5px; background: var(--panel-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
+.md pre { background: var(--panel-3); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; overflow: auto; }
+.md pre code { background: none; border: none; padding: 0; white-space: pre; }
+.md table { border-collapse: collapse; display: block; max-width: 100%; overflow: auto; font-size: 12px; }
+.md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; white-space: nowrap; }
+.md th { background: var(--panel-3); font-weight: 600; }
+.md blockquote { border-left: 3px solid var(--border); margin-left: 0; padding-left: 10px; color: var(--muted); }
+.md a { color: var(--accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md a.path { color: inherit; border-bottom: 1px dotted var(--accent); cursor: pointer; }
+.md a.path:hover { color: var(--accent); text-decoration: none; }
+.md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.md img { max-width: 100%; }
 .external-node { border-style: dashed; }
 .external-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow: auto; }
 .external-body .btn { flex: none; }

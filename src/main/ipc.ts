@@ -1,6 +1,7 @@
 import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { nanoid } from 'nanoid'
 import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
@@ -908,6 +909,18 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.shellOpenExternal, (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url)
     return undefined
+  })
+  // a path out of a card's reply, clicked by the owner: open it where it lives, never run it
+  ipcMain.handle(IPC.shellOpenPath, async (_e, p: string, cwd?: string, reveal?: boolean) => {
+    if (typeof p !== 'string' || !p || /^[a-z][a-z0-9+.-]*:(?![\\/])/i.test(p) || p.includes('\0')) return { ok: false, path: String(p), error: 'Not a path' }
+    const abs = /^~([\\/]|$)/.test(p) ? join(homedir(), p.slice(1)) : isAbsolute(p) ? p : resolve(cwd && isAbsolute(cwd) ? cwd : homedir(), p)
+    if (!existsSync(abs)) return { ok: false, path: abs, error: 'Not found' }
+    if (reveal) {
+      shell.showItemInFolder(abs)
+      return { ok: true, path: abs }
+    }
+    const err = await shell.openPath(abs)
+    return err ? { ok: false, path: abs, error: err } : { ok: true, path: abs }
   })
 
   ipcMain.handle(IPC.settingsGet, () => store.getSettings())

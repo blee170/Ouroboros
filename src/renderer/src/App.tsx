@@ -71,8 +71,16 @@ export default function App() {
           {projectRoot ? <Canvas /> : <Welcome />}
           {projectRoot && (rosterOpen || inspectorOpen) && (
             <aside className="side">
-              {rosterOpen && <Roster />}
-              {inspectorOpen && <Inspector />}
+              {rosterOpen && (
+                <div className={`side-roster${inspectorOpen ? '' : ' alone'}`}>
+                  <Roster />
+                </div>
+              )}
+              {inspectorOpen && (
+                <div className="side-inspector">
+                  <Inspector />
+                </div>
+              )}
             </aside>
           )}
         </div>

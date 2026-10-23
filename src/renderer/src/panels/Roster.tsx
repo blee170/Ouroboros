@@ -5,14 +5,18 @@ import type { SkillEntry } from '@shared/protocol'
 import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
 import { typePrompt } from '@/lib/typePrompt'
 import { ROSTER_GROUPS, rosterOrder } from '@/lib/rosterOrder'
+import { Icon } from '@/lib/icons'
 
+/** Every card by state, and a composer that sends one prompt to the checked ones. The list scrolls; the composer stays. */
 export function Roster() {
   const allNodes = useBoard((s) => s.nodes)
   const nodes = useMemo(() => rosterOrder(allNodes), [allNodes])
   const ordered = nodes
   const select = useBoard((s) => s.select)
+  const selectedId = useBoard((s) => s.selectedNodeId)
   const rf = useReactFlow()
   const [checked, setChecked] = useState<Record<string, boolean>>({})
+  const [collapsed, setCollapsed] = useState(false)
   const [text, setText] = useState('')
   const projectRoot = useBoard((s) => s.projectRoot)
   // slash-command picker, like Claude Code's own: "/" at the start lists the commands and skills a card offers
@@ -93,45 +97,58 @@ export function Roster() {
 
   return (
     <div className="panel roster">
-      <h3>Roster</h3>
-      {nodes.length === 0 && <div className="muted small">No agents yet.</div>}
-      <ul className="roster-list">
-        {ROSTER_GROUPS.map((g) => {
-          const members = nodes.filter((n) => g.statuses.includes(n.data.status ?? 'starting'))
-          if (!members.length) return null
-          return [
-            <li key={`h-${g.label}`} className="roster-group">
-              <span>{g.label}</span>
-              <span className="muted small">{members.length}</span>
-              <button className="link small" title="Check all in this group" onClick={() => setChecked({ ...checked, ...Object.fromEntries(members.filter((m) => m.data.kind !== 'external').map((m) => [m.id, true])) })}>
-                select
-              </button>
-            </li>,
-            ...members.map((n) => {
-          const st = n.data.status ?? 'starting'
-          return (
-            <li key={n.id} className={`roster-item status-${st}`}>
-              <input type="checkbox" disabled={n.data.kind === 'external'} checked={Boolean(checked[n.id])} onChange={(e) => setChecked({ ...checked, [n.id]: e.target.checked })} />
-              <button className="roster-main" onClick={() => focus(n.id)}>
-                <span className="status-dot" style={{ background: STATUS_COLOR[st] }} />
-                <span className="title">{n.data.title}</span>
-                {ordered.indexOf(n) < 9 && <kbd className="hotkey">Ctrl+{ordered.indexOf(n) + 1}</kbd>}
-                <span className="muted small">{STATUS_LABEL[st]}{n.data.statusDetail ? ` · ${n.data.statusDetail}` : ''}</span>
-                {n.data.lastAssistantMessage && <span className="small clamp">{n.data.lastAssistantMessage}</span>}
-              </button>
-            </li>
-          )
-            })
-          ]
-        })}
-      </ul>
-      <div className="block">
-        <div className="muted small">Send to {targets.length} checked card{targets.length === 1 ? '' : 's'} (Ctrl+1…9 focuses cards, Ctrl+F finds one by title)</div>
+      <h3>
+        Roster <span className="count">{nodes.length}</span>
+        <button className="icon-btn" title={collapsed ? 'Show the list' : 'Hide the list (the prompt box stays)'} aria-expanded={!collapsed} onClick={() => setCollapsed((v) => !v)}>
+          <Icon name="chevron" size={14} style={{ transform: collapsed ? 'rotate(-90deg)' : 'none', transition: 'transform 150ms' }} />
+        </button>
+      </h3>
+      {!collapsed && (
+        <div className="roster-scroll">
+          {nodes.length === 0 && <div className="muted small">No cards yet. Add one from the toolbar or right-click the canvas.</div>}
+          <ul className="roster-list">
+            {ROSTER_GROUPS.map((g) => {
+              const members = nodes.filter((n) => g.statuses.includes(n.data.status ?? 'starting'))
+              if (!members.length) return null
+              return [
+                <li key={`h-${g.label}`} className="roster-group">
+                  <span>{g.label}</span>
+                  <span className="muted small">{members.length}</span>
+                  <button className="link small" title="Check all in this group" onClick={() => setChecked({ ...checked, ...Object.fromEntries(members.filter((m) => m.data.kind !== 'external').map((m) => [m.id, true])) })}>
+                    select
+                  </button>
+                </li>,
+                ...members.map((n) => {
+                  const st = n.data.status ?? 'starting'
+                  const idx = ordered.indexOf(n)
+                  return (
+                    <li key={n.id} className={`roster-item status-${st}${n.id === selectedId ? ' selected' : ''}`}>
+                      <input type="checkbox" disabled={n.data.kind === 'external'} checked={Boolean(checked[n.id])} onChange={(e) => setChecked({ ...checked, [n.id]: e.target.checked })} aria-label={`Send to ${n.data.title}`} />
+                      <button className="roster-main" onClick={() => focus(n.id)}>
+                        <span className="status-dot" style={{ background: STATUS_COLOR[st] }} />
+                        <span className="title">{n.data.title}</span>
+                        {idx < 9 && <kbd className="hotkey">Ctrl+{idx + 1}</kbd>}
+                        <span className="muted small">
+                          {STATUS_LABEL[st]}
+                          {n.data.statusDetail ? ` · ${n.data.statusDetail}` : ''}
+                        </span>
+                        {n.data.lastAssistantMessage && <span className="small clamp">{n.data.lastAssistantMessage}</span>}
+                      </button>
+                    </li>
+                  )
+                })
+              ]
+            })}
+          </ul>
+        </div>
+      )}
+      <div className="composer">
+        <div className="muted small">Send to {targets.length} checked card{targets.length === 1 ? '' : 's'} · Ctrl+1…9 focuses a card, Ctrl+F finds one by title</div>
         <textarea
           ref={inputRef}
           rows={3}
           value={text}
-          placeholder="Type a prompt for all checked agents… ( / lists commands and skills; paste or drop screenshots)"
+          placeholder="Prompt for every checked card… ( / lists commands and skills; paste or drop screenshots)"
           onFocus={loadSkills}
           onKeyDown={onComposerKey}
           onPaste={onComposerPaste}
@@ -160,9 +177,9 @@ export function Roster() {
           <ul className="attach-list">
             {files.map((p, i) => (
               <li key={`${p}-${i}`} className="attach" title={p}>
-                {isImage(p) ? '🖼' : '📎'} {p.split(/[\\/]/).pop()}
-                <button className="link" title="Remove" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
-                  ✕
+                <Icon name={isImage(p) ? 'image' : 'clip'} size={14} /> {p.split(/[\\/]/).pop()}
+                <button className="icon-btn" title="Remove" aria-label="Remove attachment" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
+                  <Icon name="close" size={12} />
                 </button>
               </li>
             ))}

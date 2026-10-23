@@ -117,8 +117,8 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         minWidth={360}
         minHeight={240}
         isVisible={selected}
-        lineStyle={{ borderColor: '#38bdf8' }}
-        handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }}
+        lineStyle={{ borderColor: 'var(--accent)' }}
+        handleStyle={{ background: 'var(--accent)', width: 14, height: 14, borderRadius: 3 }}
         onResizeStart={() => setDragShield(true)}
         onResizeEnd={() => setDragShield(false)}
       />

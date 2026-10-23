@@ -8,6 +8,7 @@ import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
 import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
 import { useCardChanges, useSessionUsage } from '@/lib/useCardInfo'
+import { Icon } from '@/lib/icons'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
@@ -80,8 +81,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
 
   const color = STATUS_COLOR[status]
   return (
-    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}`} style={{ borderColor: selected ? '#38bdf8' : color }}>
-      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
+    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}`} style={{ borderColor: selected ? 'var(--accent)' : color }}>
+      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: 'var(--accent)' }} handleStyle={{ background: 'var(--accent)', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <Handle type="target" position={Position.Left} className="port port-in" />
       <Handle type="source" position={Position.Right} className="port port-out" />
       <div className="node-header">
@@ -121,8 +122,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           </span>
         )}
         {data.lastBriefUrl && (
-          <button className="icon-btn nodrag" title={`Open the latest brief in the 📄 Briefs card\n${data.lastBriefUrl}`} onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
-            📄
+          <button className="icon-btn nodrag" title={`Open the latest brief in the Briefs card\n${data.lastBriefUrl}`} aria-label="Open the latest brief" onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
+            <Icon name="brief" size={14} />
           </button>
         )}
         {changes && changes.repo && changes.files.length > 0 && (
@@ -130,11 +131,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span className="add">+{changes.added}</span> <span className="del">−{changes.deleted}</span>
           </button>
         )}
-        <button className="icon-btn nodrag" title="Restart" onClick={() => void restartNode(id)}>
-          ↻
+        <button className="icon-btn nodrag" title="Restart" aria-label="Restart" onClick={() => void restartNode(id)}>
+          <Icon name="refresh" size={14} />
         </button>
-        <button className="icon-btn nodrag" title="Close" onClick={() => void removeNode(id)}>
-          ✕
+        <button className="icon-btn nodrag" title="Close" aria-label="Close card" onClick={() => void removeNode(id)}>
+          <Icon name="close" size={14} />
         </button>
       </div>
       <div className="scale-wrap">
@@ -159,7 +160,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
               handle?.term.focus()
             }}
           >
-            ↓
+            <Icon name="down" size={14} />
           </button>
         )}
       </div>

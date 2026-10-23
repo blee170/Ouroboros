@@ -3,6 +3,8 @@ import { nanoid } from 'nanoid'
 import { useBoard } from '@/store/board'
 import type { ClaudeProjectHistory, FolderInfo } from '@shared/protocol'
 import { RESUME_CONDUCTOR_PROMPT, ROLE_ORDER, ROLE_PRESETS, buildBoard, type RoleKind } from '@shared/board-builder'
+import { Icon } from '@/lib/icons'
+import { useEscape } from '@/lib/useDialog'
 
 function parentOf(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, '')
@@ -38,6 +40,7 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
   const [withBrowser, setWithBrowser] = useState(true)
   const settings = useBoard((s) => s.settings)
   const [busy, setBusy] = useState(false)
+  useEscape(onClose)
 
   useEffect(() => {
     let cancelled = false
@@ -95,15 +98,19 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
-        <h3>✨ Build board from your Claude Code work</h3>
-        <div className="row">
-          <span className="muted small">Root</span>
-          <input className="text" value={root} onChange={(e) => setRoot(e.target.value)} />
-          <button className="btn" title="Choose a folder" onClick={() => void pickRoot()}>
-            …
-          </button>
-          <input className="text" style={{ maxWidth: 180 }} placeholder="filter (e.g. badminton)" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        </div>
+        <h3>
+          <Icon name="sparkles" /> Build board from your Claude Code work
+        </h3>
+        <label className="field narrow">
+          <span>Root</span>
+          <div className="ctl">
+            <input className="text" value={root} onChange={(e) => setRoot(e.target.value)} />
+            <button className="btn" title="Choose a folder" onClick={() => void pickRoot()}>
+              …
+            </button>
+            <input className="text" style={{ maxWidth: 180, flex: 'none' }} placeholder="filter (e.g. badminton)" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          </div>
+        </label>
         <div className="builder-grid">
           <div className="builder-col">
             <div className="muted small">Folders under root {busy ? '· loading…' : `· ${visibleFolders.length}`}</div>
@@ -121,7 +128,7 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
                           setSessionId('') // a session belongs to its folder
                         }}
                         title="Use this folder for the Conductor and the role cards">
-                        {isConductor ? '🎼 Conductor' : 'Conduct'}
+                        {isConductor ? '🎼 Conductor' : 'Conduct here'}
                       </button>
                       <label className="row small">
                         <input type="checkbox" disabled={isConductor} checked={Boolean(extras[f.path]) && !isConductor} onChange={(e) => setExtras({ ...extras, [f.path]: e.target.checked })} /> card
@@ -193,14 +200,18 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
               Role cards (run in the Conductor's folder)
             </div>
             {ROLE_ORDER.map((r) => (
-              <label key={r} className="row">
+              <label key={r} className="role-row" title={ROLE_PRESETS[r].prompt}>
                 <input type="checkbox" checked={roles[r]} onChange={(e) => setRoles({ ...roles, [r]: e.target.checked })} />
-                {ROLE_PRESETS[r].icon} {ROLE_PRESETS[r].title}
-                <span className="muted small">{ROLE_PRESETS[r].prompt.split('. ')[1]?.slice(0, 60)}…</span>
+                <span>
+                  {ROLE_PRESETS[r].icon} {ROLE_PRESETS[r].title}
+                </span>
+                <span className="desc">{ROLE_PRESETS[r].prompt.split('. ')[1]?.slice(0, 80)}…</span>
               </label>
             ))}
-            <label className="row">
-              <input type="checkbox" checked={withBrowser} onChange={(e) => setWithBrowser(e.target.checked)} /> 🌐 Browser card
+            <label className="role-row">
+              <input type="checkbox" checked={withBrowser} onChange={(e) => setWithBrowser(e.target.checked)} />
+              <span>🌐 Browser card</span>
+              <span className="desc">a page the agents can drive with the browser tools</span>
             </label>
             <div className="muted small" style={{ marginTop: 10 }}>
               Lines: Implementer → Tester (auto) · Tester → Reviewer (auto when the reply contains PASS) · Reviewer → Implementer (manual ▶)

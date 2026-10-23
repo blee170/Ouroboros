@@ -36,7 +36,8 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       allowProposedApi: true,
       cursorBlink: true,
       fontSize: BASE_FONT_SIZE,
-      fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
+      // D2Coding is bundled (assets/fonts): Hangul is exactly two cells wide, so Korean replies keep the grid straight
+      fontFamily: 'D2Coding, "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
       scrollback: 8000,
       theme: {
         background: '#0b0d13',

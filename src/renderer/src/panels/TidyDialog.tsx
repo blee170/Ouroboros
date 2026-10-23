@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
+import { Icon } from '@/lib/icons'
+import { useEscape } from '@/lib/useDialog'
 
 export function TidyDialog({ onClose }: { onClose: () => void }) {
   const settings = useBoard((s) => s.settings)
@@ -10,6 +12,7 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
   const [checked, setChecked] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
   const retire = settings.retireMinutes ?? 5
+  useEscape(onClose)
 
   const refresh = async (m = minutes, own = includeOwn): Promise<void> => {
     setBusy(true)
@@ -32,11 +35,13 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>🧹 Tidy cards</h3>
+      <div className="modal" role="dialog" aria-labelledby="tidy-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="tidy-title">
+          <Icon name="broom" /> Tidy cards
+        </h3>
         <div className="hint">Cards dispatched by a Conductor or team whose job is over: process exited, report delivered, or idle with no report line (your own cards: exited or idle) for more than</div>
         <div className="row">
-          <input className="text" style={{ width: 70 }} type="number" min={1} value={minutes} onChange={(e) => setMinutes(Math.max(1, Number(e.target.value) | 0))} />
+          <input className="text" style={{ width: 70, flex: 'none' }} type="number" min={1} value={minutes} onChange={(e) => setMinutes(Math.max(1, Number(e.target.value) | 0))} aria-label="Idle minutes" />
           <span className="small">min</span>
           <label className="check" style={{ margin: '0 0 0 8px' }}>
             <input
@@ -51,15 +56,15 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
           </label>
           <span className="spacer" />
           <button className="btn small" disabled={busy} onClick={() => void refresh()}>
-            Refresh
+            <Icon name="refresh" size={13} /> Refresh
           </button>
         </div>
         <ul className="roster-list" style={{ maxHeight: 260, overflowY: 'auto' }}>
           {cands.map((c) => (
             <li key={c.id} className="roster-item">
-              <input type="checkbox" checked={Boolean(checked[c.id])} onChange={(e) => setChecked({ ...checked, [c.id]: e.target.checked })} />
+              <input type="checkbox" checked={Boolean(checked[c.id])} onChange={(e) => setChecked({ ...checked, [c.id]: e.target.checked })} aria-label={`Close ${c.title}`} />
               <div className="roster-main" style={{ cursor: 'default' }}>
-                <span className="status-dot" style={{ background: '#525252' }} />
+                <span className="status-dot" style={{ background: 'var(--muted)' }} />
                 <span className="title">{c.title}</span>
                 <span className="muted small">{c.reason}</span>
               </div>

@@ -6,6 +6,8 @@ import { announceSettings } from '@shared/announce'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
 import type { TtsKeyEngine } from '@shared/protocol'
 import { speak, voiceFor } from '@/lib/speak'
+import { Icon } from '@/lib/icons'
+import { useEscape } from '@/lib/useDialog'
 
 const NO_KEYS: Record<TtsKeyEngine, boolean> = { gemini: false, openai: false, elevenlabs: false }
 
@@ -21,6 +23,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const tts = ttsSettings(settings)
   const [ttsKeys, setTtsKeys] = useState(NO_KEYS)
   const [ttsKey, setTtsKey] = useState('')
+  useEscape(onClose)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
       setInfo(i)
@@ -33,7 +36,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     const r = await window.ouroboros.tts.setKey(engine, ttsKey)
     setTtsKeys((k) => ({ ...k, [engine]: r.hasKey }))
     setTtsKey('')
-    setMsg(r.hasKey ? `${TTS_ENGINES[engine].label} key saved (encrypted). Press 🔊 Test.` : 'Key cleared.')
+    setMsg(r.hasKey ? `${TTS_ENGINES[engine].label} key saved (encrypted). Press Test.` : 'Key cleared.')
   }
   const testVoice = async (): Promise<void> => {
     const ko = tts.engine !== 'windows' || Boolean(voiceFor('ko'))
@@ -60,8 +63,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal settings" onClick={(e) => e.stopPropagation()}>
-        <h3>Settings</h3>
+      <div className="modal settings" role="dialog" aria-labelledby="settings-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="settings-title">
+          <Icon name="settings" /> Settings
+        </h3>
 
         <section className="settings-section first">
           <h4>Engines</h4>
@@ -90,7 +95,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <label className="check">
             <input type="checkbox" checked={announce.voice} onChange={(e) => void setSettings({ announceVoice: e.target.checked })} /> Speak it
             <button className="btn small" onClick={() => void testVoice()}>
-              🔊 Test
+              <Icon name="volume" size={13} /> Test
             </button>
           </label>
           <label className="field">

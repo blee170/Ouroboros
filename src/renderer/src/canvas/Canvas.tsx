@@ -7,7 +7,7 @@ import { ExternalNode } from './nodes/ExternalNode'
 import { BrowserNode } from './nodes/BrowserNode'
 import { HandoffEdge } from './edges/HandoffEdge'
 import { STATUS_COLOR } from '@shared/status'
-import type { NodeKind } from '@shared/types'
+import { CARD_KINDS, type CardKindItem } from '@/lib/cardKinds'
 import { rosterOrder } from '@/lib/rosterOrder'
 import { setDragShield } from '@/lib/dragShield'
 
@@ -45,8 +45,8 @@ export function Canvas() {
     },
     [rf]
   )
-  const add = (kind: NodeKind, engine?: 'claude' | 'codex' | 'gemini'): void => {
-    if (menu) addNode(kind, { position: menu.flow, engine })
+  const add = (k: CardKindItem): void => {
+    if (menu) addNode(k.kind, { position: menu.flow, engine: k.engine, ...k.data })
     setMenu(null)
   }
   const defaultViewport = useMemo(() => viewport ?? { x: 0, y: 0, zoom: 0.8 }, [viewport])
@@ -104,7 +104,7 @@ export function Canvas() {
       <svg style={{ position: 'absolute', width: 0, height: 0 }}>
         <defs>
           <marker id="handoff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
           </marker>
         </defs>
       </svg>
@@ -136,15 +136,13 @@ export function Canvas() {
         <Controls showInteractive={false} />
       </ReactFlow>
       {menu && (
-        <div className="context-menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 290) }}>
-          <button onClick={() => add('claude', 'claude')}>✦ Claude agent</button>
-          <button onClick={() => add('claude', 'codex')}>◎ Codex agent</button>
-          <button onClick={() => add('claude', 'gemini')}>✧ Gemini agent</button>
-          <button onClick={() => add('conductor')}>🎼 Conductor</button>
-          <button onClick={() => add('terminal')}>▣ Terminal</button>
-          <button onClick={() => add('browser')}>🌐 Browser</button>
-          <button onClick={() => add('command')}>⚡ Command card</button>
-          <button onClick={() => add('note')}>📝 Note</button>
+        <div className="context-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 330) }}>
+          {CARD_KINDS.map((k) => (
+            <button key={k.label} role="menuitem" title={k.hint} onClick={() => add(k)}>
+              <span className="glyph">{k.glyph}</span>
+              {k.label}
+            </button>
+          ))}
         </div>
       )}
     </div>

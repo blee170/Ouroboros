@@ -76,6 +76,8 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Placement** | New cards (yours or the Conductor's) take the first free cell of the grid, never a cell another card covers. ⊞ Arrange lays the board out along its lines: cards nobody feeds on the left, the cards they report to (the Conductor) to their right, and the briefs and notes in a lane beside the Conductor, so lines run left to right; ↶ puts everything back until you move something. |
 | **Screenshots in** | Ctrl+V a screenshot into a Claude card and Claude Code attaches it as an `[Image #1]` chip, exactly as in the desktop app (Alt+V does the same). In terminal, command, Codex and Gemini cards the image is saved and its path typed; dropped files are typed as paths everywhere. The Roster composer takes screenshots and files too (paste or drop; chips under the box) and sends them the same way to every checked card. |
 | **External sessions** | Claude Code sessions started elsewhere (e.g. the Claude desktop app) appear as cards in the window of the project they run in (never in another project's window) and can be pulled into the canvas via `--resume`. |
+| **Toolbar** | One row that never wraps: project · the cards you add every minute (+ Claude, + Terminal, + More ▾ for the rest) · the board's state (*working / need you / idle / ended*; click a number to jump to the first such card) · Save, Tidy, Arrange · Roster / Inspector · ⚙. Labels drop to icons in a narrow window. |
+| **Fonts** | Bundled, no install: Pretendard for the UI and D2Coding in the terminals (Hangul exactly two cells wide, so Korean output lines up). |
 | **Updates** | ⚙ → *Check for updates* (GitHub Releases, built by Actions). |
 
 ## How it works
@@ -193,7 +195,7 @@ Linux builds (`npm run dist:linux`) are used for the automated tests; macOS is u
 ## Daily use
 
 1. **Open a project folder** (Welcome screen or 📁). A second folder opens in a second window.
-2. **Add cards**: right-click the canvas → Claude agent / Codex agent / Gemini agent / Conductor / Terminal / Browser / Command card / Note. The Inspector edits a card's folder, engine, `--continue` / `--resume`, model, permission mode, extra system prompt, MCP servers, worktree.
+2. **Add cards**: + Claude / + Terminal in the toolbar, or + More ▾ and the canvas right-click menu → Claude agent / Codex agent / Gemini agent / Conductor / Terminal / Browser / Command card / Aside / Note. The Inspector (sections Card · Work · Launch · Last reply) edits a card's folder, engine, `--continue` / `--resume`, model, permission mode, extra system prompt, MCP servers, worktree.
 3. **Draw lines** from a card's right port to another's left port; set mode, condition and template in the Inspector.
 4. **Conduct**: put a Conductor in the middle and give it the goal. It creates and wires what it needs, runs the stages, relays questions and reports. Or press **✨ Build board** to generate a starting board from your folder and Claude Code history.
 5. **Review**: click a card's `+n −m` badge to see its diff, revert files or ask it to review itself. Use the Roster to see what needs you.

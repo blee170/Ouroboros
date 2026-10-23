@@ -3,6 +3,7 @@ import { setDragShield } from '@/lib/dragShield'
 import { NodeResizer, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
+import { Icon } from '@/lib/icons'
 
 function NoteNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const updateNodeData = useBoard((s) => s.updateNodeData)
@@ -13,8 +14,8 @@ function NoteNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
       <div className="node-header">
         <span className="title">📝 {data.title}</span>
         <span className="spacer" />
-        <button className="icon-btn nodrag" title="Close" onClick={() => void removeNode(id)}>
-          ✕
+        <button className="icon-btn nodrag" title="Close" aria-label="Close note" onClick={() => void removeNode(id)}>
+          <Icon name="close" size={14} />
         </button>
       </div>
       <textarea className="note-body nodrag nowheel" value={data.note ?? ''} placeholder="Markdown note…" onChange={(e) => updateNodeData(id, { note: e.target.value })} />

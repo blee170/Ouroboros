@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ChangesSummary } from '@shared/protocol'
 import { typePrompt } from '@/lib/typePrompt'
+import { Icon } from '@/lib/icons'
 
 /** Uncommitted changes of a card's folder: file list, per-file diff, revert, and "ask the card to review". */
 export function ChangesPanel({ nodeId, cwd }: { nodeId: string; cwd: string }) {
@@ -43,8 +44,8 @@ export function ChangesPanel({ nodeId, cwd }: { nodeId: string; cwd: string }) {
         <button className="link" onClick={() => setOpen(!open)}>
           {open ? '▾' : '▸'} Changes {summary.branch ? `on ${summary.branch}` : ''} · <span className="add">+{summary.added}</span> <span className="del">−{summary.deleted}</span> · {summary.files.length} file{summary.files.length === 1 ? '' : 's'}
         </button>
-        <button className="icon-btn" title="Refresh" onClick={() => void load()}>
-          ↻
+        <button className="icon-btn" title="Refresh" aria-label="Refresh changes" onClick={() => void load()}>
+          <Icon name="refresh" size={14} />
         </button>
       </div>
       {open && summary.files.length === 0 && <div className="muted small">Working tree clean.</div>}
@@ -78,8 +79,8 @@ export function ChangesPanel({ nodeId, cwd }: { nodeId: string; cwd: string }) {
             </pre>
           )}
           <div className="row">
-            <button className="btn" onClick={askReview} title="Type a review request into this card">
-              🔍 Ask card to review its diff
+            <button className="btn small" onClick={askReview} title="Type a review request into this card">
+              <Icon name="search" size={13} /> Ask the card to review its diff
             </button>
           </div>
         </>

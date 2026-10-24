@@ -23,6 +23,27 @@ describe('reduceHook', () => {
     expect(reduceHook('working', { hook_event_name: 'PreCompact' })).toMatchObject({ status: 'working', statusDetail: 'compacting context' })
     expect(reduceHook('working', { hook_event_name: 'PostCompact' })).toMatchObject({ status: 'working', statusDetail: 'working' })
   })
+  it('does not let a late tool or subagent event revive a finished card', () => {
+    // a background agent or shell finishing after the Stop, or the post-turn recap: no Stop follows, so the card
+    // would sit on "Working · working" for good
+    for (const name of ['PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop']) {
+      for (const prev of ['done', 'idle', 'ended'] as const) {
+        expect(reduceHook(prev, { hook_event_name: name, tool_name: 'Bash' }), `${name} after ${prev}`).toBeNull()
+      }
+      // mid-turn they keep the card working, and they end the wait on a permission prompt the owner answered
+      expect(reduceHook('working', { hook_event_name: name })).toMatchObject({ status: 'working', statusDetail: undefined })
+      expect(reduceHook('needs-you', { hook_event_name: name })).toMatchObject({ status: 'working', statusDetail: 'working' })
+      expect(reduceHook('needs-you', { hook_event_name: name }, 'permission: Allow Bash?')?.status).toBe('working')
+      // a turn that ended on an error (StopFailure) is finished too: a late event must not wipe the usage-limit park
+      expect(reduceHook('needs-you', { hook_event_name: name }, 'failed: usage limit reached'), `${name} after failed`).toBeNull()
+      // unknown or starting (first events after a relaunch): still a turn in progress
+      expect(reduceHook(undefined, { hook_event_name: name })?.status).toBe('working')
+      expect(reduceHook('starting', { hook_event_name: name })?.status).toBe('working')
+    }
+    // a real new turn after a finished one still starts with UserPromptSubmit or PreToolUse
+    expect(reduceHook('done', { hook_event_name: 'UserPromptSubmit' })?.status).toBe('working')
+    expect(reduceHook('done', { hook_event_name: 'PreToolUse', tool_name: 'Read' })).toMatchObject({ status: 'working', statusDetail: 'tool: Read' })
+  })
   it('ignores unknown events', () => {
     expect(reduceHook('idle', { hook_event_name: 'SomethingNew' })).toBeNull()
   })

@@ -21,7 +21,7 @@ function detailOf(event: HookEvent): string | undefined {
  * Pure reducer: previous status + Claude Code hook event -> next status.
  * Returns null when the event does not change anything we track.
  */
-export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): StatusUpdate | null {
+export function reduceHook(prev: AgentStatus | undefined, event: HookEvent, prevDetail?: string): StatusUpdate | null {
   const sessionId = typeof event.session_id === 'string' ? event.session_id : undefined
   switch (event.hook_event_name) {
     case 'SessionStart':
@@ -34,6 +34,12 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): Sta
     case 'PostToolUseFailure':
     case 'SubagentStart':
     case 'SubagentStop':
+      // These also arrive after a turn has ended (a background agent or shell finishing, the post-turn recap) and no
+      // Stop follows them, so they never start a turn: a turn starts with UserPromptSubmit or PreToolUse. They keep a
+      // working card working and resume one that was waiting on a permission prompt the owner just answered; a
+      // needs-you marked "failed:" is a turn that ended on an error (StopFailure), not a prompt.
+      if (prev === 'done' || prev === 'idle' || prev === 'ended') return null
+      if (prev === 'needs-you' && failureOf(prevDetail)) return null
       return { status: 'working', statusDetail: prev === 'working' ? undefined : 'working', sessionId }
     // Compaction is not a turn: Claude Code also compacts while idle ("Compacted while idle, before the prompt
     // cache expired"), and no Stop follows that, so a card that was not working must stay idle/done.

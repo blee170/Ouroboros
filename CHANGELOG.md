@@ -4,6 +4,22 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+The attention model (RESEARCH §10.2, after Orca): the sidebar tells you what you have not looked at yet, and the app stops telling you about the card you are looking at.
+
+### Added
+- **Done until looked at**: a finished turn shows as *Done* (green check) only until you select the card with the window focused; then the card reads *Idle*. A result you have not looked at (a finished turn, a question) keeps its sidebar row **bold**; the status bar's *ready* count is the unread finished turns. Claude Code's idle reminder for a turn you already read no longer flips the card back to *Done*.
+- **Jump to…** (`Ctrl+J`, also `Ctrl+F`): a palette of every agent card in sidebar order, narrowed as you type (title, state, detail), ↑↓ and Enter. `Ctrl+Shift+N` jumps to the next card that needs you, then to unread finished turns. Both replace the old Ctrl+F title box.
+- **Settled rows**: a sidebar row changes its glyph at once but moves to its new section 3 s later (a card added or closed shows immediately), so the list does not jump under the pointer; `Ctrl+1…9` follow the same settled order. A working card with no hook event for 2 min says *no update for Nm*.
+- **Missing CLI, said in seconds**: a Claude / Codex / Gemini card whose command the shell cannot find ("is not recognized", "command not found", PowerShell's Korean messages included) turns *Needs you · failed: … is not installed or not on PATH* within a second of the launch instead of sitting on *Starting* until a stall timer gives up (3 min in Autonomous mode, where it is now parked at once with that reason).
+- **Failed, not just "needs you"**: a turn that ended in an error (`StopFailure`) is marked `failed: …`; the toast says "<card> failed" with the error and the voice says so too.
+- **Status bar: near context limit**: a chip when any Claude card is past 70 % of its context window, with every such card on hover; click jumps to the fullest. Context usage is read once per card (the store) instead of by each card.
+- **First-run setup**: the guide that opens on first launch now starts with two steps — which engine new cards run (installed / signed-in state, install commands) and a *Play a test announcement* button with the announce target.
+
+### Changed
+- **Quieter toasts**: no toast or voice for the card you are looking at (selected, window focused); one card gets at most one toast per 5 s (a question right after a finish, a run of permission prompts); the Conductor's "needs input" prompt and Autonomous-mode parking are unaffected.
+
 ## [0.7.0] — 2026-10-24
 
 The Orca release: the shell was redrawn after dissecting stablyai/orca (RESEARCH §10). Quiet and monochrome, colour only for state, a sidebar that puts what needs you first.
@@ -233,7 +249,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
-[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.7.0...HEAD
 [0.7.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.0
 [0.6.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.6.0
 [0.5.1]: https://github.com/blee170/Ouroboros/compare/v0.4.1...v0.6.0

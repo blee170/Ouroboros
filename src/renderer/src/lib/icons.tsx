@@ -14,6 +14,7 @@ import {
   ExternalLink,
   FileText,
   Folder,
+  Gauge,
   History,
   Image,
   LayoutGrid,
@@ -56,6 +57,7 @@ export type IconName =
   | 'save'
   | 'broom'
   | 'grid'
+  | 'gauge'
   | 'undo'
   | 'settings'
   | 'brief'
@@ -95,6 +97,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   save: Save,
   broom: Brush,
   grid: LayoutGrid,
+  gauge: Gauge,
   undo: Undo2,
   settings: Settings,
   brief: FileText,

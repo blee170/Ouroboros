@@ -9,7 +9,7 @@ import { useBoard } from '@/store/board'
 import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
 import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
-import { useCardChanges, useSessionUsage } from '@/lib/useCardInfo'
+import { useCardChanges } from '@/lib/useCardInfo'
 import { Icon } from '@/lib/icons'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
@@ -44,7 +44,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
-  const usage = useSessionUsage(data.sessionId, status, (kind === 'claude' || kind === 'conductor') && (data.engine ?? 'claude') === 'claude')
+  const usage = useBoard((s) => s.usage[id])
   const select = useBoard((s) => s.select)
 
   // Spawn (or re-spawn) the process once the terminal knows its size.

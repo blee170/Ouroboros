@@ -50,3 +50,26 @@ export function rosterOrder<T extends RosterNode>(nodes: T[]): T[] {
   for (const n of agents) if (!out.includes(n)) out.push(n)
   return out
 }
+
+/** The rows settle this long after a status change before they move to their new section (Orca's sort-settle). */
+export const SETTLE_ROWS_MS = 3_000
+
+/** What the settled sidebar keeps of each card: its place, its section and its parent. */
+export type RosterRow = { id: string; data: { kind: string; status: string; parentId?: string } }
+
+/** The sidebar order as plain rows, with a status for every card (no status = starting). */
+export function rosterSnapshot(nodes: RosterNode[]): RosterRow[] {
+  return rosterOrder(nodes).map((n) => ({ id: n.id, data: { kind: n.data.kind, status: n.data.status ?? 'starting', parentId: n.data.parentId } }))
+}
+
+/** Same cards in the same order with the same section and parent: nothing to re-settle. */
+export function sameRoster(a: RosterRow[], b: RosterRow[]): boolean {
+  return a.length === b.length && a.every((r, i) => r.id === b[i].id && r.data.status === b[i].data.status && r.data.parentId === b[i].data.parentId && r.data.kind === b[i].data.kind)
+}
+
+/** The same set of cards (a card added or closed must show at once; only a move waits). */
+export function sameIds(a: RosterRow[], b: RosterRow[]): boolean {
+  if (a.length !== b.length) return false
+  const ids = new Set(a.map((r) => r.id))
+  return b.every((r) => ids.has(r.id))
+}

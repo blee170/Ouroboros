@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BoardDone, MIN_TURN_MS, announceSettings, announcesStop, firstLine, langFor, phrase } from '@shared/announce'
+import { BoardDone, Burst, MIN_TURN_MS, announceSettings, announcesStop, firstLine, langFor, phrase } from '@shared/announce'
 
 describe('announce settings', () => {
   it('defaults to conductor replies, toast and voice on', () => {
@@ -76,5 +76,21 @@ describe('BoardDone', () => {
     announced.stopped(false)
     announced.stopped(true)
     expect(announced.settle(false)).toBe(false)
+  })
+})
+
+describe('Burst', () => {
+  it('lets one toast through per card per window, cards apart', () => {
+    const b = new Burst(5000)
+    expect(b.allow('a', 1000)).toBe(true)
+    expect(b.allow('a', 4000)).toBe(false)
+    expect(b.allow('b', 4000)).toBe(true)
+    expect(b.allow('a', 6000)).toBe(true)
+    b.forget('a')
+    expect(b.allow('a', 6001)).toBe(true)
+  })
+  it('has a "failed" sentence in both languages', () => {
+    expect(phrase({ kind: 'failed', title: 'Reviewer', lang: 'en' })).toBe('Reviewer failed. Please take a look.')
+    expect(phrase({ kind: 'failed', title: '리뷰어', lang: 'ko' })).toBe('리뷰어 작업이 실패했습니다. 확인해 주세요.')
   })
 })

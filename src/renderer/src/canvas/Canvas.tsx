@@ -7,9 +7,10 @@ import { ExternalNode } from './nodes/ExternalNode'
 import { BrowserNode } from './nodes/BrowserNode'
 import { HandoffEdge } from './edges/HandoffEdge'
 import { STATUS_COLOR } from '@shared/status'
+import { nextAttention } from '@shared/attention'
 import { CARD_KINDS, type CardKindItem } from '@/lib/cardKinds'
-import { rosterOrder } from '@/lib/rosterOrder'
 import { setDragShield } from '@/lib/dragShield'
+import { JumpPalette } from '@/panels/JumpPalette'
 
 const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode, browser: BrowserNode }
 const edgeTypes: EdgeTypes = { handoff: HandoffEdge }
@@ -50,57 +51,55 @@ export function Canvas() {
     setMenu(null)
   }
   const defaultViewport = useMemo(() => viewport ?? { x: 0, y: 0, zoom: 0.8 }, [viewport])
-  const [find, setFind] = useState<string | null>(null)
+  const [palette, setPalette] = useState(false)
+  const jumpTo = useCallback(
+    (id: string): void => {
+      void rf.fitView({ nodes: [{ id }], duration: 300, padding: 0.3 })
+      select(id, null)
+    },
+    [rf, select]
+  )
 
-  // Ctrl+1…9 jump to the n-th agent card (roster order), Ctrl+F finds a card by title.
+  // Ctrl+1…9 jump to the n-th card (the sidebar's settled order), Ctrl+J (or Ctrl+F) opens Jump to…,
+  // Ctrl+Shift+N goes to the next card that needs you (then to an unread finished turn).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.ctrlKey || e.metaKey)) return
       // never steal keys from a terminal, text field or editable note
       const t = e.target as HTMLElement | null
       if (t && (t.closest('input, textarea, [contenteditable="true"], .xterm, webview') || t.isContentEditable)) return
-      if (e.key === 'f') {
+      const key = e.key.toLowerCase()
+      if (key === 'j' || key === 'f') {
         e.preventDefault()
-        setFind('')
+        setPalette(true)
+        return
+      }
+      const s = useBoard.getState()
+      if (key === 'n' && e.shiftKey) {
+        e.preventDefault()
+        const live = new Map(s.nodes.map((n) => [n.id, n.data.status]))
+        const next = nextAttention(
+          s.settledRoster.map((r) => ({ id: r.id, status: live.get(r.id) ?? 'starting' })),
+          s.attention.unread,
+          s.selectedNodeId
+        )
+        if (next) jumpTo(next)
         return
       }
       const n = Number(e.key)
       if (!Number.isInteger(n) || n < 1 || n > 9) return
-      const target = rosterOrder(useBoard.getState().nodes)[n - 1]
+      const target = s.settledRoster[n - 1]
       if (!target) return
       e.preventDefault()
-      void rf.fitView({ nodes: [{ id: target.id }], duration: 300, padding: 0.3 })
-      select(target.id, null)
+      jumpTo(target.id)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, select])
-  const runFind = (q: string): void => {
-    const needle = q.trim().toLowerCase()
-    const hit = needle ? useBoard.getState().nodes.find((x) => String(x.data.title ?? '').toLowerCase().includes(needle)) : undefined
-    if (hit) {
-      void rf.fitView({ nodes: [{ id: hit.id }], duration: 300, padding: 0.3 })
-      select(hit.id, null)
-    }
-    setFind(null)
-  }
+  }, [jumpTo])
 
   return (
     <div className="canvas-wrap" onClick={() => menu && setMenu(null)}>
-      {find !== null && (
-        <input
-          className="find-box"
-          autoFocus
-          placeholder="Find card by title… (Enter)"
-          value={find}
-          onChange={(e) => setFind(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') runFind(find)
-            if (e.key === 'Escape') setFind(null)
-          }}
-          onBlur={() => setFind(null)}
-        />
-      )}
+      {palette && <JumpPalette onPick={jumpTo} onClose={() => setPalette(false)} />}
       <svg style={{ position: 'absolute', width: 0, height: 0 }}>
         <defs>
           <marker id="handoff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">

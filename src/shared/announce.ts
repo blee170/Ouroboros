@@ -8,7 +8,7 @@
 import type { AppSettings, NodeKind } from './types'
 
 export type AnnounceTarget = 'off' | 'conductor' | 'all'
-export type AnnounceKind = 'finished' | 'needs-you' | 'all-done'
+export type AnnounceKind = 'finished' | 'needs-you' | 'failed' | 'all-done'
 export type AnnounceLang = 'ko' | 'en'
 
 export interface AnnouncePayload {
@@ -23,6 +23,25 @@ export const MIN_TURN_MS = 10_000
 export const SETTLE_MS = 5_000
 /** A card that keeps asking (permission after permission) is spoken once per this window. */
 export const NEEDS_YOU_REPEAT_MS = 60_000
+/** One card gets at most one toast per this window (a question right after a finish, a run of permission prompts). */
+export const BURST_MS = 5_000
+
+/** The per-card toast cooldown: `allow` says whether this card may make a sound now, and books the slot if so. */
+export class Burst {
+  private last = new Map<string, number>()
+  constructor(private windowMs = BURST_MS) {}
+
+  allow(id: string, now: number): boolean {
+    const prev = this.last.get(id)
+    if (prev !== undefined && now - prev < this.windowMs) return false
+    this.last.set(id, now)
+    return true
+  }
+
+  forget(id: string): void {
+    this.last.delete(id)
+  }
+}
 
 export interface AnnounceSettings {
   target: AnnounceTarget
@@ -48,6 +67,8 @@ export function phrase(p: AnnouncePayload, lang: AnnounceLang = p.lang): string 
       return lang === 'ko' ? `${t} 작업이 끝났습니다. 보고를 확인해 주세요.` : `${t} finished. Please check the report.`
     case 'needs-you':
       return lang === 'ko' ? `${t} 카드가 기다리고 있습니다.` : `${t} needs you.`
+    case 'failed':
+      return lang === 'ko' ? `${t} 작업이 실패했습니다. 확인해 주세요.` : `${t} failed. Please take a look.`
     case 'all-done':
       return lang === 'ko' ? '모든 카드 작업이 끝났습니다.' : 'All cards have finished.'
   }

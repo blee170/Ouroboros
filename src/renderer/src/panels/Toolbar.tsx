@@ -31,7 +31,7 @@ export function Toolbar() {
   const [builderOpen, setBuilderOpen] = useState(false)
   const [tidyOpen, setTidyOpen] = useState(false)
   const [autoOpen, setAutoOpen] = useState(false)
-  const [helpOpen, setHelpOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState<false | 'help' | 'first-run'>(false)
   const autonomyOn = useBoard((s) => s.autonomy.on)
   // the first-run guide: once, the first time a project is open with the saved settings in hand (the defaults
   // alone would show it to everyone on every start before their settings arrived)
@@ -40,7 +40,7 @@ export function Toolbar() {
   const setSettings = useBoard((s) => s.setSettings)
   useEffect(() => {
     if (!projectRoot || !settingsLoaded || tourSeen) return
-    setHelpOpen(true)
+    setHelpOpen('first-run')
     void setSettings({ tourSeen: true })
   }, [projectRoot, settingsLoaded, tourSeen, setSettings])
   // the kinds menu is fixed-positioned under its button: a child dropdown would be clipped by the bar
@@ -153,7 +153,7 @@ export function Toolbar() {
           </button>
         )}
         <span className="sep" />
-        <button className="ghost" title="Help: your first hour, shortcuts, the tutorial" aria-label="Help" onClick={() => setHelpOpen(true)}>
+        <button className="ghost" title="Help: your first hour, shortcuts, the tutorial" aria-label="Help" onClick={() => setHelpOpen('help')}>
           <Icon name="help" />
         </button>
         <button className="ghost" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}>
@@ -163,7 +163,7 @@ export function Toolbar() {
           <Icon name="panel" />
         </button>
       </div>
-      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <HelpDialog firstRun={helpOpen === 'first-run'} onClose={() => setHelpOpen(false)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {builderOpen && <BoardBuilder onClose={() => setBuilderOpen(false)} />}
       {tidyOpen && <TidyDialog onClose={() => setTidyOpen(false)} />}

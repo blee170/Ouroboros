@@ -64,11 +64,18 @@ export default function App() {
         useBoard.getState().persist()
       }
     }
+    // coming back to the window counts as looking at the selected card: its unread mark goes
+    const onFocus = (): void => {
+      const s = useBoard.getState()
+      if (s.selectedNodeId) s.markViewed(s.selectedNodeId)
+    }
     window.addEventListener('keydown', onKey)
+    window.addEventListener('focus', onFocus)
     return () => {
       offs.forEach((off) => off())
       clearTimeout(updateTimer)
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('focus', onFocus)
     }
   }, [])
 

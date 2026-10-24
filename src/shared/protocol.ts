@@ -12,6 +12,7 @@ export const IPC = {
   ptyPasteImage: 'pty:pasteImage',
   claudeLaunch: 'claude:launch',
   boardSync: 'board:sync',
+  boardSelected: 'board:selected',
   workspaceLoad: 'workspace:load',
   workspaceSave: 'workspace:save',
   projectOpen: 'project:open',
@@ -283,6 +284,8 @@ export interface OuroborosApi {
   }
   board: {
     sync(payload: BoardSyncPayload): void
+    /** The selected card: main holds back the toast and the voice for the card the owner is looking at. */
+    setSelected(nodeId: string | null): void
     onAgentStatus(cb: (p: AgentStatusPayload) => void): () => void
     onHookEvent(cb: (p: HookEventPayload) => void): () => void
     onHandoffFired(cb: (p: HandoffFiredPayload) => void): () => void

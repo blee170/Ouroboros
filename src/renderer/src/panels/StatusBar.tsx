@@ -33,10 +33,20 @@ export function StatusBar() {
   }, [savedAt])
   const justSaved = Boolean(savedAt && Date.now() - savedAt < 4000)
   const upd = useBoard((s) => s.updateStatus)
+  const usage = useBoard((s) => s.usage)
 
   // the same cards in the same order as the sidebar: a card with no status yet counts as starting, and
   // "the first" card of a state is the first row there
   const agents = useMemo(() => rosterOrder(nodes), [nodes])
+  // Claude cards past 70% of their context window, hottest first: the one thing about usage worth a chip
+  const hot = useMemo(
+    () =>
+      nodes
+        .filter((n) => usage[n.id] && usage[n.id].contextTokens / usage[n.id].contextWindow >= 0.7)
+        .map((n) => ({ id: n.id, title: n.data.title, pct: Math.round((usage[n.id].contextTokens / usage[n.id].contextWindow) * 100) }))
+        .sort((a, b) => b.pct - a.pct),
+    [nodes, usage]
+  )
   const count = (...statuses: string[]): number => agents.filter((n) => statuses.includes(n.data.status ?? 'starting')).length
   const groups: Array<{ status: AgentStatus; statuses: string[]; label: string; hint: string }> = [
     { status: 'working', statuses: ['working', 'starting'], label: 'working', hint: 'Cards working now' },
@@ -75,6 +85,12 @@ export function StatusBar() {
         </button>
       )}
       <span className="spacer" />
+      {hot.length > 0 && (
+        <button className="ghost ctx-chip" onClick={() => jumpToNode(hot[0].id)} title={`Context nearly full: ${hot.map((h) => `${h.title} ${h.pct}%`).join(', ')}. Ask the card to /compact, or start a fresh card. Click to jump to the fullest.`}>
+          <Icon name="gauge" size={12} />
+          <span className="n">{hot.length}</span> near context limit
+        </button>
+      )}
       {autonomy.on && (
         <div className="auto-pill" title={`Autonomous mode until ${hhmm(autonomy.until ?? 0)} · ${autonomy.dispatches}/${autonomy.maxDispatches} new cards · ${autonomy.parked.length} waiting on you${autonomy.parked.length ? ': ' + autonomy.parked.map((p) => p.title).join(', ') : ''}`}>
           <Icon name="moon" size={12} />

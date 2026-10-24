@@ -3,8 +3,9 @@ import { useReactFlow } from '@xyflow/react'
 import { useBoard, type BoardNode } from '@/store/board'
 import type { SkillEntry } from '@shared/protocol'
 import { STATUS_LABEL } from '@shared/status'
+import { silentMinutes } from '@shared/attention'
 import { typePrompt } from '@/lib/typePrompt'
-import { ROSTER_GROUPS, groupRows, rosterOrder } from '@/lib/rosterOrder'
+import { ROSTER_GROUPS, groupRows } from '@/lib/rosterOrder'
 import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
@@ -34,11 +35,23 @@ function ago(t: number | undefined, now: number): string {
 /**
  * The left sidebar: every agent card by state (what needs you first), workers under their Conductor, a search
  * row, the project with its counts, and at the bottom a composer that sends one prompt to the checked cards.
- * Ctrl+1…9 follow the row order. The edge drags (220–500px, remembered per machine).
+ * Rows follow the store's settled order (a card moves section a few seconds after it changed, its glyph at
+ * once); Ctrl+1…9 follow the same order. A card with a result not yet looked at is bold. The edge drags
+ * (220–500px, remembered per machine).
  */
 export function Sidebar() {
   const allNodes = useBoard((s) => s.nodes)
-  const ordered = useMemo(() => rosterOrder(allNodes), [allNodes])
+  const settled = useBoard((s) => s.settledRoster)
+  const unread = useBoard((s) => s.attention.unread)
+  // the settled rows, each with its live card (a closed card leaves the settled list at once, so none is missing)
+  const rows = useMemo(() => {
+    const live = new Map(allNodes.map((n) => [n.id, n]))
+    return settled.flatMap((r) => {
+      const n = live.get(r.id)
+      return n ? [{ row: r, node: n }] : []
+    })
+  }, [settled, allNodes])
+  const ordered = useMemo(() => rows.map((r) => r.node), [rows])
   const select = useBoard((s) => s.select)
   const selectedId = useBoard((s) => s.selectedNodeId)
   const projectRoot = useBoard((s) => s.projectRoot)
@@ -175,7 +188,8 @@ export function Sidebar() {
 
   // the search narrows the rows; the hotkeys keep following the full order
   const q = query.trim().toLowerCase()
-  const visible = q ? ordered.filter((n) => `${n.data.title} ${n.data.statusDetail ?? ''}`.toLowerCase().includes(q)) : ordered
+  const visible = q ? rows.filter(({ node: n }) => `${n.data.title} ${n.data.statusDetail ?? ''}`.toLowerCase().includes(q)) : rows
+  // the header counts are live (the status bar's are too); only the rows wait to move
   const count = (...statuses: string[]): number => ordered.filter((n) => statuses.includes(n.data.status ?? 'starting')).length
   const counts = [
     { status: 'working' as const, n: count('working', 'starting'), label: 'working' },
@@ -188,14 +202,17 @@ export function Sidebar() {
     const idx = ordered.indexOf(n)
     const KindIcon = kindIcon(n.data.kind, n.data.engine)
     const when = ago(n.data.lastEventAt, now)
+    const silent = silentMinutes(st, n.data.lastEventAt, now)
+    const isUnread = n.id in unread
     return (
-      <li key={n.id} className={`sb-item${n.id === selectedId ? ' selected' : ''}`} style={depth ? { marginLeft: 6 + depth * 20 } : undefined}>
+      <li key={n.id} className={`sb-item${n.id === selectedId ? ' selected' : ''}${isUnread ? ' unread' : ''}`} style={depth ? { marginLeft: 6 + depth * 20 } : undefined}>
         <input type="checkbox" disabled={n.data.kind === 'external'} checked={Boolean(checked[n.id])} onChange={(e) => setChecked({ ...checked, [n.id]: e.target.checked })} aria-label={`Send to ${n.data.title}`} />
-        <button className="sb-main" onClick={() => focus(n.id)} title={`${n.data.title}\n${n.data.worktree?.path || n.data.cwd}`}>
+        <button className="sb-main" onClick={() => focus(n.id)} title={`${n.data.title}${isUnread ? ' · not looked at yet' : ''}\n${n.data.worktree?.path || n.data.cwd}`}>
           <StateGlyph status={st} decorative />
           <span className="title">
             <KindIcon className="ico" size={13} aria-hidden="true" />
             <span>{n.data.title}</span>
+            {isUnread && <span className="sr-only">(unread)</span>}
           </span>
           <span className="right">
             {idx >= 0 && idx < 9 && <kbd className="hotkey">Ctrl+{idx + 1}</kbd>}
@@ -203,7 +220,7 @@ export function Sidebar() {
           </span>
           <span className="detail">
             {STATUS_LABEL[st]}
-            {n.data.statusDetail ? ` · ${n.data.statusDetail}` : ''}
+            {silent ? <span className="silent" title="Working, but no hook event for a while: a long tool call, or a stall"> · no update for {silent}m</span> : n.data.statusDetail ? ` · ${n.data.statusDetail}` : ''}
           </span>
           {n.data.lastAssistantMessage && <span className="last-reply clamp">{n.data.lastAssistantMessage}</span>}
         </button>
@@ -240,17 +257,19 @@ export function Sidebar() {
         {ordered.length === 0 && <li className="sb-empty">No cards yet. New card in the title bar, or right-click the canvas.</li>}
         {ordered.length > 0 && visible.length === 0 && <li className="sb-empty">No card matches “{query.trim()}”.</li>}
         {ROSTER_GROUPS.map((g) => {
-          const members = visible.filter((n) => g.statuses.includes(n.data.status ?? 'starting'))
+          // sections follow the settled status, so a row keeps its place until the order settles
+          const members = visible.filter(({ row: r }) => g.statuses.includes(r.data.status))
           if (!members.length) return null
+          const live = new Map(members.map((m) => [m.row.id, m.node]))
           return [
             <li key={`h-${g.label}`} className="sb-section">
               <span>{g.label}</span>
               <span className="count">{members.length}</span>
-              <button className="link" title="Check every card in this section" onClick={() => setChecked({ ...checked, ...Object.fromEntries(members.filter((m) => m.data.kind !== 'external').map((m) => [m.id, true])) })}>
+              <button className="link" title="Check every card in this section" onClick={() => setChecked({ ...checked, ...Object.fromEntries(members.filter((m) => m.node.data.kind !== 'external').map((m) => [m.row.id, true])) })}>
                 select
               </button>
             </li>,
-            ...groupRows(members).map((r) => row(r.node, r.depth))
+            ...groupRows(members.map((m) => m.row)).map((r) => row(live.get(r.node.id) as BoardNode, r.depth))
           ]
         })}
       </ul>

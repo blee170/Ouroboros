@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectClaudeReady, reduceHook } from '@shared/status'
+import { detectClaudeReady, detectMissingCommand, failureOf, reduceHook } from '@shared/status'
 
 describe('reduceHook', () => {
   it('maps lifecycle events to statuses', () => {
@@ -33,5 +33,51 @@ describe('detectClaudeReady', () => {
     expect(detectClaudeReady('\u001b[1mClaude Code v2.1.306\u001b[0m')).toBe(true)
     expect(detectClaudeReady('>  \u001b[2m? for shortcuts\u001b[0m')).toBe(true)
     expect(detectClaudeReady('PS C:\\Users\\me> ')).toBe(false)
+  })
+})
+
+describe('failures', () => {
+  it('StopFailure is a needs-you marked "failed:" so the toast and the sidebar can say so', () => {
+    const u = reduceHook('working', { hook_event_name: 'StopFailure', message: 'API error 529' })
+    expect(u).toMatchObject({ status: 'needs-you', statusDetail: 'failed: API error 529' })
+    expect(failureOf(u?.statusDetail)).toBe('API error 529')
+    expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure' })?.statusDetail)).toBe('turn failed (API error)')
+    expect(failureOf('permission: Bash')).toBeUndefined()
+    expect(failureOf(undefined)).toBeUndefined()
+  })
+})
+
+describe('detectMissingCommand', () => {
+  it('names the command PowerShell, cmd, bash and zsh could not find, through ANSI codes and in Korean', () => {
+    expect(detectMissingCommand("claude : The term 'claude' is not recognized as the name of a cmdlet, function, script file, or operable program.")).toBe('claude')
+    // PowerShell 5.1 on a Korean Windows (the owner's): the message is localised, the category line is not
+    expect(
+      detectMissingCommand(
+        "gemini : 'gemini' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다.\r\n위치 줄:1 문자:1\r\n+ gemini --yolo\r\n+ ~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (gemini:String) [], CommandNotFoundException\r\n    + FullyQualifiedErrorId : CommandNotFoundException\r\n"
+      )
+    ).toBe('gemini')
+    // PowerShell 7 ConciseView prints the first line only
+    expect(detectMissingCommand("PS C:\\p> codex\r\ncodex: The term 'codex' is not recognized as a name of a cmdlet, function, script file, or executable program.")).toBe('codex')
+    expect(detectMissingCommand("codex: 'codex' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다.")).toBe('codex')
+    expect(detectMissingCommand("'gemini'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는\r\n배치 파일이 아닙니다.")).toBe('gemini')
+    // the app launches with the call operator ("& gemini …") in a ~60-column card: the first line names "&",
+    // and the terminal wraps the category line mid-word
+    expect(detectMissingCommand("& : 'gemini' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되\r\n지 않습니다.\r\n위치 줄:1 문자:3\r\n+ & gemini --yolo\r\n+   ~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (gemini:St\r\nring) [], CommandNotFoundException\r\n    + FullyQualifiedErrorId : CommandNotFoundException")).toBe('gemini')
+    expect(detectMissingCommand("&: The term 'codex' is not recognized as a name of a cmdlet, function, script file, or\r\n executable program.")).toBe('codex')
+    expect(detectMissingCommand("\u001b[31m'codex' is not recognized as an internal or external command,\u001b[0m\r\noperable program or batch file.")).toBe('codex')
+    expect(detectMissingCommand('bash: gemini: command not found')).toBe('gemini')
+    expect(detectMissingCommand('bash: line 1: claude: command not found')).toBe('claude')
+    expect(detectMissingCommand('zsh: command not found: codex')).toBe('codex')
+  })
+  it('with an expected name, ignores a tool missing from the shell profile and accepts a path or .exe', () => {
+    const profile = "oh-my-posh : The term 'oh-my-posh' is not recognized as the name of a cmdlet.\r\nPS C:\\p> & claude --name x\r\n"
+    expect(detectMissingCommand(profile, 'claude')).toBeNull()
+    expect(detectMissingCommand(profile + "& : The term 'claude' is not recognized as the name of a cmdlet.", 'claude')).toBe('claude')
+    expect(detectMissingCommand("bash: /usr/local/bin/codex.cmd: command not found", 'codex')).toBe('/usr/local/bin/codex.cmd')
+    expect(detectMissingCommand('zsh: command not found: thefuck', 'gemini')).toBeNull()
+  })
+  it('stays quiet on a normal launch and on the echoed command line', () => {
+    expect(detectMissingCommand('PS C:\proj> claude --name "x" --append-system-prompt "if a command is not found, say so"\r\nClaude Code v2.1')).toBeNull()
+    expect(detectMissingCommand('')).toBeNull()
   })
 })

@@ -1,5 +1,10 @@
+import { useState } from 'react'
 import { Icon } from '@/lib/icons'
 import { useEscape } from '@/lib/useDialog'
+import { speak, voiceFor } from '@/lib/speak'
+import { useBoard } from '@/store/board'
+import { ttsSettings } from '@shared/tts'
+import { EnginesPanel } from './EnginesPanel'
 
 const REPO = 'https://github.com/blee170/Ouroboros'
 const LINKS = [
@@ -19,19 +24,55 @@ const STEPS: Array<{ title: string; text: string }> = [
 ]
 
 const SHORTCUTS: Array<[string, string]> = [
-  ['Ctrl+1 … 9', 'jump to a card'],
-  ['Ctrl+F', 'find a card by title'],
+  ['Ctrl+J', 'jump to a card (type to narrow, ↑↓, Enter)'],
+  ['Ctrl+Shift+N', 'next card that needs you, then unread finished turns'],
+  ['Ctrl+1 … 9', 'jump to a card in sidebar order'],
   ['Ctrl+S', 'save the board now (it auto-saves too)'],
   ['Ctrl+V', 'paste a screenshot into a Claude card as an image'],
   ['Ctrl+C', 'copy the selection in a terminal (no selection: interrupt)'],
   ['Esc', 'close a dialog']
 ]
 
+/** First run only: pick the engine (which CLI new cards run) and hear what an announcement sounds like. */
+function SetupSteps() {
+  const settings = useBoard((s) => s.settings)
+  const setSettings = useBoard((s) => s.setSettings)
+  const [msg, setMsg] = useState('')
+  const test = async (): Promise<void> => {
+    const tts = ttsSettings(settings)
+    const ko = tts.engine !== 'windows' || Boolean(voiceFor('ko'))
+    setMsg('Playing…')
+    const err = await speak({ kind: 'finished', title: ko ? '총괄' : 'Conductor', lang: ko ? 'ko' : 'en' })
+    setMsg(err ? `${err} — the Windows voice spoke instead.` : 'That is what a finished turn sounds like. Voice, toast and who gets announced: Settings.')
+  }
+  return (
+    <div className="settings-section first setup-steps">
+      <h4>Set up</h4>
+      <EnginesPanel compact />
+      <div className="row">
+        <label className="row">
+          Announce
+          <select value={settings.announce ?? 'conductor'} onChange={(e) => void setSettings({ announce: e.target.value as 'off' | 'conductor' | 'all' })}>
+            <option value="conductor">Conductor replies</option>
+            <option value="all">every card</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+        <button className="btn small" onClick={() => void test()}>
+          <Icon name="volume" size={13} /> Play a test announcement
+        </button>
+        {msg && <span className="hint">{msg}</span>}
+      </div>
+    </div>
+  )
+}
+
 /**
  * The first-run guide: the first hour in seven steps, the shortcuts, and the links to the long versions. Opens by
- * itself once (settings.tourSeen) and from ? in the title bar after that.
+ * itself once (settings.tourSeen), then with two setup steps (engine, a test announcement); from ? in the title
+ * bar after that.
  */
-export function HelpDialog({ onClose }: { onClose: () => void }) {
+export function HelpDialog({ onClose, firstRun = false }: { onClose: () => void; firstRun?: boolean }) {
   useEscape(onClose)
   const open = (url: string) => (ev: React.MouseEvent): void => {
     ev.preventDefault()
@@ -44,7 +85,8 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
           <Icon name="help" /> Your first hour
         </h3>
         <div className="hint">Every agent is a card, cards are real terminals, lines carry one card's finished reply into the next, and a Conductor can run the board for you. The app calls no model itself: it runs the CLIs you are signed in to.</div>
-        <div className="settings-section first">
+        {firstRun && <SetupSteps />}
+        <div className={`settings-section${firstRun ? '' : ' first'}`}>
           <ol className="help-steps">
             {STEPS.map((s) => (
               <li key={s.title}>

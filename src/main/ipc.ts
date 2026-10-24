@@ -8,8 +8,8 @@ import { IPC } from '@shared/protocol'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
-import { detectClaudeReady } from '@shared/status'
-import { BoardDone, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
+import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
+import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
 import type { Board } from './board'
 import { findBriefUrl } from './briefs'
 import { listSkills } from './skills'
@@ -55,6 +55,10 @@ export interface WindowSession {
   autonomy: Autonomy
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
+  /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
+  selectedNodeId: string | null
+  /** One toast per card per BURST_MS, across "needs you", "failed" and "finished". */
+  burst: Burst
   readonly projectRoot: string
   /** Kill this window's processes and detach its listeners. */
   dispose(): void
@@ -104,10 +108,22 @@ function throttledSpawn<T>(fn: () => T): Promise<T> {
 const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** length of the launch command typed into each card's shell (its echo is not TUI output) */
 const launchLineLength = new Map<string, number>()
+/** the first output of each card's latest launch (its own buffer: the board's is capped and trimmed from the front) */
+const launchOut = new Map<string, string>()
+const LAUNCH_OUT_CAP = 16_000
+/** cards whose latest launch never came up (the CLI is missing): a prompt would land in a bare shell */
+const launchFailed = new Set<string>()
+
+/** Is the owner looking at this card right now (window focused, card selected)? Then it needs no toast. */
+function viewing(s: WindowSession, nodeId: string): boolean {
+  return !s.win.isDestroyed() && s.win.isFocused() && s.selectedNodeId === nodeId
+}
 
 /** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
+  // the CLI never started: the live process is the shell itself, and a prompt typed there would run as a command
+  if (launchFailed.has(nodeId)) return false
   const n = s.board.nodes.get(nodeId)
   // during an autonomous run a shell is a way around every deny rule: nothing is typed into terminal or command
   // cards (a line into one is refused too), and a parked permission prompt is never answered by a card
@@ -485,13 +501,17 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
   }
 }
 
+/** The toast for a card that needs a human: "needs you" with the question, or "failed" with the error; never for the card on screen. */
 function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayload): void {
   const settings = ctx.store.getSettings()
   if (!settings.notifications) return
+  if (viewing(s, p.nodeId)) return
   const n = s.board.nodes.get(p.nodeId)
   const title = n?.data.title ?? p.nodeId
-  if (Notification.isSupported()) {
-    const note = new Notification({ title: `${title} needs you`, body: p.statusDetail ?? 'Waiting for your input' })
+  const failure = failureOf(p.statusDetail)
+  // a run of permission prompts is one toast per 5 s; the taskbar still flashes for each
+  if (s.burst.allow(`needs:${p.nodeId}`, p.at) && Notification.isSupported()) {
+    const note = new Notification(failure ? { title: `${title} failed`, body: failure } : { title: `${title} needs you`, body: p.statusDetail ?? 'Waiting for your input' })
     note.on('click', () => {
       if (!s.win.isDestroyed()) {
         s.win.show()
@@ -549,10 +569,11 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
     if (p.status === 'needs-you') {
       const prefs = announceSettings(ctx.store.getSettings())
       const n = board.nodes.get(p.nodeId)
-      // the toast for this already comes from notifyNeedsYou; here only the voice, once a minute per card
-      if (prefs.voice && prefs.target !== 'off' && n && p.at - (spokenNeedsYou.get(p.nodeId) ?? 0) >= NEEDS_YOU_REPEAT_MS) {
+      // the toast for this already comes from notifyNeedsYou; here only the voice, once a minute per card, and
+      // not for the card the owner is looking at
+      if (prefs.voice && prefs.target !== 'off' && n && !viewing(s, p.nodeId) && p.at - (spokenNeedsYou.get(p.nodeId) ?? 0) >= NEEDS_YOU_REPEAT_MS) {
         spokenNeedsYou.set(p.nodeId, p.at)
-        deliver({ kind: 'needs-you', title: n.data.title, lang: langFor(n.data.title, p.statusDetail) }, undefined, { toast: false, voice: true })
+        deliver({ kind: failureOf(p.statusDetail) ? 'failed' : 'needs-you', title: n.data.title, lang: langFor(n.data.title, p.statusDetail) }, undefined, { toast: false, voice: true })
       }
     }
     if (settleTimer) clearTimeout(settleTimer)
@@ -570,7 +591,9 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
     const prefs = announceSettings(ctx.store.getSettings())
     const elapsed = lastTurnMs.get(nodeId)
     lastTurnMs.delete(nodeId)
-    const announced = announcesStop(n.data.kind, elapsed, prefs)
+    // the owner is looking at the card (the reply is on screen), or this card was announced seconds ago: the
+    // finish is not announced, so a settling board may still say "all cards have finished"
+    const announced = announcesStop(n.data.kind, elapsed, prefs) && !viewing(s, nodeId) && s.burst.allow(`finished:${nodeId}`, Date.now())
     done.stopped(announced)
     if (!announced) return
     deliver({ kind: 'finished', title: n.data.title, lang: langFor(n.data.title, message) }, firstLine(message) || undefined, prefs)
@@ -708,6 +731,7 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
     if (p.status !== 'needs-you') return
     const now = Date.now()
     if (now - (noticed.get(p.nodeId) ?? 0) < 60_000) return
+    if (launchFailed.has(p.nodeId)) return // nothing a Conductor can answer: the owner installs the CLI
     const src = board.nodes.get(p.nodeId)
     for (const edge of board.edges) {
       if (edge.source !== p.nodeId || edge.data.mode !== 'auto') continue
@@ -739,6 +763,8 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     autonomy: null as unknown as Autonomy,
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
+    selectedNodeId: null,
+    burst: new Burst(),
     get projectRoot() {
       return board.projectRoot
     },
@@ -800,7 +826,16 @@ export function registerIpc(ctx: MainContext): void {
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
     if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting') {
-      if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+      // the shell could not find the CLI (that CLI, not a tool the shell profile wants): say so now (needs you,
+      // "failed:"), not after a stall timer gives up
+      const engine = n.data.engine ?? 'claude'
+      const out = ((launchOut.get(nodeId) ?? '') + data).slice(-LAUNCH_OUT_CAP)
+      launchOut.set(nodeId, out)
+      const missing = detectMissingCommand(out, engine)
+      if (missing) {
+        launchFailed.add(nodeId)
+        board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
+      } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
       else if (n.data.engine === 'codex' && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
         // Codex sends no session-start event: once it has printed more than the echoed launch line,
         // treat 4s of quiet as "ready"
@@ -817,6 +852,8 @@ export function registerIpc(ctx: MainContext): void {
   })
   ptys.on('exit', (nodeId: string, code: number) => {
     running.delete(nodeId)
+    launchOut.delete(nodeId)
+    launchFailed.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
     if (!s) return
     s.board.setPtyAlive(nodeId, false)
@@ -836,6 +873,10 @@ export function registerIpc(ctx: MainContext): void {
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
+  })
+  ipcMain.on(IPC.boardSelected, (e, nodeId: string | null) => {
+    const s = sessionOf(e)
+    if (s) s.selectedNodeId = typeof nodeId === 'string' ? nodeId : null
   })
   ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => void ptys.write(nodeId, data))
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
@@ -870,6 +911,8 @@ export function registerIpc(ctx: MainContext): void {
         settingsExtra: s.autonomy.settingsFragment()
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
+      launchOut.delete(opts.nodeId)
+      launchFailed.delete(opts.nodeId)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })

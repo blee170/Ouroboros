@@ -278,3 +278,181 @@ L1 감독형 → L2 태스크 에이전트(마커·체크포인트·diff) → **
 **2단계 (0.7.x)**: §10.2 판정의 Adopt/Adapt — 턴 확인(done은 볼 때까지만, 안읽음 굵게), 3초 재정렬 유예, 상태·결과 기반 토스트 문구 + 5초 버스트 쿨다운 + "포커스 + 선택된 카드"일 때만 억제, 누락 명령 꼬리 스캔(3분 park 대신 수 초), unverifiable/unconfirmed 표시 상태, Ctrl+J 점프 팔레트, 다음 needs-you 단축키, 상태바 사용량 칩, 온보딩에 엔진 선택·소리 테스트 단계.
 **3단계 (Type 1, 승인 후)**: §10.3-설계 린 폰 컴패니언, Tailscale 전용부터.
 **Skip**: OSC 7501 진행 링, 네이티브 모바일 앱·클라우드 릴레이·푸시 게이트웨이, 오른쪽 탐색기/SCM/포트 패널(캔버스와 경쟁), 숨김 워크스페이스 음소거, FirstLaunchBanner.
+
+## 11. Orca 너머의 자율성: 엔진 간 에이전트 통신과 push / deploy / SQL의 게이트된 자동화 (2026-10-25, 0.8 계획 전) — 검증한 사실 + 설계 제안
+
+**질문**(사장님, 2026-10-25): Orca는 "여러 세션 지켜보기"를 잘한다. 우로보로스는 그 너머 — 다른 엔진의 에이전트끼리 통신하고, push·deploy·SQL 권한까지 포함해 전부 자동화할 가능성을, 보안 문제를 같이 풀면서 — 로 가야 한다. 이 섹션은 코드가 아니라 **설계 제안**이다. 방법: 리서치 4개(Orca 격차 · 엔진 간 통신 · 게이트 자동화 · 위협 모델)를 Opus로 병렬 수행(각 20–30 호출, 1차 출처 우선, 지난 12개월), 핵심 주장 3개(Claude 채널·크로스세션 메시징·Gemini CLI 상태)는 편집자가 공식 문서로 재확인, 로컬 사실은 이 워크트리의 소스를 직접 읽음(f5fca4d). 1차 출처에서 읽지 못한 것은 **[미확인]**. 출처는 §11.7.
+
+### 11.0 결정 브리프 (사장님용, 2분)
+
+**결론 한 줄**: 자동화의 경계는 "에이전트가 무엇을 하려 하는지 분류"가 아니라 **"에이전트가 애초에 할 수 없게"**로 그린다. 서버 측 규칙(GitHub 룰셋·Supabase 브랜칭·플랫폼 Git 연동)과 **자격증명 부재**(prod 토큰은 우로보로스 메인 프로세스만 들고, 카드 폴더·env에는 절대 없음)가 기계적 게이트고, CLI의 deny/hook은 2차 레일이다. 벤더 3사 모두 "명령 패턴 규칙은 보안 경계가 아니다"라고 문서에 쓴다(§11.4).
+
+**빌드 순서** (가역 → 비가역, 각 단계가 앞 단계를 전제):
+1. **보안 부채 먼저 (0.8.0, 1–2일)** — 코드에서 확인된 구멍 4개: 앱 단일 토큰 → **카드별 토큰**, `/hook/*` 무인증 → 토큰 요구, `x-ouroboros-self` 자기주장 → 토큰에서 유도, Codex argv 토큰 노출 → env/파일로. 그리고 `Host`/`Origin` 검사, 카드 spawn 시 **env 허용목록**(부모 env 상속 금지), `.ouroboros.json` 해시 검증. 이게 없으면 2·3단계가 "한 카드 뚫리면 보드 전체"가 된다. (§11.5 #5·#6)
+2. **엔진 간 메시지 (0.8.x)** — 보드 MCP에 `send_message` / `check_inbox` / `ack` 셋 + 훅 서버의 **내구 큐**(ID·ack·루프 가드), 배달은 엔진별 어댑터(Claude = Stop/UserPromptSubmit 훅 드레인이 기본, 채널은 프리뷰라 옵션; Codex = 훅 `additionalContext` + Stop block; Gemini = 훅). 세 엔진 전부 보드 MCP가 이미 연결돼 있어 새 전송층이 필요 없다. 원장(`claude/task-ledger` 브랜치)과 같은 저장 패턴. (§11.3)
+3. **액션 게이트 (0.9)** — 프로젝트별 정책 파일(`auto` / `ask` / `never`), 메인 프로세스의 **자격증명 브로커**("승인 후 실행" 버튼이 토큰을 자식 프로세스 env에만 주입), 서버 측 룰셋 체크리스트, 감사 로그 JSONL → 모닝 리포트. 자동 허용 범위는 **non-main 브랜치 push · PR 열기 · 브랜치 DB 마이그레이션 · prod SQL 읽기(read-only 롤)**까지. (§11.4)
+4. **Orca 격차 채택 (0.9.x)** — 스케줄러+precheck, 실행 원장(건너뛴 이유), `ask`(워커 질문 → 총괄/폰), 스테일 응답 가드(prompt-id), 권한 대기 중 메시지 보류, 완료 카드 하이버네이션, 사용량 칩. (§11.2)
+
+**사람 게이트로 남는 것 (영구)**: main 머지 · prod 배포(트래픽 전환) · prod 마이그레이션 · prod SQL 쓰기 · 공개 PR/이슈/코멘트/퍼블리시 등 **되돌릴 수 없는 외부 송신** · 새 MCP 서버/스킬/페르소나 소스 **첫 신뢰** · 서드파티 저장소에 카드 붙이기 · `.ouroboros.json`/권한 설정 변경. 이유: 프롬프트 인젝션에는 신뢰할 만한 기술적 방어가 없다(Willison: "100% 막는 법을 아직 모른다", Anthropic auto 분류기 false-negative 17%/5.7%). 분류기 정확도가 아무리 올라도 "되돌릴 수 없음 × 외부"는 사람이 누른다. 이건 사장님 작업 규칙(Type 1)과 정확히 일치한다.
+
+**Type 1 결정 (사장님이 정할 것)**:
+- (a) 자동 허용 목록의 경계 — 제안: non-main push(자기 브랜치만) · PR 열기(초안) · 브랜치 DB 마이그 · prod SQL 읽기. **PR 자동 머지는 제외**(Supabase 브랜칭이면 머지 = prod 마이그).
+- (b) 저장소별 GitHub 룰셋 적용 — 비공개 저장소면 **GitHub Pro 필요**(가격 [미확인]). 관리자 bypass 끄기 포함.
+- (c) 자격증명 모델 — 카드용 fine-grained PAT(저장소 스코프·만료) 발급, prod 토큰은 우로보로스 메인에만. 1Password `op run`류 브로커를 쓸지.
+- (d) Codex/Gemini 카드의 자율모드 처리 — 지금은 run 시작 때 닫힘. Codex는 네이티브 Windows 샌드박스가 있어 **workspace-write + `never` 승인으로 자율 참여** 가능; Gemini는 소비자 로그인이 2026-06-18 종료돼(유료 API 키만) **베스트에포트**로 격하 제안.
+- (e) Claude 카드를 WSL2 안에서 띄워 샌드박스를 켤지 — 네이티브 Windows엔 Claude 샌드박스가 없다. 격리는 크게 오르고 ConPTY·파일시스템 비용이 든다.
+- (f) Supabase 브랜칭 결제(Pro + $0.01344/브랜치·시간) vs 로컬 스택 `db reset`.
+
+### 11.1 코드에서 확인한 현재 상태 — 사실 (이 워크트리 소스 직접 읽음)
+
+| 항목 | 사실 | 위치 |
+|---|---|---|
+| 보드 MCP | 카드마다 stdio MCP 프로세스. 도구 22개(list/read_output/send_prompt/list_roles/create_agent/remove_agent/set_board_tools/get_changes/checkpoint 4종/wait_for_agents/set_note/tidy_board/handoff 4종/browser_*). 훅 서버에 `x-ouroboros-token`·`x-ouroboros-self` 헤더로 HTTP | `src/main/mcp-server.ts:27-34, 48-300` |
+| 세 엔진 모두 연결됨 | Claude = `--mcp-config` 파일, Codex = `-c mcp_servers.ouroboros.*`, Gemini = 시스템 설정 파일의 `mcpServers`. **새 메시징 전송층 불필요** | `claude-launcher.ts:184`, `agent-launcher.ts:92-94, 160-170` |
+| 토큰 범위 | `randomBytes(24)` **앱 실행당 1개**, 모든 카드 공유(`OUROBOROS_API_TOKEN` env가 덮어씀) | `hook-server.ts:115` |
+| `/hook/*` | **토큰 검사 없음** — 로컬 아무 프로세스가 아무 카드의 훅 이벤트(done/needs-you)를 위조 가능 | `hook-server.ts:166-176` |
+| `x-ouroboros-self` | 토큰 확인 뒤 **자기주장 헤더를 신뢰**해 `tidy` 범위 등 결정 → 카드 A가 카드 B로 행동 가능 | `hook-server.ts:179-183` |
+| 토큰 노출 | Claude 카드: 프로세스 env(`OUROBOROS_TOKEN`) → 에이전트가 띄우는 모든 셸이 상속. **Codex 카드: 명령줄 argv**(`-c mcp_servers.ouroboros.env={...TOKEN...}`) → `Get-CimInstance Win32_Process`로 같은 사용자 전 프로세스가 읽음. Gemini: 설정 파일 | `claude-launcher.ts:36-39`, `agent-launcher.ts:94, 165, 203` |
+| 수명 이벤트 | Claude HTTP 훅 / Codex `notify`(턴 종료만, PreToolUse류 게이트 없음) / Gemini `hooks` 명령 | `claude-launcher.ts:163`, `agent-launcher.ts:90, 142-151` |
+| 자율모드 레일 | deny 규칙은 카드별 `--settings` 임시 JSON에 기록. run 시작 시 Codex/Gemini 카드 **닫힘**(deny 규칙 없음), run 중 `create_agent`는 Claude만. 캡: dispatch·재시도·stall nudge→park. 이벤트 로그+모닝 리포트 `%APPDATA%\Ouroboros\autonomy\<project>\` | `shared/autonomy.ts:171-200`, `ipc.ts:345-349`, `main/autonomy.ts` |
+| 문서화된 한계 | README 83행: 규칙은 **타이핑된 텍스트만** 매치(별칭·래퍼 스크립트·`curl`로 GitHub API·중첩 `bash -c` 못 잡음), Edit 규칙은 셸 쓰기 못 묶음, "샌드박스가 아니다, prod 자격증명을 워커 폴더에 두지 마라" | `README.md:83` |
+| 프로젝트 파일 | `.ouroboros.json` 프로젝트 폴더당 1개, 체크포인트는 절대 안 건드림. 벤더 보호 경로 목록엔 없음 | `workspace-store.ts:6`, `checkpoints.ts:6` |
+| 원장 | `task_create/claim/update/list`는 **다른 세션이 `claude/task-ledger`에서 구현 중** — 여기선 설계만 참조 | — |
+
+### 11.2 Orca가 다세션 운영에서 하는 것 중 우로보로스에 없는 것 — 사실 + 판정
+
+소스: `stablyai/orca` 문서(`docs/site/content/docs/*`, `skill-guides/*`), `src/` 일부, 2026-08~10 릴리즈 98개, 이슈. v1.4.239(2026-10-24) 기준. **§10 작성 때 못 봤던 교정**: Orca는 실험 기능 **Orchestration**으로 에이전트 간 메시징·태스크 DAG·결정 게이트를 **이미 갖고 있다**. 없는 것은 push/deploy/SQL **정책 게이트**와 deny 목록이다 — 기본 실행이 `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox` / `--yolo`("worktree가 샌드박스")이고, 2026-10-20 v1.4.232에서야 Manual|Auto|Yolo 스위치가 생겼다(Auto = Claude `--permission-mode auto`, Claude/Codex만).
+
+| # | Orca 기능 | 사실 (출처) | 판정 | 이유 |
+|---|---|---|---|---|
+| 1 | **스케줄 자동화**(hourly/daily/cron/RRULE, 타임존, 실행 원장) | 트리거 타입은 `'scheduled' \| 'manual'` 둘뿐, 스케줄러는 로컬 호스트 서비스(클라우드 아님). `automations-types.ts` | **채택** | 스케줄러 없으면 무인 작업이 없다. 모닝 리포트에 실제 야간 실행이 들어감 |
+| 2 | **precheck** 셸 게이트(비0 종료 = 건너뜀, 예 `gh pr list`) | GitHub/Linear 이벤트 트리거 **없음**, 폴링으로 대체. `automations.mdx` | **채택** | 웹훅·클라우드 없이 "PR 생기면"을 흉내. 몇 줄 |
+| 3 | 실행 원장의 **타입 있는 건너뜀 이유**(`skipped_precheck/missed/unavailable/needs_interactive_auth`, `dispatch_failed`) + "Orca가 터미널을 잃었다" 설명 | `run-completion-watcher.ts` | **채택** | 모닝 리포트는 "왜 안 돌았나"가 필요 |
+| 4 | 스케줄 extra-args 허용목록 — **권한/설정 플래그 거부**(v1.4.224) | `automations.mdx` | **채택** | 스케줄로 deny 규칙 우회 못 하게. 사소 |
+| 5 | **내구 FIFO 인박스 + 명시 ack**, 타입 있는 `worker_done{outcome, files}`, **dispatch ID**로 스테일 완료 거부 | "성공한 send는 내구 enqueue만 증명, wake/nudge는 베스트에포트" `messaging-and-gates.md` | **적응** | §11.3 메시징의 저장 모델로 그대로. 총괄 `send_prompt`엔 배달·ack 의미가 없다 |
+| 6 | `ask`(워커→코디네이터 질문, 옵션+타임아웃) — TUI 프롬프트 대신 | `orchestration.mdx` | **채택** | 무인 운영의 핵심: 막힌 카드 대신 총괄/폰으로 질문 라우팅 |
+| 7 | **결정 게이트**(해결될 때까지 태스크 블록) | `orchestration.mdx` | **적응** | parked 카드의 "이유"를 게이트로 — 사장님이 폰/음성으로 해결 |
+| 8 | 태스크 DAG 상태 어휘 `pending/ready/dispatched/completed/failed/blocked` | `orchestration.mdx` | **적응** | 로드맵 C 원장의 상태 이름으로 재사용 |
+| 9 | **스테일 응답 가드** — prompt-id가 아직 대기 중일 때만 답 주입 | `src/cli/specs/connector.ts` "늦은 답이 다음 프롬프트에 타이핑되지 않게" | **채택** | 폰 컴패니언·총괄 `send_prompt` 둘 다 필요 |
+| 10 | **권한 대기 중 후속 메시지 보류** | `connector.ts` | **채택** | 총괄이 승인 메뉴에 타이핑하는 실패를 막음 |
+| 11 | **하이버네이션** — 완료·미터치 카드 N분(기본 30) 후 sleep, 열면 `--resume`; 미결 dispatch 있으면 안 잠 | `hibernation.mdx` | **채택** | Orca 이슈 #29899(**Windows**, 3+ 에이전트 메모리 포화·프리즈)의 완화. parked 카드와 자연스럽게 맞음 |
+| 12 | 사용량/레이트리밋 칩(로컬 파일만, 80% 경고, 리셋 카운트다운) | `usage-tracking.mdx` | **채택** | "새벽 3시에 멈출까"를 봐야 함. API 호출 없음 |
+| 13 | 레이트리밋 시 계정 자동 페일오버 | **Orca에도 없음**, 요청 이슈 #20512(댓글 20) | **적응** | 계정 돌리기 대신 "리셋까지 park" 규칙(이미 15분 continue). 구독 돌려쓰기는 §9에서 금지 |
+| 14 | Manual/Auto/Yolo 전역 스위치 | v1.4.232 | **적응** | 자율모드 **아래** 중간 티어로 "Auto"(deny 규칙은 그대로 위에). Orca엔 deny 층이 없다 |
+| 15 | Agent Dashboard 칸반(Needs You/Working/Done/Idle≥30분) | `agents-sessions.mdx` | **적응** | 캔버스가 보드. Needs-you 필터·30분 idle 디밍만 |
+| 16 | `orca.yaml` `scripts.setup/archive`, `.worktreeinclude` | `orca-yaml.mdx` | **적응** | 헤드리스 spawn에 워크트리 셋업(의존성·env 복사) 필요 |
+| 17 | Resource Manager — 병합된 워크트리 일괄 정리(확인 후), PTY 검증 종료 | v1.4.238 | **적응** | 모닝 리포트 액션 "머지된 카드 워크트리 정리" — 항상 확인 후, 자동은 절대 아님 |
+| 18 | Keep awake(On/Agent/Off) | `settings.mdx`, Windows 동작 [미확인] | 이미 있음 | 자율모드가 `keepAwake` 보유 |
+| 19 | 그룹 주소(`@idle`, `@claude`, `@worktree:`) | `messaging-and-gates.md` | **스킵** | 핸드오프 선이 이미 토폴로지. 브로드캐스트는 소음 + Reason Network 원칙 "브로드캐스트는 사람만" |
+| 20 | Agents 피드, Tasks 페이지(GitHub Projects/Linear/Jira), git UI(AI 커밋/PR, 자동 머지, Fix broken checks) | 각 문서 | **스킵** | 모닝 리포트+음성이 캐치업. 사장님이 push·merge를 직접 한다. "Fix broken checks → 새 카드"만 나중에 |
+
+Orca가 **안 하는 것**(= 우로보로스 차별점 유지): push/merge/deploy/SQL deny·정책 게이트 없음 · 이벤트 트리거 없음 · 일괄 승인 없음(문서·트리 검색에서 미발견) · 머지 시 워크트리 자동 삭제 없음(PR #32263은 PR 링크만 정리) · 모닝 리포트·음성 알림 대응물 [부재 미확인]. 운영 불만: #17344 터미널 레코드 누적, #21343 죽은 PTY 재수화, #28147 헤드리스 좀비, #16102 숨긴 창에서 권한 알림 유실.
+
+### 11.3 엔진 간 통신 — 사실과 추천 설계
+
+**사실 (엔진 × 능력)** — 편집자가 Claude 두 항목을 공식 문서에서 재확인(2026-10-25).
+
+| 엔진 | 실행 중 인바운드 | idle 때 인바운드 | 훅 | Stop/계속 | 비고 |
+|---|---|---|---|---|---|
+| **Claude Code** | ① **채널**: MCP 서버가 `capabilities.experimental['claude/channel']` 선언 → `notifications/claude/channel {content, meta}`; 바쁘면 모아서 다음 턴. **ack 없음, 미등록이면 조용히 드롭**. ② **크로스세션 메시징**(네이티브 Windows **v2.1.234+**, 기본 on): 세션마다 **named pipe**, `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`을 훅·Bash에 export, Windows는 첫 줄 `{"type":"auth","token":…}` 필수; "툴 호출 사이에" 읽음. ③ PostToolUse/UserPromptSubmit `additionalContext` | ② idle이면 **새 턴 시작**. `asyncRewake` 훅 exit 2가 깨움 | 33 이벤트, `command`/`http`/`mcp_tool` 타입(http는 SessionStart 불가) | Stop `decision:"block"`+reason 계속 | 채널은 **리서치 프리뷰**: 커스텀 채널은 `--dangerously-load-development-channels server:<name>` + 전체화면 확인 다이얼로그, `-p`/SDK에선 무시, claude.ai/Console 인증 필요, `--help`에 없음, 계약 변경 가능. 크로스세션은 기본 정책이 bypass 클래스 불일치 시 **hold**(5분 후 드롭) — 카드 `--settings`에 `crossSessionInbound:"accept"` 필요. 루프 가드 내장(발신자별 레이트리밋·동일 반복 드롭·큐 50) |
+| **Codex CLI** | `codex app-server`(stdio JSONL) `turn/steer`(활성 턴에 입력 추가), `turn/interrupt`; TUI면 훅 `additionalContext`(SessionStart/UserPromptSubmit/Pre·PostToolUse)만 | app-server `turn/start`; TUI는 **없음**(PTY 타이핑만) | 12 이벤트 **기본 on**, **해시로 신뢰** — 훅 명령이 바뀌면 재신뢰까지 건너뜀 → 토큰은 inline 말고 env로 | Stop `decision:"block"` → `reason`이 계속 프롬프트 | app-server WebSocket 리스너는 실험적이며 **기본으로 비-루프백 무인증 허용** — 쓰지 말 것. `notify`·`-c mcp_servers` [이번 세션 미재확인] |
+| **Gemini CLI** | 푸시 없음. BeforeAgent `additionalContext`(그 턴만), AfterAgent `decision:"deny"` → `reason`을 새 프롬프트로 재시도(`stop_hook_active` 제공) | ACP `session/prompt`(네이티브 ACP 에이전트) | 11 이벤트 | AfterAgent deny | **Google 공식**: 2026-06-18부로 소비자(AI Pro/Ultra·무료 Code Assist) 접근 종료, "Login with Google" 불가; **유료 Gemini API 키·Code Assist Standard/Enterprise만** 유지. 후속은 비공개 **Antigravity CLI(`agy`)**, 훅 문서 404, ACP 목록에 없음 → **베스트에포트 어댑터** |
+| 프로토콜 | ACP(`session/prompt`/`update`/`cancel`, 중간 steer 없음): Gemini 네이티브, Claude `claude-agent-acp`, Codex `codex-acp` 어댑터. MCP 2025-11-25: tasks(실험)·URL elicitation·sampling tools — **서버가 사용자 턴을 주입하는 표준은 없음**(채널은 Anthropic 확장) | | | | |
+
+**선행 사례**: Reason Network(MIT/Apache, Rust P2P) — MCP 도구 `list_team`/`send_message`/`check_inbox`; Claude Code·Codex는 미드세션+idle 웨이크, Gemini/Cursor/Copilot은 "다음 스텝에"; 오프라인 큐; **브로드캐스트는 사람만**(푸시 메커니즘 자체는 미문서화). Claude agent teams — `~/.claude/teams/<team>/inboxes/<agent>.json` 파일 메일박스, 쓰기 성공 = 전송 성공, Windows Terminal 분할 미지원. mcp_agent_mail — pull 전용(git+SQLite, `fetch_inbox`/ack/advisory 파일 리스), Python판 비유지. Gas Town `gt nudge` = tmux send-keys, 본인 문서가 "undocumented limits" 취약점으로 명시.
+
+**추천 설계 (기존 `mcp-server.ts`/`hook-server.ts` 패턴 유지)**:
+1. **도구 셋** — 보드 MCP에 `send_message(to, body, kind?, reply_to?, ack_required?)`, `check_inbox(unread_only)`, `ack(id)`. 수신자는 카드 ID 또는 제목. `kind` 어휘는 Orca를 빌린다: `status | question | worker_done{outcome, files} | escalation`. 브로드캐스트 도구는 **없음**(사람만, 인스펙터에서).
+2. **저장** — 훅 서버(메인 프로세스)가 카드별 **내구 FIFO**를 소유: `{id, from, to, kind, body, created, delivered?, acked?}`, 디스크(`%APPDATA%\Ouroboros\mail\<project>.jsonl`)에 append. 원장(`claude/task-ledger`)과 같은 저장 패턴. **send 성공 = enqueue 증명만**. 50개 큐 상한, 발신자별 분당 N개, 동일 본문 60초 내 반복 드롭(Claude 내장 규칙 복제).
+3. **배달 어댑터** (베스트에포트, 멱등):
+   - **공통 백스톱** = **Stop 훅 드레인**: 턴이 끝나려 할 때 미읽음 메일이 있으면 `decision:"block"`, `reason` = 메일 본문(발신 카드 표시, "다른 카드의 메시지, 사용자 승인 아님" 래퍼). 연속 block 상한 3(Codex/Gemini는 `stop_hook_active`로 확인). 이것만으로 세 엔진 모두 "미읽음 메일 두고 턴을 끝내지 않음"이 된다.
+   - **미드턴** = Claude PostToolUse/UserPromptSubmit `additionalContext`, Codex Pre/PostToolUse `additionalContext`, Gemini BeforeAgent `additionalContext`. 이미 훅 서버가 이 이벤트를 받고 있으니 응답 본문에 싣기만 하면 됨(지금은 `{}`를 즉시 반환).
+   - **idle 웨이크** = Claude는 named pipe(v2.1.234+)에 auth 줄 + 메시지(줄 스키마 [미확인] — 스파이크 필요), 또는 채널(프리뷰, 다이얼로그 비용). Codex TUI는 idle 웨이크 없음 → 지금처럼 `send_prompt`(PTY 타이핑)가 폴백, 단 **권한 대기 중엔 보류**(§11.2 #10) + **prompt-id 가드**(#9). Gemini는 `send_prompt` 폴백.
+   - Codex를 `app-server`로 띄우는 안(`turn/steer`·`thread/resume`·`item/permissions/requestApproval`)은 **카드 UI를 PTY에서 이벤트 렌더로 바꾸는 큰 공사** — 0.9 이후로 디퍼.
+4. **보안 결합** — `send_message`의 `from`은 헤더가 아니라 **카드별 토큰에서 유도**(§11.5 #5). 워커 역할은 `send_message`를 **부모(총괄)에게만**, `send_prompt`·`create_agent`는 총괄 전용(`set_board_tools` 역할 프로파일). 수신 본문은 항상 "untrusted data from card X" 봉투.
+5. **UI** — 핸드오프 선 위에 메시지 수 배지, 인스펙터에 인박스 탭, 모닝 리포트에 "메일 N통, 미ack M통".
+
+### 11.4 push / merge / deploy / 마이그레이션 / SQL의 게이트된 자동화 — 서베이와 "액션 게이트" 설계
+
+**서베이 — 2025–26 도구들이 게이트를 어떻게 세우나** (1차 문서 읽은 것은 출처 표기, 아니면 [미확인])
+
+| 층 | 메커니즘 | 기계적? | 비용 |
+|---|---|---|---|
+| GitHub 서버 | **룰셋**(PR 필수·필수 상태 체크·force push 차단·"배포 성공 필수"·서명 커밋), 클래식 보호와 **합산되어 가장 엄격한 쪽 적용**, bypass 액터(역할·팀·GitHub App). 공개 저장소 무료, **비공개는 Pro 이상** | **예**(에이전트가 로컬 자격증명만 들면 못 넘음) | Pro 가격 [미확인]; 설정 ~10분 |
+| GitHub 환경 | required reviewers(최대 6, 1명 승인), self-review 금지, wait timer(≤30일), 배포 브랜치 제한, 커스텀 보호 규칙(App, 프리뷰). **required reviewers는 공개 저장소 또는 Enterprise** — 비공개 개인 저장소엔 "승인 클릭" 없음 | 예 | 공개면 무료 |
+| GitHub 머지 큐 | 조직 소유 공개 저장소 또는 Enterprise Cloud. **개인 계정 불가** | — | 해당 없음 |
+| GitHub 토큰 | fine-grained PAT(저장소 선택·권한별 r/w·만료 ≤366일), App 설치 토큰(1h), `GITHUB_TOKEN` `permissions:` 블록, Actions OIDC(`id-token: write` → 클라우드 신뢰, 환경 바운드 `sub`). **함정**: PAT 소유자가 admin이고 admin이 bypass면 토큰이 bypass 상속 → **admin을 bypass에서 뺄 것** [PAT·App·OIDC 세부 미확인] | 예 | 무료 |
+| Supabase | **브랜칭**: PR마다 브랜치 DB, **PR 머지 시 Supabase가 prod에 pending 마이그 적용**(Clone→Pull→Health→Configure→Migrate→Seed→Functions) → "머지 클릭 = prod 마이그 게이트". Pro/Team + **$0.01344/브랜치·시간**. **스코프 PAT GA(2026-10-06)**: 능력별 read/read-write, **SQL은 Database read-write 없으면 read-only**. `db push`는 `environment: production` 잡 + env 시크릿으로 [미확인]. `pg_read_all_data`+`default_transaction_read_only` 롤, `pgaudit` [미확인] | 예(서버) | Pro |
+| Cloudflare | `wrangler versions upload`(배포 없이 버전 생성, Workers Builds가 비-prod 브랜치에 기본) vs `versions deploy`(트래픽 %). **버전 URL은 prod 바인딩(D1/KV/R2) 공유** → "프리뷰"가 prod 데이터를 만질 수 있음. 토큰 권한 "Workers Scripts:Edit"는 upload·deploy 둘 다 [미확인] | 워크플로 기계적, **자격증명 기계적 아님** | 무료 |
+| Vercel | 프리뷰 vs `vercel promote`; **Rolling Releases**(Pro, 프로젝트 1개, 단계별 %; CI는 `rolling-release start/complete`, `promote`는 100%로 점프). 토큰은 팀 스코프, 프로젝트 스코프 없음 [미확인] | 같음 | Pro |
+| 정책 엔진 | OPA/Conftest(Rego, CI 필수 체크), Cerbos, Oso; 에이전트 승인 제품(HumanLayer·Permit.io·Composio/Arcade·Devin "ask before") — **전부 [미확인]**, 솔로 개발엔 과함 | — | — |
+| 자격증명 브로커 | 1Password `op run`, Doppler/Infisical `run --`, Vault 동적 DB 자격증명(TTL) — 비밀을 **자식 프로세스 env에만** 주입 [미확인]. Anthropic 클라우드 세션 모델: GitHub 자격증명이 VM에 절대 안 들어가고 프록시가 서버 측에서 붙임(공식) | 예 | 무료~ |
+| **Claude Code** | 평가 순서 **deny → ask → allow**, 첫 매치 확정, 특이성 무관. Bash 규칙은 전체 명령 텍스트 매치, 서브셸·`$(…)`·루프 안도 검사. 공식 문구: "**프로그램을 둘러싼 보안 경계가 아니다**", "인자 제약 패턴은 fragile". PreToolUse 훅 `permissionDecision allow/deny/ask/defer`, **exit 2는 규칙 평가 전 차단**(allow보다 셈), 훅 allow는 deny/ask 못 넘음. `PermissionRequest` 훅. `disableBypassPermissionsMode`/`disableAutoMode: "disable"`(관리 설정이면 불변). 샌드박스: **"네이티브 Windows에선 샌드박스 없이 실행"**, WSL2만. 모드 `auto` 분류기(2026-03-25): FP 0.4%, **과잉 행동 FN 17%(n=52), 합성 유출 FN 5.7%(n=1000)**, "고위험 인프라의 사람 리뷰 대체 아님". 관리 설정/Team 로그인 아니면 **mod가 deny를 뒤집을 수 있음** | 2차 레일 | 무료 |
+| **Codex CLI** | `sandbox_mode` read-only / workspace-write / danger-full-access; `approval_policy` 현재 문서는 **on-request / never**만(`untrusted` 선택 불가, `on-failure`·`--full-auto`는 구 문서). **네이티브 Windows 샌드박스**: MXC(관리자 불필요, Win11 24H2 26100.9278+/25H2 26200.9278+ — 이 PC 26200, 리비전 [미확인]), elevated(전용 저권한 사용자·ACL·방화벽·**deny-read 글롭**), unelevated(제한 토큰, deny-read 없음). CVE-2025-59532(0.39.0 수정) 샌드박스 쓰기 루트 우회 | 샌드박스는 기계적 | 무료 |
+| **Gemini CLI** | 승인 `default/auto_edit/plan`, YOLO는 CLI 플래그만, `security.disableYoloMode`·`admin.secureModeEnabled`. **TOML 정책 엔진**(`[[rule]] toolName/commandPrefix/decision allow\|deny\|ask_user/priority`, Admin>User>Workspace>Extension>Default, 비대화형에서 `ask_user`→deny). 샌드박스 `windows-native`(icacls Low MIL, 세션 후 **지속**)/docker | 정책 2차, 샌드박스 약함 | 무료 |
+| git 로컬 | pre-push 훅은 `--no-verify`·`core.hooksPath`로 우회, `includeIf "gitdir:"`로 폴더별 자격증명/서명키, GCM `credential.useHttpPath` [미확인]. 같은 OS 사용자인 에이전트는 `.git/config`·훅을 고칠 수 있음 → **관례 수준**(실수 방지엔 유효) | 아니오 | 무료 |
+
+**액션별 결론 (솔로 개발·개인 GitHub·Windows)**:
+
+| 액션 | 기계적 게이트 | 어디서 | 제안 |
+|---|---|---|---|
+| 자기 브랜치 push | 저장소 스코프 PAT(Contents:write, admin bypass 없음) | 서버(토큰) | **auto**(브랜치 패턴 `claude/*`·`card/*`만, CLI는 `ask`→정책으로 allow) |
+| main push | 룰셋(PR 필수·force 차단·업데이트 제한·bypass 액터 0) | 서버 | **never** + CLI deny 2중 |
+| PR 열기 | 토큰(Pull requests:write) | 서버 | **auto**(draft) |
+| PR 머지 | 룰셋 체크 + `gh pr merge --auto`; 솔로는 자기 PR 승인 불가 | 서버 | **사장님 클릭**(Supabase 브랜칭이면 머지 = prod 마이그). CLI deny `gh pr merge` 유지 |
+| 프리뷰 배포 | 플랫폼 Git 연동(에이전트 자격증명 0) | 플랫폼 | **auto**, 단 Cloudflare 버전 URL의 prod 바인딩 주의 |
+| prod 배포 | main 빌드 또는 `workflow_dispatch`(사람 클릭); Rolling/`versions deploy %` | 서버+플랫폼 | **사람 트리거**, prod 토큰은 에이전트 env에 없음 |
+| 브랜치 DB 마이그 | Supabase 브랜칭(자동) 또는 로컬 `db reset` | 플랫폼 | **auto**(결제 시) |
+| prod 마이그 | 브랜칭 머지 또는 `environment: production` 잡 | 서버 | **사람만**(머지 클릭/dispatch). DB 비번·rw PAT 절대 미지급 — 현행 규칙 그대로 |
+| prod SQL 읽기 | `pg_read_all_data` 롤 / 스코프 PAT Database:read / MCP `--read-only` | 서버 | **auto**(읽기 전용 자격증명으로) |
+| prod SQL 쓰기 | 에이전트 경로 없음 | 자격증명 부재 | **사람 실행**, 에이전트는 SQL+롤백 초안(현행 "상자" 관행) |
+
+**"액션 게이트" 설계** (0.9):
+
+1. **정책 파일** — 프로젝트별, 단 **워크트리 밖**: `%APPDATA%\Ouroboros\policy\<project-hash>.json`(`.ouroboros.json`은 참조만; 벤더 보호 목록에 없으므로 로드 시 SHA-256 대조, 불일치면 사람 클릭 없이는 리로드 거부). 스키마 초안:
+   ```json
+   { "version": 1,
+     "actions": {
+       "git.push":        { "auto": ["refs/heads/claude/*", "refs/heads/card/*"], "never": ["refs/heads/main", "--force*"] },
+       "gh.pr.create":    { "auto": { "draft": true } },
+       "gh.pr.merge":     "ask",
+       "deploy.preview":  "auto",
+       "deploy.prod":     "never",
+       "db.migrate":      { "auto": ["branch"], "never": ["prod"] },
+       "db.sql.read":     { "auto": { "role": "agent_ro" } },
+       "db.sql.write":    "never" },
+     "credentials": { "GITHUB_TOKEN": "card-pat", "SUPABASE_ACCESS_TOKEN": "broker-only" } }
+   ```
+   `auto`는 조건부 자동, `ask`는 **APPROVAL NEEDED**(parked 게이트, 폰/음성/인스펙터에서 해결), `never`는 에이전트 경로 자체 없음(= 자격증명 부재 + 서버 규칙). 정책은 **더 엄격해지는 방향만** 카드가 제안 가능, 완화는 사장님 클릭.
+2. **3층 집행** — ① **서버**: 저장소마다 체크리스트(main 룰셋·bypass 액터 0·force 차단·필수 체크, Supabase 브랜칭 또는 `environment: production` dispatch) — 우로보로스가 `gh api`로 **읽어서 상태바에 "룰셋 ✓/✗"** 표시(쓰기는 안 함). ② **자격증명**: 카드 spawn 시 **env 허용목록**(부모 env 상속 금지; `ANTHROPIC_API_KEY`·`GITHUB_TOKEN`·`SUPABASE_*`·`CLOUDFLARE_*`·`VERCEL_*` 제외), 카드용은 fine-grained PAT 1개만. prod 토큰은 **메인 프로세스가 Windows Credential Manager/DPAPI에서 읽어** "승인 후 실행" 버튼이 띄우는 자식 프로세스 env에만 주입 — 카드가 읽을 수 있는 파일·env엔 절대 없음. ③ **CLI 레일**: Claude = `permissions.deny`(현행) + `ask`(`git push*`) + **PreToolUse 훅 exit 2**(정책 파일 평가 — `git push`의 refspec·`gh pr merge`·`wrangler versions deploy`·`vercel promote`·`supabase db push` 등; 훅은 **메인 프로세스가 평가**하고 결과만 반환; 그 입력 `session_id, tool_input, cwd, tool_use_id`가 감사 로그 한 줄). Codex = `sandbox_mode: workspace-write` + `approval_policy: never` + PreToolUse 훅(해시 신뢰라 명령 불변). Gemini = 정책 TOML(`git push` deny, Admin 티어) + BeforeTool 훅. 단, 세 벤더 모두 **규칙은 2차**라는 걸 UI에 적는다(지금 README처럼).
+3. **감사 로그** — `%APPDATA%\Ouroboros\audit\<project>.jsonl`: `{ts, card, engine, action, decision(auto|ask|never|approved|denied), by(policy|owner), tool_input, cwd, head_sha, diff_sha256}`. **모닝 리포트** 첫 섹션 "게이트": 자동 허용 N, 승인 대기 M(링크), 거부 K(어떤 카드가 뭘 시도했나). Claude auto 분류기 거부도 같은 파일(현재는 분류기 거부만 보고 — 규칙 거부도 넣는다).
+4. **범위 밖** — 자체 권한 분류기(§9 금지 유지), 머지 큐(개인 계정 불가), OPA(과함), 클라우드 승인 서비스.
+
+### 11.5 보안 — 무인 보드의 위협 모델 (각각 완화·비용·잔여 위험)
+
+| # | 위협 | 근거 사례 (출처) | 기계적 완화 | 비용 | 잔여 위험 / 사람 게이트? |
+|---|---|---|---|---|---|
+| 1 | **가져온 콘텐츠의 프롬프트 인젝션**(웹·이슈·PR 코멘트·README·MCP 결과) → 도구 오용·유출 | Willison "lethal trifecta"(비공개 데이터+신뢰 못 할 콘텐츠+외부 통신), "100% 막는 법 모른다"(2025-06). Invariant GitHub MCP 독성 흐름(공개 이슈→비공개 저장소 유출, 서버 버그 아님). Tracebit Gemini CLI RCE(README/GEMINI.md + 허용목록 파싱, `env \| curl`, 0.1.14 수정). Claude Code 승인 우회 CVE-2025-54795/58764, CVE-2026-24887. Codex CVE-2025-59532. OWASP Agentic Top 10 ASI01(2025-12, PDF [미확인]) | **카드별 트라이펙타 분리**: 리서치 카드 = 웹 fetch O·비밀 X·쓰기 도구 X; 빌드 카드 = 저장소·토큰 O·웹 fetch X·egress 허용목록. 한 카드에 둘 다 두지 않음. Claude WebFetch는 요약 모델 경유(공식). bypassPermissions 절대 금지 | 중(역할 프로파일에 도구 셋 추가) | **높음 — 사람 게이트 필수**: push·공개 PR/이슈/코멘트·퍼블리시·외부 송신. github.com 허용은 그 자체가 유출 채널(gist/PR) |
+| 2 | **페르소나 카탈로그·CLAUDE.md/AGENTS.md/GEMINI.md 인젝션, 숨은 유니코드** | Pillar "Rules File Backdoor"(2025-03, 숨은 유니코드). Snyk ToxicSkills(2026-02): 스킬 3,984개 중 **13.4% 치명**. Anthropic이 유니코드 태그 문자 감지 추가 [미확인]. Claude `-p`/SDK는 **신뢰 다이얼로그 없이** 저장소 훅·`env`·`apiKeyHelper`·`.mcp.json`을 로드(`permissions.allow`·추가 디렉토리만 보류) — 공식 | Agency 카탈로그 **스냅샷 + 파일별 SHA-256 핀**, 임포트 시 유니코드 Tags(U+E0000–E007F)·zero-width·bidi·HTML 코멘트 스크럽, 갱신은 diff 리뷰 후. 서드파티 저장소 카드는 `--setting-sources user` 또는 `--bare` + 명시 `--settings`, Gemini `folderTrust` on(기본 off) | 낮음(수십 줄) | 첫 임포트 내용·저장소 컨텍스트 파일은 여전히 프롬프트 → **첫 신뢰·카탈로그 갱신·서드파티 저장소 = 사람** |
+| 3 | **자격증명 유출**(`.env`·`~/.aws`·gh `hosts.yml`·Credential Manager·상속 env) | Claude `Read(./.env)` deny는 내장 도구와 `cat/head/sed`만, **`grep -r`·Python/Node 서브프로세스엔 무효**(공식). 샌드박스에 기본 자격증명 deny 목록 없음(공식). Claude 자격증명은 Windows에서 사용자 프로필 ACL 파일(공식). Codex elevated만 deny-read | spawn env 허용목록, 저장소 스코프 단명 토큰, 브로커(§11.4 ②), Codex elevated deny-read, Claude는 WSL2 샌드박스 `sandbox.credentials`(네이티브 불가) | 낮~중 | 같은 OS 사용자면 `git credential fill`·프로필 파일 읽기 가능 → OS 사용자 경계 없으면 중간. 게이트 아님, 의심 시 회전 |
+| 4 | **워커가 자기 가드레일 편집**(`.claude/settings*.json`·`~/.claude`·`.ouroboros.json`·훅·`.mcp.json`) | Claude 보호 경로(`.git`·`.claude`·`.mcp.json`·rc 파일…)는 모든 모드에서 자동 승인 안 됨, **bypassPermissions만 허용**(공식). `ConfigChange` 훅으로 차단 가능(공식). 샌드박스는 쓰기 거부(공식). CVE-2026-55607 워크트리/심링크 탈출 [미확인] | bypass 금지 + `disableBypassPermissionsMode:"disable"`(관리 설정 경로 [미확인]), ConfigChange 훅, `.ouroboros.json`·정책 파일 워크트리 밖 + 해시, 보드 권위는 메인 프로세스에만. 강한 집행은 **카드별 별도 Windows 사용자**(Codex elevated·srt-win 방식) | 중~높 | 같은 사용자 서브프로세스는 Claude 파일 규칙 우회 → **권한·정책 변경 = 사람 클릭** |
+| 5 | **카드 간 측면 이동**(보드 MCP로 `send_prompt`·`create_agent`·타 카드 출력 읽기) | 공개 사례 없음. 선례: Claude 크로스세션은 bypass 클래스 불일치 메시지를 **hold**, `requiresUserInteraction` MCP 도구는 bypass에서도 자동 승인 안 됨(공식). **로컬 사실**: 토큰 1개 공유 + self 헤더 신뢰(§11.1) | **카드별 토큰**(호출자 신원 = 토큰), 역할별 도구 화이트리스트(워커: 자기 상태 보고·부모에게 메시지만; `send_prompt`·`create_agent`·타 카드 `read_output`은 총괄/사람), 카드 생성 야간 캡(있음), 교차 카드 텍스트 "untrusted" 봉투 | 낮음 | 총괄 카드는 단일 침해점 → 총괄의 카드 생성은 캡 초과 시 사람 |
+| 6 | **훅 서버/토큰 남용**(argv·DNS 리바인딩·CSRF) | MCP Inspector CVE-2025-49596(0.0.0.0 + DNS 리바인딩, 웹페이지 방문만으로 RCE). Langflow CVE-2025-3248(CISA KEV). **로컬 사실**: `/hook/*` 무인증, Codex argv 토큰 | 127.0.0.1 유지, **모든** 경로 토큰(헤더), `Host`가 `127.0.0.1:<port>` 아니면 거부, `Origin` 있으면 거부, CORS 없음, 상수시간 비교, 토큰은 env/파일(argv 금지), 실행당 회전 | 낮음(하루) | 같은 사용자 에이전트는 상속 env의 토큰을 읽음 → "토큰 보유 = 보드"가 아니라 **카드 단위 권한** |
+| 7 | **네이티브 Windows 샌드박스 부재** | Claude: "네이티브 Windows는 샌드박스 없음, WSL2 사용"(공식). Codex: MXC/elevated/unelevated(공식). Gemini: icacls Low MIL/Docker(공식). Anthropic sandbox-runtime Windows 알파(`srt-sandbox` 사용자+WFP) [미확인] | Codex = MXC, Claude = WSL2 안 `sandbox.enabled`+`failIfUnavailable`+`allowUnsandboxedCommands:false`(ConPTY→`wsl.exe`, 저장소 WSL 파일시스템 [미확인]), Gemini = Docker. 전 엔진 공통 = 카드별 Windows 사용자 | 높음 | 프록시 TLS 미검사·도메인 프론팅·벤더 CVE. **Type 1 (e)** |
+| 8 | **MCP/스킬/플러그인 공급망**(악성 패키지·툴 설명 변조·러그풀) | postmark-mcp 숨은 BCC(2025-09) [미확인]. ToxicSkills. Anthropic "MCP 서버를 감사하지 않음"(공식). `disabledMcpjsonServers`(공식) | 보드가 MCP 설정 소유(`--mcp-config`, `--strict-mcp-config` [미확인]), 정확한 버전 핀(`@latest` 금지), 승인 시 툴 목록 해시 저장·변경 시 재승인, 자동 업데이트 없음 | 낮음 | 첫 버전이 악성이면 리뷰로만 → **새 MCP/스킬 소스 = 사람** |
+
+**안전하게 만들 수 없어 사람 게이트로 남는 것**: #1 인젝션 자체 → 되돌릴 수 없는 외부 송신 전부(push·merge·공개 PR/이슈/코멘트·퍼블리시·메시지 송신·prod 배포·prod SQL 쓰기). #2/#8의 **첫 신뢰**(페르소나·스킬·MCP 서버 소스, 서드파티 저장소). #4의 정책·권한 변경. 나머지(#3·#5·#6·#7·공급망 핀)는 낮~중 비용으로 기계적 완화 가능하며 §11.0 1단계가 그 시작이다.
+
+### 11.6 미확인 목록 (쓰기 전에 확인할 것)
+
+- Claude named pipe의 auth 줄 **이후 메시지 줄 스키마**; stdio MCP 자식이 `CLAUDE_CODE_MESSAGING_*` env를 받는지; `asyncRewake`가 완전 idle에서 새 턴을 여는지; 채널 dev 플래그 다이얼로그가 Electron ConPTY에서 어떻게 뜨는지 — **스파이크 1일**.
+- Codex `notify`·`-c mcp_servers` 재확인, `.git` 보호·네트워크 기본값, MXC 가용 빌드 리비전(이 PC `winver`).
+- GitHub Pro 가격, 비공개 개인 저장소의 push 룰셋·커스텀 배포 보호 규칙 가용성, fine-grained PAT/App 토큰/OIDC 세부(공식 문서 URL은 §11.7).
+- Supabase `db push`/`db lint`/`pg_read_all_data`/`pgaudit` 세부, Vercel 프로젝트 스코프 토큰 존재, Cloudflare upload 전용 권한 존재.
+- 보안: `disableBypassPermissionsMode` 관리 설정 경로, srt-win 레포 README, Windows argv/env 가시성 범위, GCM per-path, `op run`, Anthropic 유니코드 태그 감지 변경 로그, OWASP Agentic Top 10 원문.
+- Orca: 자동화가 데스크톱 꺼진 동안 도는지, 하이버네이션 도입 시점, 모닝 리포트·음성 알림 부재.
+- Gemini CLI 저장소 유지 상태(2026-06 이후), Antigravity CLI 훅·ACP.
+
+### 11.7 출처 (1차 우선; 이번 조사에서 읽음, 2025-10 ~ 2026-10)
+
+Anthropic/Claude Code: code.claude.com/docs/en/{channels, channels-reference, cross-session-messaging, hooks, agent-teams, permissions, permission-modes, sandboxing, security, settings-reference}, anthropic.com/engineering/claude-code-auto-mode(2026-03-25), github.com/anthropics/claude-code 어드바이저리 GHSA-x56v-x2h6-7j34 · GHSA-qxfv-fcpc-w36x · GHSA-qgqw-h4xq-7w8w. OpenAI/Codex: learn.chatgpt.com/docs/{app-server, hooks, sandboxing, windows/windows-sandbox}(developers.openai.com/codex가 리다이렉트), osv.dev CVE-2025-59532, github.com/openai/codex/issues/9062. Google/Gemini: developers.googleblog.com "transitioning-gemini-cli-to-antigravity-cli", developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals, geminicli.com/docs/hooks(+reference), github.com/google-gemini/gemini-cli/docs/{reference/configuration, reference/policy-engine, cli/trusted-folders, cli/sandbox}. 프로토콜: agentclientprotocol.com/{overview/agents, protocol/prompt-turn}, modelcontextprotocol.io/specification/2025-11-25/changelog. Orca: github.com/stablyai/orca — docs/site/content/docs/{cli/automations, cli/orchestration, cli/worktree-checkpoints, model/agents-sessions, agents/hibernation, agents/usage-tracking, agents/native-chat, review/github, review/commit-push, mobile, settings, activity}, skill-guides/orchestration/references/messaging-and-gates.md, src/shared/automations-types.ts, src/main/automations/*, src/cli/specs/connector.ts, releases v1.4.180–v1.4.239, issues #16102 #17344 #20512 #21343 #25451 #26714 #28147 #29899, PRs #19244 #32263. GitHub: docs.github.com {about-rulesets, available-rules-for-rulesets, deployments-and-environments, merging-a-pull-request-with-a-merge-queue}. Supabase: supabase.com/docs/guides/deployment/branching, supabase.com/pricing, supabase.com/changelog/scoped-personal-access-tokens-ga(2026-10-06). Cloudflare: developers.cloudflare.com/workers/{configuration/versions-and-deployments/gradual-deployments, ci-cd/builds/configuration, versions-and-deployments/version-urls}. Vercel: vercel.com/docs/rolling-releases(2026-09-15). 선행 사례·사고: github.com/reason-machines/reason-network, github.com/Dicklesworthstone/mcp_agent_mail, docs.gastownhall.ai/usage/communication, simonwillison.net/2025/Jun/16/the-lethal-trifecta, invariantlabs.ai/blog/mcp-github-vulnerability, tracebit.com/blog/code-exec-deception-gemini-ai-cli-hijack, snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub, thehackernews.com(Rules File Backdoor 2025-03), recordedfuture.com(CVE-2025-49596), helpnetsecurity.com(CVE-2025-3248). 2차(미확인 표기): CSA 리서치 노트(claude-code-action CVE-2025-66032, skill.md 포이즈닝, MCP 툴 포이즈닝), codex.danielvaughan.com, morphllm.com, flaviocopes.com, aiweekly.co.

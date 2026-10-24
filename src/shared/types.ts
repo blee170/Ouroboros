@@ -170,6 +170,8 @@ export interface HookEvent {
   last_assistant_message?: string
   /** SessionStart */
   source?: string
+  /** Set when the hook fires inside a subagent (absent for the main agent) */
+  agent_id?: string
   [key: string]: unknown
 }
 

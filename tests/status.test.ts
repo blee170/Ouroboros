@@ -44,6 +44,16 @@ describe('reduceHook', () => {
     expect(reduceHook('done', { hook_event_name: 'UserPromptSubmit' })?.status).toBe('working')
     expect(reduceHook('done', { hook_event_name: 'PreToolUse', tool_name: 'Read' })).toMatchObject({ status: 'working', statusDetail: 'tool: Read' })
   })
+  it('does not let a tool call from a background subagent revive a finished card', () => {
+    const sub = { hook_event_name: 'PreToolUse', tool_name: 'Bash', agent_id: 'agent-7' }
+    for (const prev of ['done', 'idle', 'ended'] as const) expect(reduceHook(prev, sub)).toBeNull()
+    expect(reduceHook('needs-you', sub, 'failed: usage limit')).toBeNull()
+    // mid-turn, or after an answered permission prompt, a subagent tool call is work as usual
+    expect(reduceHook('working', sub)).toMatchObject({ status: 'working', statusDetail: 'tool: Bash' })
+    expect(reduceHook('needs-you', sub, 'permission: Bash')?.status).toBe('working')
+    // an empty agent_id is the main agent
+    expect(reduceHook('done', { ...sub, agent_id: '' })?.status).toBe('working')
+  })
   it('ignores unknown events', () => {
     expect(reduceHook('idle', { hook_event_name: 'SomethingNew' })).toBeNull()
   })

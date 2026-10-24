@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, SessionUsage, UpdateStatus } from '@shared/protocol'
+import type { UsageSnapshot } from '@shared/usage'
 import type { AutonomyPublic } from '@shared/autonomy'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -79,9 +80,15 @@ interface BoardState {
   settledRoster: RosterRow[]
   /** Context usage per Claude card (from its transcript), refreshed when the card's status changes. */
   usage: Record<string, SessionUsage>
+  /** Account usage per engine (plan windows, tokens), as main last reported it. */
+  accountUsage: UsageSnapshot | null
+  /** The Usage dialog (title bar button, status-bar chip). */
+  usageOpen: boolean
   // actions
   setAutonomy(p: AutonomyPublic): void
   setUpdateStatus(p: UpdateStatus): void
+  setAccountUsage(s: UsageSnapshot): void
+  setUsageOpen(open: boolean): void
   /** The owner looked at a card (selected it while the window has focus): unread goes, a finished turn reads idle. */
   markViewed(id: string): void
   setUsage(id: string, u: SessionUsage): void
@@ -157,6 +164,14 @@ export const useBoard = create<BoardState>((set, get) => ({
   attention: EMPTY_ATTENTION,
   settledRoster: [],
   usage: {},
+  accountUsage: null,
+  usageOpen: false,
+  setAccountUsage(s) {
+    set({ accountUsage: s })
+  },
+  setUsageOpen(open) {
+    set({ usageOpen: open })
+  },
   markViewed(id) {
     const s = get()
     const n = s.nodes.find((x) => x.id === id)

@@ -30,7 +30,13 @@ export default function App() {
     void api.autonomy.state().then((p) => p && useBoard.getState().setAutonomy(p))
     // one quiet update check shortly after start, on the Welcome screen too; the result waits in the store
     const updateTimer = setTimeout(() => void api.update.check(), 8000)
+    // the plan-usage chip: read once at start and every 15 min (the Claude endpoint is asked at most every 5 min);
+    // a card's status line pushes fresher numbers in between
+    const readUsage = (): void => void api.usage.get().then((s) => useBoard.getState().setAccountUsage(s)).catch(() => undefined)
+    const usageTimer0 = setTimeout(readUsage, 3000)
+    const usageTimer = setInterval(readUsage, 15 * 60_000)
     const offs = [
+      api.usage.onChange((s) => useBoard.getState().setAccountUsage(s)),
       api.update.onStatus((p) => useBoard.getState().setUpdateStatus(p)),
       api.autonomy.onChange((p) => useBoard.getState().setAutonomy(p)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
@@ -74,6 +80,8 @@ export default function App() {
     return () => {
       offs.forEach((off) => off())
       clearTimeout(updateTimer)
+      clearTimeout(usageTimer0)
+      clearInterval(usageTimer)
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('focus', onFocus)
     }

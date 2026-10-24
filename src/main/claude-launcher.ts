@@ -22,14 +22,32 @@ const HOOK_EVENTS = [
   'SessionEnd'
 ]
 
-/** Claude Code settings fragment that forwards lifecycle hooks to our local server. */
+/**
+ * The status-line command: Claude Code pipes its status JSON (model, cost, context, the plan's rate-limit windows)
+ * to it on every API response; the command forwards the JSON to our server and prints nothing, so no status line
+ * shows in the card. curl ships with Windows 10+, macOS and most Linux; `curl.exe` dodges PowerShell's alias.
+ */
+export function buildStatusLineCommand(baseUrl: string, target: string, platform: NodeJS.Platform = process.platform): string {
+  const curl = platform === 'win32' ? 'curl.exe' : 'curl'
+  // the route answers 204 with no body, so nothing is printed (no `-o /dev/null`: it would mean a file under cmd.exe)
+  return `${curl} -s -m 3 -H "Content-Type: application/json" --data-binary @- ${baseUrl}/hook/${target}/statusline`
+}
+
+/**
+ * Only such an id goes into the status-line shell command. Ids are nanoids, but a board file (`.ouroboros.json`)
+ * can carry any string, and PowerShell would evaluate `(...)` in a command line: an odd id just gets no status line.
+ */
+export const SHELL_SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/** Claude Code settings fragment that forwards lifecycle hooks and the status line to our local server. */
 export function buildHookSettings(baseUrl: string, target: string, events: string[] = HOOK_EVENTS): Record<string, unknown> {
   const handler = { type: 'http', url: `${baseUrl}/hook/${encodeURIComponent(target)}`, timeout: 5 }
   const hooks: Record<string, unknown[]> = {}
   for (const ev of events) {
     hooks[ev] = [HOOK_EVENTS_WITH_MATCHER.includes(ev) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }]
   }
-  return { hooks }
+  if (!SHELL_SAFE_ID.test(target)) return { hooks }
+  return { hooks, statusLine: { type: 'command', command: buildStatusLineCommand(baseUrl, target) } }
 }
 
 export function buildMcpConfig(opts: { execPath: string; nodeBin?: string; scriptPath: string; baseUrl: string; token: string; nodeId: string }): Record<string, unknown> {

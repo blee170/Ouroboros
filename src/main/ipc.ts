@@ -34,6 +34,7 @@ import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } 
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
 import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
+import type { UsageMonitor } from './usage'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
@@ -72,6 +73,8 @@ export interface MainContext {
   openProjectWindow(projectRoot?: string): WindowSession
   ptys: PtyManager
   hookServer: HookServer
+  /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
+  usage: UsageMonitor
   store: UserStore
   browsers: BrowserManager
   updater: Updater
@@ -188,6 +191,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   s.board.nodes.delete(id)
   ctx.windows.unbindNode(id)
   running.delete(id)
+  ctx.usage.forgetCard(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -900,6 +904,7 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
   ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
     ptys.kill(nodeId)
+    ctx.usage.forgetCard(nodeId)
     sessionOf(e)?.board.setPtyAlive(nodeId, false)
   })
 
@@ -1137,6 +1142,10 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
+  ipcMain.handle(IPC.usageGet, () => ctx.usage.snapshot())
+  ipcMain.handle(IPC.usageRefresh, () => ctx.usage.snapshot({ refresh: true }))
+  // a card's status line brought new plan numbers: every window shows them (the account is one)
+  ctx.usage.onChange(() => void ctx.usage.snapshot().then((snap) => broadcast(ctx, IPC.usageChanged, snap)).catch(() => undefined))
   ipcMain.handle(IPC.enginesDetect, () => detectEngines())
   ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number, includeOwn: boolean) => (await sessionOf(e)?.api.tidy({ olderThanMinutes: minutes, includeOwn }, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {

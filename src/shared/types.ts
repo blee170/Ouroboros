@@ -89,15 +89,27 @@ export interface NodeData {
   commandTemplate?: string
   /** Sent once to the card's Claude session as soon as it is ready, then cleared. */
   initialPrompt?: string
+  /** Specialist role id (an agent file in .claude/agents or the agency catalog) whose body is the extra system prompt. */
+  role?: string
   /** Claude Code session id once known (SessionStart hook). */
   sessionId?: string
   /** Conductor cards: the last brief (claude.ai artifact, report URL) they published; the 📄 button reopens it. */
   lastBriefUrl?: string
+  /** The card that dispatched this one with create_agent. Dispatched cards are retired once their report is in; owner-made cards never are. */
+  parentId?: string
+  /** Owner's pin: never retired or tidied, dispatched or not. */
+  keep?: boolean
+  /** When the card was made; a card whose process has not started yet counts as starting, not exited, for a minute. */
+  createdAt?: number
   // --- runtime-only fields (not persisted) ---
   status?: AgentStatus
   statusDetail?: string
   lastAssistantMessage?: string
   lastEventAt?: number
+  /** When the last turn ended (Stop); unlike lastEventAt it does not move on idle notifications. */
+  lastStopAt?: number
+  /** When the process was seen exiting in this app run. */
+  endedAt?: number
   ptyAlive?: boolean
   [key: string]: unknown
 }
@@ -169,6 +181,10 @@ export interface AgentSnapshot {
   lastAssistantMessage?: string
   lastEventAt?: number
   ptyAlive: boolean
+  parentId?: string
+  keep?: boolean
+  lastStopAt?: number
+  endedAt?: number
 }
 
 export interface AppSettings {
@@ -180,12 +196,34 @@ export interface AppSettings {
   browserHome?: string
   /** Optional GitHub token (stored encrypted) for update downloads from a private fork. */
   githubTokenEnc?: string
-  /** Close finished/idle cards automatically after this many minutes (0/undefined = off). */
+  /** Legacy (≤ 0.3): idle threshold for auto-tidy; now only the fallback for dispatched cards that never report. */
   autoTidyMinutes?: number
+  /** Dispatched cards are retired this many minutes after their report reached the card that made them (default 5; 0 = never automatically). */
+  retireMinutes?: number
+  /** create_agent refuses when a card already has this many live dispatched cards (default 6). */
+  maxWorkersPerLead?: number
   /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default false: briefs stay on the canvas. */
   claudeLinksExternal?: boolean
   /** Engine new agent/conductor cards use when none is chosen (claude by default). */
   defaultEngine?: AgentEngine
+  /** Pass an ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the environment into Claude cards even when `claude` is signed in (default false: a signed-in owner's cards use the sign-in). */
+  keepEnvApiKey?: boolean
+  /** The first-run guide (? in the toolbar) was shown once; it opens by itself only while this is unset. */
+  tourSeen?: boolean
+  /** Whose finished turns are announced: off | conductor (default) | all agent cards. */
+  announce?: 'off' | 'conductor' | 'all'
+  /** Desktop toast with the first line of the reply (default on). */
+  announceToast?: boolean
+  /** Speak the announcement with a Windows voice (default on). */
+  announceVoice?: boolean
+  /** Voice engine for spoken announcements: windows (default, offline) | gemini | openai | elevenlabs. */
+  ttsEngine?: 'windows' | 'gemini' | 'openai' | 'elevenlabs'
+  /** Voice name / id for the chosen engine (empty = the engine's default). */
+  ttsVoice?: string
+  /** Delivery hint for engines that take one (Gemini style, OpenAI instructions). */
+  ttsStyle?: string
+  /** Per-engine API keys, stored encrypted (same scheme as githubTokenEnc). */
+  ttsKeysEnc?: Partial<Record<'gemini' | 'openai' | 'elevenlabs', string>>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

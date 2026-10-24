@@ -6,6 +6,7 @@ import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer } from './hook-server'
 import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeHook, type MainContext, type WindowSession } from './ipc'
+import { RoleLibrary } from './roles'
 import { PtyManager } from './pty-manager'
 import { UserStore } from './workspace-store'
 import { Updater, decryptToken } from './updater'
@@ -54,10 +55,12 @@ function createWindow(ctx: MainContext, projectRoot?: string): WindowSession {
     ctx.windows.remove(session.id)
     session.dispose()
   })
+  // links in rendered replies and notes are agent-written: only the web may open, and only outside this window
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -145,6 +148,7 @@ async function main(): Promise<void> {
     updater: null as unknown as Updater,
     tmpDir: join(app.getPath('userData'), 'claude-launch'),
     mcpScriptPath: resolveMcpScriptPath(),
+    roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
     hookServer: null as unknown as HookServer
   }
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))

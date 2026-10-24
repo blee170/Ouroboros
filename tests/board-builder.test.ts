@@ -50,4 +50,25 @@ describe('buildBoard', () => {
     expect(b.edges.every((e) => e.target === b.nodes[1].id)).toBe(true) // only report lines
     expect(conductorPrompt({ projectRoot: '/p', conductor: { cwd: '/p', mode: 'fresh' }, roles: ['ops'], extraFolders: [] })).toContain('"Ops"')
   })
+
+  it('specialist cards sit in rows of four under the roles, carry their role id and prompt, report to the Conductor, and push the folder row down', () => {
+    let k = 0
+    const specialists = Array.from({ length: 5 }, (_, i) => ({ id: `role-${i}`, name: `Role ${i}`, prompt: `You are role ${i}.`, emoji: i === 0 ? '🖥️' : undefined }))
+    const b = buildBoard({ projectRoot: '/p', conductor: { cwd: '/p', mode: 'fresh' }, roles: ['implementer'], specialists, extraFolders: [{ cwd: '/q', title: 'q' }], browser: false }, () => `s${++k}`)
+    const cards = b.nodes.filter((x) => typeof x.data.role === 'string')
+    expect(cards).toHaveLength(5)
+    expect(cards[0].data.title).toBe('🖥️ Role 0')
+    expect(cards[1].data.title).toBe('🎭 Role 1')
+    expect(cards[0].data.claude?.appendSystemPrompt).toBe('You are role 0.')
+    expect(cards[0].data.cwd).toBe('/p')
+    expect(cards.map((x) => x.position.y)).toEqual([1000, 1000, 1000, 1000, 1500])
+    expect(cards.map((x) => x.position.x)).toEqual([0, 620, 1240, 1860, 0])
+    const folder = b.nodes.find((x) => x.data.title === 'q')!
+    expect(folder.position.y).toBe(2000)
+    const keys = new Set(b.nodes.map((x) => `${x.position.x},${x.position.y}`))
+    expect(keys.size).toBe(b.nodes.length)
+    const conductor = b.nodes[1]
+    expect(cards.every((c) => b.edges.some((e) => e.source === c.id && e.target === conductor.id && e.data?.mode === 'auto'))).toBe(true)
+    expect(conductor.data.claude?.appendSystemPrompt).toContain('"🖥️ Role 0": specialist card (role role-0)')
+  })
 })

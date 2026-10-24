@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react'
 import type { EngineInfo } from '@shared/protocol'
 import { normalizeEngine, type AgentEngine } from '@shared/types'
 import { useBoard } from '@/store/board'
+import { Icon } from '@/lib/icons'
+import { ENGINE_ICON } from '@/lib/cardKinds'
 
-const ICON: Record<AgentEngine, string> = { claude: '✦', codex: '◎', gemini: '✧' }
+function EngineIcon({ engine }: { engine: AgentEngine }) {
+  const I = ENGINE_ICON[engine]
+  return <I className="ico" size={14} aria-hidden="true" />
+}
 const FALLBACK: EngineInfo[] = (
   [
     ['claude', 'Claude Code', 'claude'],
@@ -51,8 +56,8 @@ export function EnginesPanel({ compact = false }: { compact?: boolean }) {
     <div className={`engines${compact ? ' compact' : ''}`}>
       <div className="row between">
         <div className="muted small">Which AI do you use? Cards run the CLI you are signed in to; your own plan pays for it.</div>
-        <button className="icon-btn" title="Re-check" onClick={refresh}>
-          ↻
+        <button className="icon-btn" title="Re-check" aria-label="Re-check installed CLIs" onClick={refresh}>
+          <Icon name="refresh" size={14} />
         </button>
       </div>
       {!engines && <div className="muted small">Checking installed CLIs…</div>}
@@ -64,7 +69,7 @@ export function EnginesPanel({ compact = false }: { compact?: boolean }) {
               <label className="engine-pick" title="Use this engine for new agent and conductor cards">
                 <input type="radio" name="defaultEngine" checked={current === e.engine} disabled={!e.installed} onChange={() => void setSettings({ defaultEngine: normalizeEngine(e.engine) })} />
                 <span className="engine-name">
-                  {ICON[e.engine]} {e.label}
+                  <EngineIcon engine={e.engine} /> {e.label}
                 </span>
               </label>
               <span className={`engine-state ${e.installed ? (e.signedIn === false ? 'warn' : 'good') : 'bad'}`}>
@@ -81,7 +86,7 @@ export function EnginesPanel({ compact = false }: { compact?: boolean }) {
                   <button className="btn small" onClick={() => copy(e.installCommand)}>
                     {copied === e.installCommand ? 'Copied' : 'Copy'}
                   </button>
-                  <span className="muted small"> → run it in PowerShell, then ↻ (if it still says not installed, restart Ouroboros so it sees the new PATH)</span>
+                  <span className="muted small"> → run it in PowerShell, then Re-check (if it still says not installed, restart Ouroboros so it sees the new PATH)</span>
                 </div>
               )}
               {e.installed && e.signedIn !== true && (

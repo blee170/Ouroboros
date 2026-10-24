@@ -1,18 +1,21 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { setDragShield } from '@/lib/dragShield'
 import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow/react'
-import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
+import { STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
+import { StateGlyph } from '@/lib/StateGlyph'
+import { kindIcon } from '@/lib/cardKinds'
 import { useBoard } from '@/store/board'
 import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
 import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
-import { useCardChanges, useSessionUsage } from '@/lib/useCardInfo'
+import { useCardChanges } from '@/lib/useCardInfo'
+import { Icon } from '@/lib/icons'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
   const zoom = useStore((s) => s.transform[2])
-  const handle = useTerminal(id, ref, zoom)
+  const handle = useTerminal(id, ref, zoom, (data.kind === 'claude' || data.kind === 'conductor') && (data.engine ?? 'claude') === 'claude')
   const restartNode = useBoard((s) => s.restartNode)
   const removeNode = useBoard((s) => s.removeNode)
   const updateNodeData = useBoard((s) => s.updateNodeData)
@@ -41,7 +44,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
-  const usage = useSessionUsage(data.sessionId, status, (kind === 'claude' || kind === 'conductor') && (data.engine ?? 'claude') === 'claude')
+  const usage = useBoard((s) => s.usage[id])
   const select = useBoard((s) => s.select)
 
   // Spawn (or re-spawn) the process once the terminal knows its size.
@@ -78,14 +81,14 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     setTimeout(() => typePrompt(id, prompt, 200), 1200)
   }, [data.initialPrompt, status, id, updateNodeData])
 
-  const color = STATUS_COLOR[status]
+  const KindIcon = kindIcon(kind, data.engine)
   return (
-    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}`} style={{ borderColor: selected ? '#38bdf8' : color }}>
-      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
+    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}${selected ? ' selected' : ''}`}>
+      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: 'var(--ring)' }} handleStyle={{ background: 'var(--text)', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <Handle type="target" position={Position.Left} className="port port-in" />
       <Handle type="source" position={Position.Right} className="port port-out" />
       <div className="node-header">
-        <span className="status-dot" style={{ background: color }} title={STATUS_LABEL[status]} />
+        <StateGlyph status={status} />
         {editing ? (
           <input
             className="title-input nodrag"
@@ -102,8 +105,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           />
         ) : (
           <span className="title" onDoubleClick={() => setEditing(true)} title={`${data.title}\n${data.cwd}`}>
-            {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? (data.engine === 'codex' ? '◎ ' : data.engine === 'gemini' ? '✧ ' : '✦ ') : kind === 'command' ? '⚡ ' : '▣ '}
-            {data.title}
+            <KindIcon className="ico kind" size={13} aria-hidden="true" />
+            <span>{data.title}</span>
           </span>
         )}
         <span className="status-text" title={data.statusDetail}>
@@ -121,8 +124,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           </span>
         )}
         {data.lastBriefUrl && (
-          <button className="icon-btn nodrag" title={`Open the latest brief in the 📄 Briefs card\n${data.lastBriefUrl}`} onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
-            📄
+          <button className="icon-btn nodrag" title={`Open the latest brief in the Briefs card\n${data.lastBriefUrl}`} aria-label="Open the latest brief" onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
+            <Icon name="brief" size={14} />
           </button>
         )}
         {changes && changes.repo && changes.files.length > 0 && (
@@ -130,11 +133,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span className="add">+{changes.added}</span> <span className="del">−{changes.deleted}</span>
           </button>
         )}
-        <button className="icon-btn nodrag" title="Restart" onClick={() => void restartNode(id)}>
-          ↻
+        <button className="icon-btn nodrag" title="Restart" aria-label="Restart" onClick={() => void restartNode(id)}>
+          <Icon name="refresh" size={14} />
         </button>
-        <button className="icon-btn nodrag" title="Close" onClick={() => void removeNode(id)}>
-          ✕
+        <button className="icon-btn nodrag" title="Close" aria-label="Close card" onClick={() => void removeNode(id)}>
+          <Icon name="close" size={14} />
         </button>
       </div>
       <div className="scale-wrap">
@@ -144,8 +147,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           <div className="card-summary">
             <div className="summary-title">{data.title}</div>
             <div className="summary-status">
-              {STATUS_LABEL[status]}
-              {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+              <StateGlyph status={status} size={22} />
+              <span>
+                {STATUS_LABEL[status]}
+                {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+              </span>
             </div>
             {summary && <div className="summary-text">{summary}</div>}
           </div>
@@ -159,7 +165,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
               handle?.term.focus()
             }}
           >
-            ↓
+            <Icon name="down" size={14} />
           </button>
         )}
       </div>

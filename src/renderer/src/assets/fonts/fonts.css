@@ -1,0 +1,24 @@
+/* Bundled so the app looks the same offline on every PC: Pretendard for the UI (Latin + Hangul in one family,
+   SIL OFL, LICENSE-Pretendard.txt) and D2Coding for terminals and code (Naver, SIL OFL, LICENSE-D2Coding.txt;
+   Hangul is exactly two cells wide, which keeps xterm's grid straight). */
+@font-face {
+  font-family: 'Pretendard Variable';
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+  src: url('./PretendardVariable.woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'D2Coding';
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+  src: url('./D2Coding.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'D2Coding';
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+  src: url('./D2Coding-Bold.woff2') format('woff2');
+}

@@ -20,9 +20,11 @@ export { BASE_FONT_SIZE }
  * Mounts an xterm.js terminal into `containerRef`, pipes it to the PTY of `nodeId`
  * and keeps the PTY size in sync with the DOM size. Returns the handle once ready.
  */
-export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDivElement | null>, initialZoom = 1): TerminalHandle | null {
+export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDivElement | null>, initialZoom = 1, claudeImagePaste = false): TerminalHandle | null {
   const [handle, setHandle] = useState<TerminalHandle | null>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
+  const claudePasteRef = useRef(claudeImagePaste)
+  claudePasteRef.current = claudeImagePaste
 
   useEffect(() => {
     const el = containerRef.current
@@ -34,13 +36,15 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       allowProposedApi: true,
       cursorBlink: true,
       fontSize: BASE_FONT_SIZE,
-      fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
+      // D2Coding is bundled (assets/fonts): Hangul is exactly two cells wide, so Korean replies keep the grid straight
+      fontFamily: 'D2Coding, "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
       scrollback: 8000,
       theme: {
-        background: '#0b0d13',
-        foreground: '#d6d9e0',
-        cursor: '#38bdf8',
-        selectionBackground: '#334155',
+        // mirrors --bg / --text in styles.css (xterm wants literal colours)
+        background: '#0a0a0a',
+        foreground: '#e5e5e5',
+        cursor: '#fafafa',
+        selectionBackground: '#3a3a3a',
         black: '#1e2230', red: '#f87171', green: '#4ade80', yellow: '#facc15', blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e5e7eb',
         brightBlack: '#475569', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde68a', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#f8fafc'
       }
@@ -83,11 +87,16 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
         term.clearSelection()
         return false
       }
-      if (e.key.toLowerCase() !== 'v') return true
+      // e.code as well: with a Korean IME active, e.key is not always the Latin letter
+      if (e.key.toLowerCase() !== 'v' && e.code !== 'KeyV') return true
       e.preventDefault()
-      void api.files.pasteClipboard().then((r) => {
-        if (r.path) typePaths([r.path])
-        else if (r.text) term.paste(r.text)
+      // A Claude Code card pastes the image itself (Alt+V = ESC v on Windows): the image becomes an
+      // [Image #N] chip in the prompt instead of a file path the model has to go and read.
+      const claude = claudePasteRef.current
+      void api.files.pasteClipboard(!claude).then((r) => {
+        if (r.text) term.paste(r.text)
+        else if (r.image && claude) api.pty.write(nodeId, '\x1bv')
+        else if (r.path) typePaths([r.path])
       })
       return false
     })

@@ -1,10 +1,15 @@
 import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
-import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } from '@shared/protocol'
+import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, SessionUsage, UpdateStatus } from '@shared/protocol'
+import type { AutonomyPublic } from '@shared/autonomy'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
+import { arrangeBoard, defaultSize, placeNew, type Rect } from '@shared/layout'
+import { EMPTY_ATTENTION, onStatus as attentionOnStatus, onViewed, type Attention } from '@shared/attention'
+import { SETTLE_ROWS_MS, rosterSnapshot, sameIds, sameRoster, type RosterRow } from '@shared/roster'
+import { DONE_ECHO_DETAIL } from '@shared/status'
 
 export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external' | 'browser'>
 export type BoardEdge = Edge<HandoffEdgeData & { firing?: boolean }, 'handoff'>
@@ -23,6 +28,12 @@ function rfType(kind: NodeKind): BoardNode['type'] {
   return 'agent'
 }
 
+/** The rectangle a card really takes on the canvas (its measured size once rendered). */
+function rectOf(n: BoardNode): Rect {
+  const d = defaultSize(n.data.kind)
+  return { x: n.position.x, y: n.position.y, width: n.measured?.width ?? n.width ?? d.width, height: n.measured?.height ?? n.height ?? d.height }
+}
+
 function toBoardNode(n: WorkspaceNode): BoardNode {
   return {
     id: n.id,
@@ -39,9 +50,13 @@ interface BoardState {
   projectRoot: string
   /** last successful write of .ouroboros.json (ms) */
   savedAt?: number
+  /** The last save's error, until a save succeeds (OneDrive or antivirus locks make renameSync fail on Windows). */
+  saveError?: string
   nodes: BoardNode[]
   edges: BoardEdge[]
   settings: AppSettings
+  /** false until the saved settings arrived from main: before that `settings` is only the defaults */
+  settingsLoaded: boolean
   selectedNodeId: string | null
   selectedEdgeId: string | null
   rosterOpen: boolean
@@ -49,7 +64,27 @@ interface BoardState {
   viewport?: Viewport
   /** When each card last entered "working" (ms). Runtime only (never synced or saved); drives the line glow. */
   workingSince: Record<string, number>
+  /** Positions from before the last ⊞ Arrange, until a card is moved, resized, added or closed. */
+  arrangeUndo?: Record<string, { x: number; y: number }>
+  /** This window's Autonomous mode run, as main reports it. */
+  autonomy: AutonomyPublic
+  /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
+  updateStatus: UpdateStatus | null
+  /** Unread results and reviewed turns (shared/attention): runtime only. */
+  attention: Attention
+  /**
+   * The sidebar rows as last settled: a card added or closed shows at once, a card that changed section moves
+   * SETTLE_ROWS_MS later, so rows do not jump under the pointer on every event. Ctrl+1…9 follow this order.
+   */
+  settledRoster: RosterRow[]
+  /** Context usage per Claude card (from its transcript), refreshed when the card's status changes. */
+  usage: Record<string, SessionUsage>
   // actions
+  setAutonomy(p: AutonomyPublic): void
+  setUpdateStatus(p: UpdateStatus): void
+  /** The owner looked at a card (selected it while the window has focus): unread goes, a finished turn reads idle. */
+  markViewed(id: string): void
+  setUsage(id: string, u: SessionUsage): void
   init(): Promise<void>
   openProject(root: string): Promise<void>
   onNodesChange(changes: NodeChange<BoardNode>[]): void
@@ -61,6 +96,9 @@ interface BoardState {
   updateNodeData(id: string, patch: Partial<NodeData>): void
   /** Set a card's size (presets, ⤢ button). */
   resizeNode(id: string, width: number, height: number): void
+  /** ⊞: lay the cards out in lanes along the lines (workers left, Conductor right, briefs and notes beside it). Undoable until the board changes. */
+  arrange(): void
+  undoArrange(): void
   updateEdgeData(id: string, patch: Partial<HandoffEdgeData>): void
   removeNode(id: string): Promise<void>
   removeEdge(id: string): void
@@ -101,16 +139,40 @@ export const useBoard = create<BoardState>((set, get) => ({
   nodes: [],
   edges: [],
   settings: DEFAULT_SETTINGS,
+  settingsLoaded: false,
   selectedNodeId: null,
   selectedEdgeId: null,
   rosterOpen: true,
   inspectorOpen: true,
   viewport: undefined,
   workingSince: {},
+  autonomy: { on: false, dispatches: 0, parked: [] },
+  setAutonomy(p) {
+    set({ autonomy: p })
+  },
+  updateStatus: null,
+  setUpdateStatus(p) {
+    set({ updateStatus: p })
+  },
+  attention: EMPTY_ATTENTION,
+  settledRoster: [],
+  usage: {},
+  markViewed(id) {
+    const s = get()
+    const n = s.nodes.find((x) => x.id === id)
+    // an external session's status is written straight from its hooks (applyExternal), outside this model
+    if (!n || n.data.kind === 'external') return
+    const { attention, shown } = onViewed(s.attention, id, n.data.status)
+    if (attention === s.attention && shown === n.data.status) return
+    set({ attention, nodes: shown === n.data.status ? s.nodes : s.nodes.map((x) => (x.id === id ? { ...x, data: { ...x.data, status: shown } } : x)) })
+  },
+  setUsage(id, u) {
+    set({ usage: { ...get().usage, [id]: u } })
+  },
 
   async init() {
     const settings = await api().settings.get()
-    set({ settings })
+    set({ settings, settingsLoaded: true })
   },
 
   async openProject(root) {
@@ -118,12 +180,13 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {} })
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {} })
     scheduleSync(get)
   },
 
   onNodesChange(changes) {
-    set({ nodes: applyNodeChanges(changes, get().nodes) })
+    const moved = changes.some((c) => c.type === 'position' || c.type === 'remove' || (c.type === 'dimensions' && c.resizing))
+    set(moved && get().arrangeUndo ? { nodes: applyNodeChanges(changes, get().nodes), arrangeUndo: undefined } : { nodes: applyNodeChanges(changes, get().nodes) })
     if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) scheduleSync(get)
     else if (changes.some((c) => c.type === 'dimensions')) scheduleSync(get)
   },
@@ -142,10 +205,11 @@ export const useBoard = create<BoardState>((set, get) => ({
     const id = partial.id ?? nanoid(10)
     const s = get()
     const cwd = partial.cwd ?? s.projectRoot
-    const count = s.nodes.filter((n) => n.data.kind !== 'external').length
-    const position = partial.position ?? { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 }
     const isNote = kind === 'note'
     const isBrowser = kind === 'browser'
+    const size = { width: isNote ? 300 : isBrowser ? 640 : 560, height: isNote ? 220 : isBrowser ? 480 : 400 }
+    // the first grid cell nothing overlaps: a closed card frees its cell, a resized one keeps new cards out
+    const position = partial.position ?? placeNew(s.nodes.filter((n) => n.data.kind !== 'external').map(rectOf), size)
     const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : kind === 'command' ? 'Command' : basename(cwd)
     const { position: _p, id: _id, select = true, ...rest } = partial
     const data: NodeData = {
@@ -159,18 +223,18 @@ export const useBoard = create<BoardState>((set, get) => ({
       // engine: explicit > settings default; claude is stored as undefined
       // engine: an explicit value (including 'claude') wins; otherwise the settings default
       engine: kind === 'claude' || kind === 'conductor' ? normalizeEngine(rest.engine !== undefined ? rest.engine : s.settings.defaultEngine) : undefined,
+      createdAt: rest.createdAt ?? Date.now(),
       launchSeq: 0
     }
     const node: BoardNode = {
       id,
       type: rfType(kind),
       position,
-      width: isNote ? 300 : isBrowser ? 640 : 560,
-      height: isNote ? 220 : isBrowser ? 480 : 400,
+      ...size,
       dragHandle: '.node-header',
       data
     }
-    set(select ? { nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null } : { nodes: [...s.nodes, node] })
+    set(select ? { nodes: [...s.nodes, node], selectedNodeId: id, selectedEdgeId: null, arrangeUndo: undefined } : { nodes: [...s.nodes, node], arrangeUndo: undefined })
     scheduleSync(get)
     return id
   },
@@ -185,7 +249,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const def = normalizeEngine(s.settings.defaultEngine)
     const nodes = generated.map((n) => (n.data.kind === 'claude' || n.data.kind === 'conductor') && !n.data.engine && def ? { ...n, data: { ...n.data, engine: def } } : n).map(toBoardNode)
     const edges: BoardEdge[] = generatedEdges.map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ nodes: [...keep, ...nodes], edges: [...keepEdges, ...edges], selectedNodeId: null, selectedEdgeId: null })
+    set({ nodes: [...keep, ...nodes], edges: [...keepEdges, ...edges], selectedNodeId: null, selectedEdgeId: null, arrangeUndo: undefined })
     scheduleSync(get)
   },
 
@@ -194,7 +258,25 @@ export const useBoard = create<BoardState>((set, get) => ({
     scheduleSync(get)
   },
   resizeNode(id, width, height) {
-    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, width, height, style: { ...(n.style ?? {}), width, height } } : n)) })
+    set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, width, height, style: { ...(n.style ?? {}), width, height } } : n)), arrangeUndo: undefined })
+    scheduleSync(get)
+  },
+  arrange() {
+    const s = get()
+    const cards = s.nodes.filter((n) => n.data.kind !== 'external')
+    if (!cards.length) return
+    const pos = arrangeBoard(
+      cards.map((n) => ({ id: n.id, kind: n.data.kind, title: n.data.title, width: rectOf(n).width, height: rectOf(n).height })),
+      s.edges.map((e) => ({ source: e.source, target: e.target }))
+    )
+    const before = Object.fromEntries(cards.map((n) => [n.id, { ...n.position }]))
+    set({ nodes: s.nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n)), arrangeUndo: before })
+    scheduleSync(get)
+  },
+  undoArrange() {
+    const before = get().arrangeUndo
+    if (!before) return
+    set({ nodes: get().nodes.map((n) => (before[n.id] ? { ...n, position: before[n.id] } : n)), arrangeUndo: undefined })
     scheduleSync(get)
   },
   updateEdgeData(id, patch) {
@@ -205,7 +287,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   async removeNode(id) {
     const n = get().nodes.find((x) => x.id === id)
     if (n && (n.data.kind === 'terminal' || n.data.kind === 'claude' || n.data.kind === 'conductor' || n.data.kind === 'command')) await api().pty.kill(id)
-    set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId })
+    set({ nodes: get().nodes.filter((x) => x.id !== id), edges: get().edges.filter((e) => e.source !== id && e.target !== id), selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId, arrangeUndo: undefined })
     scheduleSync(get)
   },
   removeEdge(id) {
@@ -233,6 +315,8 @@ export const useBoard = create<BoardState>((set, get) => ({
       nodes: s.nodes.map((n) => (Boolean(n.selected) === (n.id === nodeId) ? n : { ...n, selected: n.id === nodeId })),
       edges: s.edges.map((e) => (Boolean(e.selected) === (e.id === edgeId) ? e : { ...e, selected: e.id === edgeId }))
     })
+    // selecting a card while the window has focus is looking at it
+    if (nodeId && document.hasFocus()) get().markViewed(nodeId)
   },
   toggleRoster() {
     set({ rosterOpen: !get().rosterOpen })
@@ -258,11 +342,17 @@ export const useBoard = create<BoardState>((set, get) => ({
       workingSince = { ...workingSince }
       delete workingSince[p.nodeId]
     }
+    const s = get()
+    const prev = s.nodes.find((n) => n.id === p.nodeId)
+    // a finished turn is "done" only until the owner looks at the card; looking = selected while the window has focus
+    const viewing = s.selectedNodeId === p.nodeId && document.hasFocus()
+    const { attention, shown } = attentionOnStatus(s.attention, p.nodeId, prev?.data.status, p.status, p.at, viewing, p.statusDetail === DONE_ECHO_DETAIL)
     set({
       workingSince,
-      nodes: get().nodes.map((n) =>
+      attention,
+      nodes: s.nodes.map((n) =>
         n.id === p.nodeId
-          ? { ...n, data: { ...n.data, status: p.status, statusDetail: p.statusDetail ?? n.data.statusDetail, sessionId: p.sessionId ?? n.data.sessionId, lastAssistantMessage: p.lastAssistantMessage ?? n.data.lastAssistantMessage, lastEventAt: p.at } }
+          ? { ...n, data: { ...n.data, status: shown, statusDetail: p.statusDetail ?? n.data.statusDetail, sessionId: p.sessionId ?? n.data.sessionId, lastAssistantMessage: p.lastAssistantMessage ?? n.data.lastAssistantMessage, lastEventAt: p.at } }
           : n
       )
     })
@@ -302,7 +392,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       set({ nodes: get().nodes.filter((x) => x.id !== id) })
       return
     }
-    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, engine: 'claude', claude: { resume: n.data.sessionId }, position: { x: 80, y: 80 } })
+    get().addNode('claude', { cwd: n.data.cwd, title: n.data.title, engine: 'claude', claude: { resume: n.data.sessionId } })
     set({ nodes: get().nodes.filter((x) => x.id !== id) })
   },
 
@@ -324,9 +414,86 @@ export const useBoard = create<BoardState>((set, get) => ({
         return { id: e.id, source: e.source, target: e.target, data }
       })
     }
-    void api().workspace.save(ws).then(() => set({ savedAt: Date.now() }))
+    void api().workspace.save(ws).then(
+      () => set({ savedAt: Date.now(), saveError: undefined }),
+      (err: unknown) => set({ saveError: err instanceof Error ? err.message : String(err) })
+    )
   }
 }))
+
+// Main holds back the toast and the voice for the selected card, however it got selected (a click, a hotkey,
+// a new card, a closed one).
+useBoard.subscribe((s, prev) => {
+  if (s.selectedNodeId !== prev.selectedNodeId) api().board.setSelected(s.selectedNodeId)
+})
+
+// The settled sidebar: rows move to a new section SETTLE_ROWS_MS after the first pending change (at most that
+// late, however busy the board is); a card added or closed is reflected at once.
+let settleTimer: ReturnType<typeof setTimeout> | null = null
+function settleRoster(): void {
+  settleTimer = null
+  const s = useBoard.getState()
+  const next = rosterSnapshot(s.nodes)
+  if (!sameRoster(s.settledRoster, next)) useBoard.setState({ settledRoster: next })
+}
+useBoard.subscribe((s, prev) => {
+  if (s.nodes === prev.nodes) return
+  const next = rosterSnapshot(s.nodes)
+  if (sameRoster(s.settledRoster, next)) {
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = null
+    return
+  }
+  if (!sameIds(s.settledRoster, next)) {
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = null
+    useBoard.setState({ settledRoster: next })
+    return
+  }
+  if (!settleTimer) settleTimer = setTimeout(settleRoster, SETTLE_ROWS_MS)
+})
+
+// Context usage of every Claude card, read from its transcript 1.5 s after a status change (the transcript is
+// written a moment after the hook); one reader for the cards, the status bar and the sidebar.
+const usageKeys = new Map<string, string>()
+const usageTimers = new Map<string, ReturnType<typeof setTimeout>>()
+useBoard.subscribe((s, prev) => {
+  if (s.nodes === prev.nodes) return
+  const seen = new Set<string>()
+  for (const n of s.nodes) {
+    const claude = (n.data.kind === 'claude' || n.data.kind === 'conductor') && (n.data.engine ?? 'claude') === 'claude'
+    if (!claude || !n.data.sessionId) continue
+    seen.add(n.id)
+    const key = `${n.data.sessionId}|${n.data.status ?? ''}`
+    if (usageKeys.get(n.id) === key) continue
+    usageKeys.set(n.id, key)
+    const sessionId = n.data.sessionId
+    clearTimeout(usageTimers.get(n.id))
+    usageTimers.set(
+      n.id,
+      setTimeout(() => {
+        usageTimers.delete(n.id)
+        void api()
+          .session.usage(sessionId)
+          .then((u) => {
+            if (u && useBoard.getState().nodes.some((x) => x.id === n.id)) useBoard.getState().setUsage(n.id, u)
+          })
+          .catch(() => undefined)
+      }, 1500)
+    )
+  }
+  for (const id of [...usageKeys.keys()]) {
+    if (seen.has(id)) continue
+    usageKeys.delete(id)
+    clearTimeout(usageTimers.get(id))
+    usageTimers.delete(id)
+    if (id in s.usage) {
+      const usage = { ...s.usage }
+      delete usage[id]
+      useBoard.setState({ usage })
+    }
+  }
+})
 
 // Exposed for smoke tests and quick debugging from DevTools.
 ;(window as unknown as { __board: typeof useBoard }).__board = useBoard

@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
+import { Icon } from '@/lib/icons'
+import { useEscape } from '@/lib/useDialog'
 
 export function TidyDialog({ onClose }: { onClose: () => void }) {
   const settings = useBoard((s) => s.settings)
   const setSettings = useBoard((s) => s.setSettings)
   const [minutes, setMinutes] = useState(30)
+  const [includeOwn, setIncludeOwn] = useState(false)
   const [cands, setCands] = useState<Array<{ id: string; title: string; reason: string }>>([])
   const [checked, setChecked] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
+  const retire = settings.retireMinutes ?? 5
+  useEscape(onClose)
 
-  const refresh = async (m = minutes): Promise<void> => {
+  const refresh = async (m = minutes, own = includeOwn): Promise<void> => {
     setBusy(true)
-    const c = await window.ouroboros.tidy.candidates(m)
+    const c = await window.ouroboros.tidy.candidates(m, own)
     setCands(c)
     setChecked(Object.fromEntries(c.map((x) => [x.id, true])))
     setBusy(false)
@@ -30,36 +35,49 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>🧹 Tidy cards</h3>
+      <div className="modal" role="dialog" aria-labelledby="tidy-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="tidy-title">
+          <Icon name="broom" /> Tidy cards
+        </h3>
+        <div className="hint">Cards dispatched by a Conductor or team whose job is over: process exited, report delivered, or idle with no report line (your own cards: exited or idle) for more than</div>
         <div className="row">
-          <span className="small">Close cards that exited, or finished/idle for more than</span>
-          <input className="text" style={{ width: 70 }} type="number" min={1} value={minutes} onChange={(e) => setMinutes(Math.max(1, Number(e.target.value) | 0))} />
+          <input className="text" style={{ width: 70, flex: 'none' }} type="number" min={1} value={minutes} onChange={(e) => setMinutes(Math.max(1, Number(e.target.value) | 0))} aria-label="Idle minutes" />
           <span className="small">min</span>
+          <label className="check" style={{ margin: '0 0 0 8px' }}>
+            <input
+              type="checkbox"
+              checked={includeOwn}
+              onChange={(e) => {
+                setIncludeOwn(e.target.checked)
+                void refresh(minutes, e.target.checked)
+              }}
+            />
+            include cards I made myself
+          </label>
+          <span className="spacer" />
           <button className="btn small" disabled={busy} onClick={() => void refresh()}>
-            Refresh
+            <Icon name="refresh" size={13} /> Refresh
           </button>
         </div>
-        <ul className="roster-list" style={{ maxHeight: 260, overflowY: 'auto' }}>
+        <ul className="tidy-list" style={{ maxHeight: 260, overflowY: 'auto' }}>
           {cands.map((c) => (
-            <li key={c.id} className="roster-item">
-              <input type="checkbox" checked={Boolean(checked[c.id])} onChange={(e) => setChecked({ ...checked, [c.id]: e.target.checked })} />
-              <div className="roster-main" style={{ cursor: 'default' }}>
-                <span className="status-dot" style={{ background: '#525252' }} />
+            <li key={c.id} className="tidy-row">
+              <input type="checkbox" checked={Boolean(checked[c.id])} onChange={(e) => setChecked({ ...checked, [c.id]: e.target.checked })} aria-label={`Close ${c.title}`} />
+              <div className="tidy-main">
                 <span className="title">{c.title}</span>
                 <span className="muted small">{c.reason}</span>
               </div>
             </li>
           ))}
-          {!busy && cands.length === 0 && <li className="muted small">Nothing to tidy. Conductors, working and waiting cards are never listed.</li>}
+          {!busy && cands.length === 0 && <li className="muted small">Nothing to tidy. Conductors, pinned, working and waiting cards are never listed{includeOwn ? '' : '; your own cards only when asked'}.</li>}
         </ul>
-        <label className="row">
-          <input
-            type="checkbox"
-            checked={(settings.autoTidyMinutes ?? 0) > 0}
-            onChange={(e) => void setSettings({ autoTidyMinutes: e.target.checked ? minutes : 0 })}
-          />
-          Auto-tidy every minute using this threshold {settings.autoTidyMinutes ? `(currently ${settings.autoTidyMinutes} min)` : ''}
+        <label className="field">
+          <span>Auto-retire</span>
+          <div className="ctl">
+            <input className="text" style={{ width: 80, flex: 'none' }} type="number" min={0} max={1440} defaultValue={retire} onBlur={(e) => void setSettings({ retireMinutes: Math.min(1440, Math.max(0, Number(e.target.value) | 0)) })} />
+            <span className="small">min</span>
+          </div>
+          <div className="hint">After a dispatched card's report reached the card that made it (0 = never). Cards you made are never auto-closed.</div>
         </label>
         <div className="row right">
           <button className="btn" onClick={onClose}>

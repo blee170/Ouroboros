@@ -8,6 +8,8 @@ export type CheckpointApiResult = ({ ok: boolean; error?: string } & Record<stri
 
 export interface ApiHandlers {
   listAgents(): unknown
+  /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
+  listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
   sendPrompt(nodeId: string, text: string): boolean
   createAgent(input: {
@@ -20,6 +22,8 @@ export interface ApiHandlers {
     /** command cards: shell template with {{prompt}} / {{prompt_file}} */
     command_template?: string
     role_prompt?: string
+    /** A role id from list_roles: its file becomes the extra system prompt (role_prompt is appended after it). */
+    role?: string
     permission_mode?: string
     model?: string
     worktree?: boolean
@@ -29,7 +33,9 @@ export interface ApiHandlers {
     report_to?: string
     /** Give the card the ouroboros MCP server too (team lead). */
     board_tools?: boolean
-  }): Promise<{ id: string; cwd: string; worktree?: string; reused?: boolean; replaced?: string }>
+    /** The caller's card id: the new card is dispatched by it (retired once its report is in; counted against the caller's cap). */
+    created_by?: string
+  }): Promise<{ id: string; cwd: string; worktree?: string; reused?: boolean; replaced?: string } | { error: string }>
   removeAgent(id: string): Promise<boolean>
   /** Change a card's launch options (board_tools) and optionally restart it so they apply. */
   updateAgent(id: string, patch: { board_tools?: boolean; title?: string; restart?: boolean }): boolean
@@ -40,7 +46,8 @@ export interface ApiHandlers {
   createCheckpoint(id: string, label?: string): Promise<CheckpointApiResult>
   restoreCheckpoint(id: string, checkpointId: string, moveHead: boolean): Promise<CheckpointApiResult>
   deleteCheckpoint(id: string, checkpointId: string): Promise<CheckpointApiResult>
-  tidy(olderThanMinutes: number, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
+  /** Close finished cards: dispatched ones whose report is in (or stale), owner-made ones only with includeOwn; scope = only that card's workers. */
+  tidy(opts: { olderThanMinutes?: number; includeOwn?: boolean; scope?: string; auto?: boolean }, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
   listHandoffs(): unknown
@@ -177,11 +184,13 @@ export class HookServer {
       if (!api) return send(res, 503, { error: 'no window open' })
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt|changes))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
+      if (method === 'GET' && path === '/api/roles') return send(res, 200, await api.listRoles(url.searchParams.get('q') ?? undefined))
       if (method === 'GET' && path === '/api/bookmarks') return send(res, 200, { bookmarks: api.bookmarks(url.searchParams.get('q') ?? undefined) })
       if (path === '/api/tidy' && (method === 'GET' || method === 'POST')) {
         const minutes = Number(url.searchParams.get('minutes') ?? 30) | 0 || 30
         const dry = method === 'GET' || url.searchParams.get('dry_run') === '1'
-        return send(res, 200, await api.tidy(minutes, dry))
+        // a card tidies only what it (or its teams) dispatched, never the owner's own cards
+        return send(res, 200, await api.tidy({ olderThanMinutes: minutes, scope: self }, dry))
       }
       if (method === 'GET' && path === '/api/agents-wait') {
         const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean)
@@ -229,8 +238,8 @@ export class HookServer {
       }
       if (method === 'POST' && path === '/api/agents') {
         const body = (await readJson(req)) as Parameters<ApiHandlers['createAgent']>[0]
-        const created = await api.createAgent(body ?? {})
-        return send(res, 200, created)
+        const created = await api.createAgent({ ...(body ?? {}), created_by: self })
+        return send(res, 'error' in created ? 400 : 200, created)
       }
       if (m && method === 'GET' && m[2] === 'output') {
         const lines = Math.min(2000, Math.max(1, Number(url.searchParams.get('lines') ?? 80) | 0))

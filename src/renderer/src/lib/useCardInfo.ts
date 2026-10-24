@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ChangesSummary, SessionUsage } from '@shared/protocol'
+import type { ChangesSummary } from '@shared/protocol'
 import type { AgentStatus } from '@shared/types'
 
 const POLL_MS = 30_000
@@ -24,23 +24,4 @@ export function useCardChanges(cwd: string | undefined, status: AgentStatus): Ch
     }
   }, [cwd, status])
   return changes
-}
-
-/** Context usage of the card's Claude session (from its transcript); refreshed on status changes. */
-export function useSessionUsage(sessionId: string | undefined, status: AgentStatus, enabled: boolean): SessionUsage | null {
-  const [usage, setUsage] = useState<SessionUsage | null>(null)
-  useEffect(() => {
-    if (!enabled || !sessionId) return
-    let alive = true
-    const t = setTimeout(() => {
-      void window.ouroboros.session.usage(sessionId).then((u) => {
-        if (alive && u) setUsage(u)
-      }).catch(() => undefined)
-    }, 1500)
-    return () => {
-      alive = false
-      clearTimeout(t)
-    }
-  }, [sessionId, status, enabled])
-  return usage
 }

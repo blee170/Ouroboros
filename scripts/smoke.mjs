@@ -15,13 +15,15 @@ const { writeFileSync } = await import('node:fs')
 const bmFile = join(claudeCfg, 'Bookmarks')
 writeFileSync(bmFile, JSON.stringify({ roots: { bookmark_bar: { type: 'folder', name: 'bar', children: [{ type: 'url', name: 'Smoke Site', url: 'https://example.com/smoke' }] } } }))
 // no internet in CI: point new browser cards at the local hook server
-writeFileSync(join(userData, 'settings.json'), JSON.stringify({ browserHome: 'http://127.0.0.1:47821/health' }))
+writeFileSync(join(userData, 'settings.json'), JSON.stringify({ browserHome: 'http://127.0.0.1:47821/health', tourSeen: true }))
 mkdirSync(join(claudeCfg, 'projects', 'enc'), { recursive: true })
 writeFileSync(join(claudeCfg, 'projects', 'enc', 'sess-1.jsonl'), JSON.stringify({ type: 'user', sessionId: 'sess-1', cwd: join(project, 'sub'), message: { content: 'smoke session title' } }) + '\n')
 const { execFileSync } = await import('node:child_process')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let failures = 0
 const t0 = Date.now()
+// 0.7 shell: Terminal lives in the New card menu (the button itself adds the default agent)
+const addTerminal = async (p) => { await p.click('.new-card-more'); await p.click('.menu >> text=Terminal') }
 const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'} [${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`); if (!cond) failures++ }
 
 // SMOKE_EXE=release/linux-unpacked/ouroboros tests the packaged build instead of out/.
@@ -51,8 +53,8 @@ const mcpPath = (appPath.endsWith(join('out', 'main')) ? join(appPath, 'mcp-serv
 check((await import('node:fs')).existsSync(mcpPath), `mcp server script resolvable at runtime (${mcpPath})`)
 
 // Two terminal nodes
-await page.click('text=+ Terminal')
-await page.click('text=+ Terminal')
+await addTerminal(page)
+await addTerminal(page)
 await page.waitForSelector('.agent-node', { timeout: 10000 })
 await sleep(1500)
 const hostStyle = await page.getAttribute('.agent-node .terminal-host', 'style')
@@ -116,7 +118,7 @@ check(hist.length === 1 && hist[0].sessions[0].title === 'smoke session title', 
 const fl = await page.evaluate((root) => window.ouroboros.folders.list(root), project)
 check(fl.some((f) => f.name === 'sub'), 'folders.list lists subfolders')
 const before = await page.evaluate(() => window.__board.getState().nodes.length)
-await page.click('text=Build board')
+await page.click('[aria-label="Build board"]')
 await page.waitForSelector('.builder-grid')
 await page.fill('.modal.wide input.text >> nth=0', project) // root = project so "sub" shows up
 await sleep(800)
@@ -280,7 +282,7 @@ await win2page.waitForSelector('.react-flow', { timeout: 20000 })
 await sleep(500)
 const title2 = await win2page.title()
 check(title2.startsWith(project2.split('/').pop()), `second window is titled after its project (${title2})`)
-await win2page.click('text=+ Terminal')
+await addTerminal(win2page)
 await sleep(1500)
 const ids2 = await win2page.evaluate(() => window.__board.getState().nodes.map((n) => n.id))
 check(ids2.length === 1, `second window has its own board (${ids2.length} card)`)

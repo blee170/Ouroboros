@@ -7,9 +7,10 @@ import { ExternalNode } from './nodes/ExternalNode'
 import { BrowserNode } from './nodes/BrowserNode'
 import { HandoffEdge } from './edges/HandoffEdge'
 import { STATUS_COLOR } from '@shared/status'
-import type { NodeKind } from '@shared/types'
-import { rosterOrder } from '@/lib/rosterOrder'
+import { nextAttention } from '@shared/attention'
+import { CARD_KINDS, type CardKindItem } from '@/lib/cardKinds'
 import { setDragShield } from '@/lib/dragShield'
+import { JumpPalette } from '@/panels/JumpPalette'
 
 const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode, browser: BrowserNode }
 const edgeTypes: EdgeTypes = { handoff: HandoffEdge }
@@ -45,66 +46,64 @@ export function Canvas() {
     },
     [rf]
   )
-  const add = (kind: NodeKind, engine?: 'claude' | 'codex' | 'gemini'): void => {
-    if (menu) addNode(kind, { position: menu.flow, engine })
+  const add = (k: CardKindItem): void => {
+    if (menu) addNode(k.kind, { position: menu.flow, engine: k.engine, ...k.data })
     setMenu(null)
   }
   const defaultViewport = useMemo(() => viewport ?? { x: 0, y: 0, zoom: 0.8 }, [viewport])
-  const [find, setFind] = useState<string | null>(null)
+  const [palette, setPalette] = useState(false)
+  const jumpTo = useCallback(
+    (id: string): void => {
+      void rf.fitView({ nodes: [{ id }], duration: 300, padding: 0.3 })
+      select(id, null)
+    },
+    [rf, select]
+  )
 
-  // Ctrl+1…9 jump to the n-th agent card (roster order), Ctrl+F finds a card by title.
+  // Ctrl+1…9 jump to the n-th card (the sidebar's settled order), Ctrl+J (or Ctrl+F) opens Jump to…,
+  // Ctrl+Shift+N goes to the next card that needs you (then to an unread finished turn).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.ctrlKey || e.metaKey)) return
       // never steal keys from a terminal, text field or editable note
       const t = e.target as HTMLElement | null
       if (t && (t.closest('input, textarea, [contenteditable="true"], .xterm, webview') || t.isContentEditable)) return
-      if (e.key === 'f') {
+      const key = e.key.toLowerCase()
+      if (key === 'j' || key === 'f') {
         e.preventDefault()
-        setFind('')
+        setPalette(true)
+        return
+      }
+      const s = useBoard.getState()
+      if (key === 'n' && e.shiftKey) {
+        e.preventDefault()
+        const live = new Map(s.nodes.map((n) => [n.id, n.data.status]))
+        const next = nextAttention(
+          s.settledRoster.map((r) => ({ id: r.id, status: live.get(r.id) ?? 'starting' })),
+          s.attention.unread,
+          s.selectedNodeId
+        )
+        if (next) jumpTo(next)
         return
       }
       const n = Number(e.key)
       if (!Number.isInteger(n) || n < 1 || n > 9) return
-      const target = rosterOrder(useBoard.getState().nodes)[n - 1]
+      const target = s.settledRoster[n - 1]
       if (!target) return
       e.preventDefault()
-      void rf.fitView({ nodes: [{ id: target.id }], duration: 300, padding: 0.3 })
-      select(target.id, null)
+      jumpTo(target.id)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, select])
-  const runFind = (q: string): void => {
-    const needle = q.trim().toLowerCase()
-    const hit = needle ? useBoard.getState().nodes.find((x) => String(x.data.title ?? '').toLowerCase().includes(needle)) : undefined
-    if (hit) {
-      void rf.fitView({ nodes: [{ id: hit.id }], duration: 300, padding: 0.3 })
-      select(hit.id, null)
-    }
-    setFind(null)
-  }
+  }, [jumpTo])
 
   return (
     <div className="canvas-wrap" onClick={() => menu && setMenu(null)}>
-      {find !== null && (
-        <input
-          className="find-box"
-          autoFocus
-          placeholder="Find card by title… (Enter)"
-          value={find}
-          onChange={(e) => setFind(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') runFind(find)
-            if (e.key === 'Escape') setFind(null)
-          }}
-          onBlur={() => setFind(null)}
-        />
-      )}
+      {palette && <JumpPalette onPick={jumpTo} onClose={() => setPalette(false)} />}
       <svg style={{ position: 'absolute', width: 0, height: 0 }}>
         <defs>
           <marker id="handoff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
           </marker>
         </defs>
       </svg>
@@ -131,20 +130,20 @@ export function Canvas() {
         proOptions={{ hideAttribution: true }}
         colorMode="dark"
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#2a2f3d" />
-        <MiniMap pannable zoomable nodeColor={(n) => STATUS_COLOR[(n.data as { status?: keyof typeof STATUS_COLOR }).status ?? 'idle']} maskColor="rgba(15,17,23,0.7)" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(255,255,255,0.08)" />
+        <MiniMap pannable zoomable nodeColor={(n) => STATUS_COLOR[(n.data as { status?: keyof typeof STATUS_COLOR }).status ?? 'idle']} maskColor="rgba(10,10,10,0.75)" />
         <Controls showInteractive={false} />
       </ReactFlow>
       {menu && (
-        <div className="context-menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 290) }}>
-          <button onClick={() => add('claude', 'claude')}>✦ Claude agent</button>
-          <button onClick={() => add('claude', 'codex')}>◎ Codex agent</button>
-          <button onClick={() => add('claude', 'gemini')}>✧ Gemini agent</button>
-          <button onClick={() => add('conductor')}>🎼 Conductor</button>
-          <button onClick={() => add('terminal')}>▣ Terminal</button>
-          <button onClick={() => add('browser')}>🌐 Browser</button>
-          <button onClick={() => add('command')}>⚡ Command card</button>
-          <button onClick={() => add('note')}>📝 Note</button>
+        <div className="context-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 330) }}>
+          {CARD_KINDS.map((k) => (
+            <button key={k.label} role="menuitem" title={k.hint} onClick={() => add(k)}>
+              <span className="glyph">
+                <k.icon size={14} aria-hidden="true" />
+              </span>
+              {k.label}
+            </button>
+          ))}
         </div>
       )}
     </div>

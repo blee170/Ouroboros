@@ -1,4 +1,7 @@
 import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
+import type { AnnouncePayload } from './announce'
+import type { AutonomyConfig, AutonomyPublic } from './autonomy'
+import type { RolesListing } from './roles'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -7,8 +10,10 @@ export const IPC = {
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   ptyKill: 'pty:kill',
+  ptyPasteImage: 'pty:pasteImage',
   claudeLaunch: 'claude:launch',
   boardSync: 'board:sync',
+  boardSelected: 'board:selected',
   workspaceLoad: 'workspace:load',
   workspaceSave: 'workspace:save',
   projectOpen: 'project:open',
@@ -16,10 +21,14 @@ export const IPC = {
   dialogFolder: 'dialog:folder',
   windowOpen: 'window:open',
   shellOpenExternal: 'shell:openExternal',
+  shellOpenPath: 'shell:openPath',
   briefOpen: 'brief:open',
   filesSaveImage: 'files:saveImage',
   filesPasteClipboard: 'files:pasteClipboard',
   skillsList: 'skills:list',
+  rolesList: 'roles:list',
+  rolesFetch: 'roles:fetch',
+  rolesRead: 'roles:read',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -45,11 +54,18 @@ export const IPC = {
   updateInstall: 'update:install',
   updateSetToken: 'update:setToken',
   updateStatus: 'update:status',
+  ttsSynthesize: 'tts:synthesize',
+  ttsSetKey: 'tts:setKey',
+  ttsKeys: 'tts:keys',
   tidyCandidates: 'tidy:candidates',
   bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
   browserUnregister: 'browser:unregister',
+  autonomyStart: 'autonomy:start',
+  autonomyStop: 'autonomy:stop',
+  autonomyState: 'autonomy:state',
   // main -> renderer (send)
+  autonomyChanged: 'autonomy:changed',
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
   agentStatus: 'agent:status',
@@ -61,7 +77,8 @@ export const IPC = {
   boardRemoveEdge: 'board:removeEdge',
   boardSetNote: 'board:setNote',
   boardUpdateNode: 'board:updateNode',
-  externalSession: 'external:session'
+  externalSession: 'external:session',
+  announce: 'announce'
 } as const
 
 export interface PtySpawnOptions {
@@ -92,6 +109,9 @@ export interface BoardSyncPayload {
   nodes: Array<Pick<WorkspaceNode, 'id'> & { data: NodeData }>
   edges: WorkspaceEdge[]
 }
+
+/** A card added by main (Conductor tools, browser_open): without a position the renderer puts it in the first free grid cell. */
+export type AddNodePayload = Omit<WorkspaceNode, 'position'> & { position?: WorkspaceNode['position'] }
 
 export interface AgentStatusPayload {
   nodeId: string
@@ -255,6 +275,11 @@ export interface OuroborosApi {
     write(nodeId: string, data: string): void
     resize(nodeId: string, cols: number, rows: number): void
     kill(nodeId: string): Promise<void>
+    /**
+     * Attach an image file to a Claude Code card's prompt as an [Image #N] chip: the image is put on the
+     * clipboard and the card gets Claude Code's own paste key (Alt+V). Resolves once the chip shows.
+     */
+    pasteImage(nodeId: string, path: string): Promise<{ ok: boolean; error?: string }>
     onData(cb: (nodeId: string, data: string) => void): () => void
     onExit(cb: (nodeId: string, code: number) => void): () => void
   }
@@ -263,10 +288,12 @@ export interface OuroborosApi {
   }
   board: {
     sync(payload: BoardSyncPayload): void
+    /** The selected card: main holds back the toast and the voice for the card the owner is looking at. */
+    setSelected(nodeId: string | null): void
     onAgentStatus(cb: (p: AgentStatusPayload) => void): () => void
     onHookEvent(cb: (p: HookEventPayload) => void): () => void
     onHandoffFired(cb: (p: HandoffFiredPayload) => void): () => void
-    onAddNode(cb: (node: WorkspaceNode) => void): () => void
+    onAddNode(cb: (node: AddNodePayload) => void): () => void
     onAddEdge(cb: (edge: WorkspaceEdge) => void): () => void
     onRemoveNode(cb: (nodeId: string) => void): () => void
     onRemoveEdge(cb: (edgeId: string) => void): () => void
@@ -274,6 +301,8 @@ export interface OuroborosApi {
     /** Main changed a card's options (e.g. a conductor enabled board tools); restart=true relaunches it. */
     onUpdateNode(cb: (p: { nodeId: string; data: Partial<NodeData>; restart: boolean }) => void): () => void
     onExternalSession(cb: (p: ExternalSessionPayload) => void): () => void
+    /** Main decided something is worth saying out loud (a card finished, needs you, the board settled). */
+    onAnnounce(cb: (p: AnnouncePayload) => void): () => void
     fireHandoff(edgeId: string): Promise<{ ok: boolean; error?: string }>
     listAgents(): Promise<AgentSnapshot[]>
   }
@@ -303,10 +332,24 @@ export interface OuroborosApi {
   }
   shell: {
     openExternal(url: string): Promise<void>
+    /**
+     * Open a file or folder a card wrote about: folders and plain file types with their app, anything that
+     * could run (scripts, installers, shortcuts, unknown types) only revealed in its folder. A relative path
+     * resolves against `cwd`, `~` against the home folder; URLs, UNC and device paths are refused.
+     */
+    openPath(path: string, cwd?: string): Promise<{ ok: boolean; path: string; error?: string; revealed?: boolean }>
   }
   brief: {
     /** Show a URL in this window's "📄 Briefs" browser card (created on first use). */
     open(url: string): Promise<void>
+  }
+  autonomy: {
+    /** Start a run (keep-awake, deadline, caps, deny rules, parking, report); live Claude cards are relaunched in auto mode. */
+    start(config: AutonomyConfig): Promise<AutonomyPublic | null>
+    /** End the run now: the report lands on the canvas as a note and in the user-data folder. */
+    stop(): Promise<AutonomyPublic | null>
+    state(): Promise<AutonomyPublic | null>
+    onChange(cb: (p: AutonomyPublic) => void): () => void
   }
   changes: {
     summary(cwd: string): Promise<ChangesSummary>
@@ -333,12 +376,23 @@ export interface OuroborosApi {
     pathFor(file: File): string
     /** Save pasted image bytes under the app's temp folder; returns the path. */
     saveImage(bytes: Uint8Array, ext: string): Promise<string>
-    /** What Ctrl+V should paste: the clipboard image saved to a file (`path`), else its text. */
-    pasteClipboard(): Promise<{ path?: string; text?: string }>
+    /**
+     * What Ctrl+V should paste: the clipboard text, else its image saved to a file (`path`) — or, with
+     * saveImage=false, just `image: true` so the card can let Claude Code paste the image itself.
+     */
+    pasteClipboard(saveImage?: boolean): Promise<{ path?: string; text?: string; image?: boolean }>
   }
   skills: {
     /** Slash commands a Claude Code card in `cwd` offers (built-ins, user, project, plugins). */
     list(cwd: string): Promise<SkillEntry[]>
+  }
+  roles: {
+    /** Specialist roles for cards (project and user `.claude/agents`, the agency catalog) and the catalog's runbooks. */
+    list(cwd: string): Promise<RolesListing>
+    /** Clone or update the agency catalog (msitarzewski/agency-agents) with git. */
+    fetch(): Promise<{ ok: true; version: string } | { ok: false; error: string }>
+    /** The extra system prompt a role gives a card, or undefined for an unknown id. */
+    read(cwd: string, id: string): Promise<string | undefined>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */
@@ -357,7 +411,8 @@ export interface OuroborosApi {
     list(query?: string): Promise<Array<{ folder: string; title: string; url: string }>>
   }
   tidy: {
-    candidates(olderThanMinutes: number): Promise<Array<{ id: string; title: string; reason: string }>>
+    /** Cards that can be closed: dispatched ones whose job is over; with includeOwn also the owner's own idle cards. */
+    candidates(olderThanMinutes: number, includeOwn?: boolean): Promise<Array<{ id: string; title: string; reason: string }>>
     apply(ids: string[]): Promise<{ removed: number }>
   }
   update: {
@@ -368,6 +423,17 @@ export interface OuroborosApi {
     setToken(token: string): Promise<{ ok: boolean; hasToken: boolean }>
     onStatus(cb: (s: UpdateStatus) => void): () => void
   }
+  tts: {
+    /** Audio for `text` from the engine chosen in Settings (cached per sentence); `ok: false` for Windows voices or an engine error. */
+    synthesize(text: string): Promise<TtsResult>
+    /** Store (encrypted) an engine's API key; empty string clears it. */
+    setKey(engine: TtsKeyEngine, key: string): Promise<{ ok: boolean; hasKey: boolean }>
+    /** Which engines have a key saved. */
+    keys(): Promise<Record<TtsKeyEngine, boolean>>
+  }
 }
+
+export type TtsKeyEngine = 'gemini' | 'openai' | 'elevenlabs'
+export type TtsResult = { ok: true; bytes: Uint8Array; mime: string } | { ok: false; error: string }
 
 export type { HandoffEdgeData }

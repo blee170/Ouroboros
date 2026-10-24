@@ -13,6 +13,7 @@ const api: OuroborosApi = {
     write: (nodeId, data) => ipcRenderer.send(IPC.ptyWrite, nodeId, data),
     resize: (nodeId, cols, rows) => ipcRenderer.send(IPC.ptyResize, nodeId, cols, rows),
     kill: (nodeId) => ipcRenderer.invoke(IPC.ptyKill, nodeId),
+    pasteImage: (nodeId, path) => ipcRenderer.invoke(IPC.ptyPasteImage, nodeId, path),
     onData: (cb) => on<{ nodeId: string; data: string }>(IPC.ptyData, (p) => cb(p.nodeId, p.data)),
     onExit: (cb) => on<{ nodeId: string; code: number }>(IPC.ptyExit, (p) => cb(p.nodeId, p.code))
   },
@@ -21,6 +22,7 @@ const api: OuroborosApi = {
   },
   board: {
     sync: (payload) => ipcRenderer.send(IPC.boardSync, payload),
+    setSelected: (nodeId) => ipcRenderer.send(IPC.boardSelected, nodeId),
     onAgentStatus: (cb) => on(IPC.agentStatus, cb),
     onHookEvent: (cb) => on(IPC.hookEvent, cb),
     onHandoffFired: (cb) => on(IPC.handoffFired, cb),
@@ -31,6 +33,7 @@ const api: OuroborosApi = {
     onSetNote: (cb) => on(IPC.boardSetNote, cb),
     onUpdateNode: (cb) => on(IPC.boardUpdateNode, cb),
     onExternalSession: (cb) => on(IPC.externalSession, cb),
+    onAnnounce: (cb) => on(IPC.announce, cb),
     fireHandoff: (edgeId) => ipcRenderer.invoke(IPC.handoffFire, edgeId),
     listAgents: () => ipcRenderer.invoke(IPC.agentsList)
   },
@@ -58,10 +61,17 @@ const api: OuroborosApi = {
     open: (projectRoot) => ipcRenderer.invoke(IPC.windowOpen, projectRoot)
   },
   shell: {
-    openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url)
+    openExternal: (url) => ipcRenderer.invoke(IPC.shellOpenExternal, url),
+    openPath: (path, cwd) => ipcRenderer.invoke(IPC.shellOpenPath, path, cwd)
   },
   brief: {
     open: (url) => ipcRenderer.invoke(IPC.briefOpen, url)
+  },
+  autonomy: {
+    start: (config) => ipcRenderer.invoke(IPC.autonomyStart, config),
+    stop: () => ipcRenderer.invoke(IPC.autonomyStop),
+    state: () => ipcRenderer.invoke(IPC.autonomyState),
+    onChange: (cb) => on(IPC.autonomyChanged, cb)
   },
   changes: {
     summary: (cwd) => ipcRenderer.invoke(IPC.changesSummary, cwd),
@@ -89,10 +99,15 @@ const api: OuroborosApi = {
       }
     },
     saveImage: (bytes, ext) => ipcRenderer.invoke(IPC.filesSaveImage, bytes, ext),
-    pasteClipboard: () => ipcRenderer.invoke(IPC.filesPasteClipboard)
+    pasteClipboard: (saveImage) => ipcRenderer.invoke(IPC.filesPasteClipboard, saveImage !== false)
   },
   skills: {
     list: (cwd) => ipcRenderer.invoke(IPC.skillsList, cwd)
+  },
+  roles: {
+    list: (cwd) => ipcRenderer.invoke(IPC.rolesList, cwd),
+    fetch: () => ipcRenderer.invoke(IPC.rolesFetch),
+    read: (cwd, id) => ipcRenderer.invoke(IPC.rolesRead, cwd, id)
   },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
@@ -108,7 +123,7 @@ const api: OuroborosApi = {
     list: (query) => ipcRenderer.invoke(IPC.bookmarksList, query)
   },
   tidy: {
-    candidates: (olderThanMinutes) => ipcRenderer.invoke(IPC.tidyCandidates, olderThanMinutes),
+    candidates: (olderThanMinutes, includeOwn) => ipcRenderer.invoke(IPC.tidyCandidates, olderThanMinutes, includeOwn === true),
     apply: (ids) => ipcRenderer.invoke(IPC.tidyApply, ids)
   },
   update: {
@@ -117,6 +132,11 @@ const api: OuroborosApi = {
     install: () => ipcRenderer.invoke(IPC.updateInstall),
     setToken: (token) => ipcRenderer.invoke(IPC.updateSetToken, token),
     onStatus: (cb) => on(IPC.updateStatus, cb)
+  },
+  tts: {
+    synthesize: (text) => ipcRenderer.invoke(IPC.ttsSynthesize, text),
+    setKey: (engine, key) => ipcRenderer.invoke(IPC.ttsSetKey, engine, key),
+    keys: () => ipcRenderer.invoke(IPC.ttsKeys)
   }
 }
 

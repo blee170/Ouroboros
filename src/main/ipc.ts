@@ -1,16 +1,20 @@
-import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { nanoid } from 'nanoid'
-import type { AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
-import { normalizeEngine, type AppSettings, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
+import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
-import { detectClaudeReady } from '@shared/status'
+import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
+import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
 import type { Board } from './board'
 import { findBriefUrl } from './briefs'
 import { listSkills } from './skills'
+import type { RoleLibrary } from './roles'
+import { filterRoles } from '@shared/roles'
 import { prepareLaunch } from './claude-launcher'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -19,17 +23,26 @@ import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
+import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
+
+/** Dispatched cards are retired this long after their report reached the card that made them. */
+const DEFAULT_RETIRE_MINUTES = 5
+/** Live dispatched cards one lead may have at once. */
+const DEFAULT_MAX_WORKERS = 6
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
-import { selectTidyCandidates } from '@shared/tidy'
+import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
-import { logPath } from './diagnostics'
-import { detectEngines } from './engines'
+import { log, logPath } from './diagnostics'
+import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
 import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
 import { normalizePath, type SessionRegistry } from './windows'
+import { openMode, resolveOpenPath } from './open-path'
+import { Autonomy, type AutonomyHost } from './autonomy'
+import type { AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -40,8 +53,14 @@ export interface WindowSession {
   /** Project folder this window opened with (command line / "open in new window"). */
   initialProject?: string
   api: ApiHandlers
+  /** This window's Autonomous mode run (off until the owner starts one). */
+  autonomy: Autonomy
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
+  /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
+  selectedNodeId: string | null
+  /** One toast per card per BURST_MS, across "needs you", "failed" and "finished". */
+  burst: Burst
   readonly projectRoot: string
   /** Kill this window's processes and detach its listeners. */
   dispose(): void
@@ -58,6 +77,8 @@ export interface MainContext {
   updater: Updater
   tmpDir: string
   mcpScriptPath: string
+  /** Specialist roles for cards (.claude/agents files and the agency catalog under userData/roles). */
+  roles: RoleLibrary
 }
 
 const EDGE_COOLDOWN_MS = 8_000
@@ -91,11 +112,26 @@ function throttledSpawn<T>(fn: () => T): Promise<T> {
 const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** length of the launch command typed into each card's shell (its echo is not TUI output) */
 const launchLineLength = new Map<string, number>()
+/** the first output of each card's latest launch (its own buffer: the board's is capped and trimmed from the front) */
+const launchOut = new Map<string, string>()
+const LAUNCH_OUT_CAP = 16_000
+/** cards whose latest launch never came up (the CLI is missing): a prompt would land in a bare shell */
+const launchFailed = new Set<string>()
+
+/** Is the owner looking at this card right now (window focused, card selected)? Then it needs no toast. */
+function viewing(s: WindowSession, nodeId: string): boolean {
+  return !s.win.isDestroyed() && s.win.isFocused() && s.selectedNodeId === nodeId
+}
 
 /** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
+  // the CLI never started: the live process is the shell itself, and a prompt typed there would run as a command
+  if (launchFailed.has(nodeId)) return false
   const n = s.board.nodes.get(nodeId)
+  // during an autonomous run a shell is a way around every deny rule: nothing is typed into terminal or command
+  // cards (a line into one is refused too), and a parked permission prompt is never answered by a card
+  if (s.autonomy.on && n && s.autonomy.promptRefusal(n.data)) return false
   if (n?.data.kind === 'command') {
     if (running.has(nodeId)) return false // busy: one command at a time
     const shell = n.data.shell || ctx.store.getSettings().defaultShell || defaultShell()
@@ -185,6 +221,8 @@ function busyIn(ctx: MainContext, folder: string): { id: string; title: string }
 export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandlers {
   const board = s.board
   const pendingPrompts = new Map<string, string>()
+  /** lead id → creations still waiting on a worktree; they hold a slot under the lead's cap */
+  const pendingCreates = new Map<string, number>()
   board.on('status', (p: AgentStatusPayload) => {
     const pending = pendingPrompts.get(p.nodeId)
     // a typed role prompt goes first; its (suppressed) Stop brings the card back to idle, then the task
@@ -235,10 +273,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         const dup = input.url ? browserShowing(ctx, board, input.url) : undefined
         if (dup) return { id: dup }
         const id = nanoid(10)
-        const count = board.nodes.size
-        const node: WorkspaceNode = {
+        const node: AddNodePayload = {
           id,
-          position: { x: 80 + (count % 4) * 560, y: 80 + Math.floor(count / 4) * 420 },
           width: 640,
           height: 480,
           data: { kind: 'browser', title: input.title || 'Browser', cwd: board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' }
@@ -256,9 +292,22 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       type: (id, input) => ctx.browsers.type(id, input),
       screenshot: (id) => ctx.browsers.screenshot(id, join(ctx.tmpDir, 'screenshots'))
     },
+    listRoles: async (query) => {
+      const l = await ctx.roles.list(board.projectRoot)
+      return query ? { ...l, roles: filterRoles(l.roles, query) } : l
+    },
     createAgent: async (input) => {
       const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
+      const parentId = input.created_by && board.nodes.has(input.created_by) ? input.created_by : undefined
       let cwd = input.cwd || board.projectRoot || app.getPath('home')
+      // a specialist role: its file is the system prompt, the caller's own role_prompt follows it
+      const roleId = input.role?.trim() || undefined
+      if (roleId) {
+        if (input.kind === 'terminal' || input.kind === 'command') return { error: 'role applies to agent cards only (kind=claude)' }
+        const rolePrompt = ctx.roles.prompt(board.projectRoot, roleId)
+        if (!rolePrompt) return { error: `no role "${roleId}": list_roles shows the ids the library has` }
+        input = { ...input, role_prompt: [rolePrompt, input.role_prompt?.trim()].filter(Boolean).join('\n\n') }
+      }
       const title = input.title || basename(cwd)
       const kind = input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude'
       // The same title asked for again (a Conductor tends to want its "Brief writer" every round): a card that
@@ -274,7 +323,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
             // a new role for a live session goes in as a role turn; the task waits for its "ready"
             const claudeOpts = { ...twin.data.claude, appendSystemPrompt: role }
             twin.data.claude = claudeOpts
-            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { claude: claudeOpts }, restart: false })
+            twin.data.role = roleId
+            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { claude: claudeOpts, role: roleId }, restart: false })
             board.markRoleTurn(twin.id)
             sendPrompt(ctx, s, twin.id, roleAsMessage(role))
             if (input.prompt) pendingPrompts.set(twin.id, input.prompt)
@@ -282,21 +332,44 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           if (input.report_to && board.nodes.has(input.report_to) && !board.edges.some((e) => e.source === twin.id && e.target === input.report_to)) {
             createHandoffEdge(s, { source: twin.id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
           }
+          // a dispatched card taken over by another lead now belongs to that lead; an owner-made card stays the owner's
+          if (parentId && twin.data.parentId && twin.data.parentId !== parentId) {
+            twin.data.parentId = parentId
+            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { parentId }, restart: false })
+          }
           return { id: twin.id, cwd: twin.data.worktree?.path || twin.data.cwd, worktree: twin.data.worktree?.path, reused: true }
         }
-        if (!alive || status === 'ended') {
-          removeCard(ctx, s, twin.id)
-          replaced = twin.id
-        }
+      }
+      // caps are enforced here, not left to the prompt: depth (Conductor → team → worker) and live workers per lead.
+      // Checked before an ended twin is replaced, so a refused call changes nothing.
+      // autonomous run: Claude cards only. A terminal or command card is a shell past every deny rule; Codex and Gemini
+      // have no deny rules and 'auto' would mean yolo there (an omitted engine means Claude during the run). Then the caps.
+      if (s.autonomy.on && kind !== 'claude') return { error: 'Autonomous mode: no terminal or command cards during a run (a shell has no rails). Use a Claude card.' }
+      const engine = s.autonomy.on ? normalizeEngine(input.engine) : normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine)
+      if (s.autonomy.on && engine) return { error: `Autonomous mode: no ${engine} cards during a run (no deny rules for that engine). Omit the engine or pass engine=claude.` }
+      const autonomyRefusal = s.autonomy.dispatchRefusal(title, Boolean(twin))
+      if (autonomyRefusal) return { error: autonomyRefusal }
+      if (parentId) {
+        const refusal = dispatchRefusal(board.snapshot(), parentId, ctx.store.getSettings().maxWorkersPerLead ?? DEFAULT_MAX_WORKERS, pendingCreates.get(parentId) ?? 0)
+        if (refusal) return { error: refusal }
+      }
+      if (twin) {
+        removeCard(ctx, s, twin.id)
+        replaced = twin.id
       }
       const id = nanoid(10)
       let worktree: WorkspaceNode['data']['worktree']
       if (input.worktree) {
-        const wt = await createWorktree(cwd, title)
-        worktree = wt
-        cwd = wt.path
+        // the worktree takes seconds; parallel creates by the same lead count against its cap meanwhile
+        if (parentId) pendingCreates.set(parentId, (pendingCreates.get(parentId) ?? 0) + 1)
+        try {
+          const wt = await createWorktree(cwd, title)
+          worktree = wt
+          cwd = wt.path
+        } finally {
+          if (parentId) pendingCreates.set(parentId, Math.max(0, (pendingCreates.get(parentId) ?? 1) - 1))
+        }
       }
-      const count = board.nodes.size
       // Guard: --continue in a folder where a conductor already lives would clone the conductor's own
       // conversation (and re-run whatever it was doing). Start fresh there instead.
       const conductorHere = [...board.nodes.values()].some((n) => n.data.kind === 'conductor' && samePath(n.data.cwd, cwd))
@@ -306,25 +379,29 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           ? undefined
           : {
               appendSystemPrompt: input.role_prompt?.trim() || undefined,
-              permissionMode: input.permission_mode as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
+              // during an autonomous run the launch forces auto mode (plan stays plan) without writing it into the card:
+              // the card keeps its requested mode for after the run, and a requested bypass never comes back then
+              permissionMode: s.autonomy.storedPermissionMode(input.permission_mode) as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
               model: input.model || undefined,
               continue: wantContinue || undefined,
               resume: input.resume || undefined,
               boardTools: input.board_tools || undefined
             }
-      const node: WorkspaceNode = {
+      const node: AddNodePayload = {
         id,
-        position: { x: 80 + (count % 4) * 600, y: 80 + Math.floor(count / 4) * 440 },
         width: 560,
         height: 400,
         data: {
           kind,
-          engine: claude ? normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine) : undefined,
+          engine: claude ? engine : undefined,
           title,
           cwd: input.worktree ? input.cwd || board.projectRoot : cwd,
           worktree,
           claude,
-          commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined
+          commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined,
+          role: claude ? roleId : undefined,
+          parentId,
+          createdAt: Date.now()
         }
       }
       if (input.prompt) pendingPrompts.set(id, input.prompt)
@@ -335,6 +412,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (input.report_to && board.nodes.has(input.report_to)) {
         createHandoffEdge(s, { source: id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
       }
+      s.autonomy.countDispatch(title, Boolean(replaced)) // counted once the card exists: a failed worktree or per-lead cap above costs nothing
       return { id, cwd, worktree: worktree?.path, replaced }
     },
     removeAgent: async (id) => {
@@ -382,6 +460,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const n = board.nodes.get(id)
       if (!n) return null
       const folder = folderOf(board, n)
+      if (moveHead && s.autonomy.on) return { folder, ok: false, error: 'Autonomous mode: move_head is a human gate (it rewinds the branch); restore the files only, or leave it for the owner' }
       const busy = busyIn(ctx, folder)
       if (busy) return { folder, ok: false, error: `"${busy.title}" (${busy.id}) is working or waiting for the owner in that folder; wait for it or stop it first` }
       return { folder, ...(await restoreCheckpoint(folder, checkpointId, { moveHead, cardId: id })) }
@@ -392,14 +471,20 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const folder = folderOf(board, n)
       return { folder, ...(await deleteCheckpoint(folder, checkpointId)) }
     },
-    tidy: async (olderThanMinutes, dryRun) => {
-      // cards that still have an un-fired manual line or are the target of an auto line from a working card stay
-      const protect = new Set<string>()
-      for (const e of board.edges) {
-        const src = board.nodes.get(e.source)
-        if (src?.data.status === 'working') protect.add(e.target)
-      }
-      const candidates = selectTidyCandidates(board.snapshot(), { olderThanMinutes, protect })
+    tidy: async (opts, dryRun) => {
+      const settings = ctx.store.getSettings()
+      const agents = board.snapshot()
+      const lines = board.edges.map((e) => ({ source: e.source, target: e.target, lastFiredAt: e.data.lastFiredAt }))
+      const candidates = selectTidyCandidates(agents, {
+        // a lead asking for its own workers wants the reported ones gone now; the grace is for the unattended run
+        retireMinutes: opts.scope ? 0 : (settings.retireMinutes ?? DEFAULT_RETIRE_MINUTES),
+        olderThanMinutes: opts.olderThanMinutes || settings.autoTidyMinutes || 30,
+        includeOwn: opts.includeOwn,
+        scope: opts.scope,
+        auto: opts.auto,
+        reported: reportedCards(agents, lines),
+        protect: protectedCards(agents, lines)
+      })
       let removed = 0
       if (!dryRun) {
         for (const c of candidates) {
@@ -434,13 +519,17 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
   }
 }
 
+/** The toast for a card that needs a human: "needs you" with the question, or "failed" with the error; never for the card on screen. */
 function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayload): void {
   const settings = ctx.store.getSettings()
   if (!settings.notifications) return
+  if (viewing(s, p.nodeId)) return
   const n = s.board.nodes.get(p.nodeId)
   const title = n?.data.title ?? p.nodeId
-  if (Notification.isSupported()) {
-    const note = new Notification({ title: `${title} needs you`, body: p.statusDetail ?? 'Waiting for your input' })
+  const failure = failureOf(p.statusDetail)
+  // a run of permission prompts is one toast per 5 s; the taskbar still flashes for each
+  if (s.burst.allow(`needs:${p.nodeId}`, p.at) && Notification.isSupported()) {
+    const note = new Notification(failure ? { title: `${title} failed`, body: failure } : { title: `${title} needs you`, body: p.statusDetail ?? 'Waiting for your input' })
     note.on('click', () => {
       if (!s.win.isDestroyed()) {
         s.win.show()
@@ -450,6 +539,127 @@ function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayloa
     note.show()
   }
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+}
+
+/**
+ * Tell the owner when work is done: a toast and/or a spoken sentence when a card finishes a turn (Conductor
+ * replies by default, every card if asked), "needs you" spoken too, and "all cards have finished" once a
+ * run of several cards settles. The reply itself is never read out; its first line goes in the toast.
+ */
+function installAnnouncer(ctx: MainContext, s: WindowSession): void {
+  const board = s.board
+  const workingSince = new Map<string, number>()
+  const lastTurnMs = new Map<string, number>()
+  const spokenNeedsYou = new Map<string, number>()
+  const done = new BoardDone()
+  let settleTimer: ReturnType<typeof setTimeout> | null = null
+  // a card still booting (no status yet, or starting) is about to get its prompt: the board is not finished
+  const AGENT = new Set<NodeData['kind']>(['claude', 'conductor', 'terminal', 'command'])
+  const anyBusy = (): boolean =>
+    [...board.nodes.values()].some((n) => n.data.status === 'working' || n.data.status === 'needs-you' || (AGENT.has(n.data.kind) && (n.data.status === undefined || n.data.status === 'starting')))
+  // statuses that mark a fresh turn: UserPromptSubmit (Claude, Gemini), a prompt typed into Codex, a command card's run
+  const TURN_START = new Set(['thinking', 'prompt sent', 'running command'])
+  const deliver = (p: AnnouncePayload, body: string | undefined, prefs: { toast: boolean; voice: boolean }): void => {
+    if (prefs.toast && Notification.isSupported()) {
+      const note = new Notification({ title: phrase(p), body })
+      note.on('click', () => {
+        if (!s.win.isDestroyed()) {
+          s.win.show()
+          s.win.focus()
+        }
+      })
+      note.show()
+    }
+    if (prefs.voice) sendToRenderer(s, IPC.announce, p)
+  }
+  board.on('status', (p: AgentStatusPayload) => {
+    if (p.status === 'working') {
+      // a turn that ended without a Stop (API failure, Esc) must not lend its start to the next one
+      if (!workingSince.has(p.nodeId) || TURN_START.has(p.statusDetail ?? '')) workingSince.set(p.nodeId, p.at)
+      done.working()
+    } else if (p.status !== 'needs-you') {
+      // the turn is over: remember how long it ran for the Stop that follows a 'done'; anything else forgets it
+      const since = workingSince.get(p.nodeId)
+      if (p.status === 'done' && since !== undefined) lastTurnMs.set(p.nodeId, p.at - since)
+      else lastTurnMs.delete(p.nodeId)
+      workingSince.delete(p.nodeId)
+    }
+    if (p.status === 'needs-you') {
+      const prefs = announceSettings(ctx.store.getSettings())
+      const n = board.nodes.get(p.nodeId)
+      // the toast for this already comes from notifyNeedsYou; here only the voice, once a minute per card, and
+      // not for the card the owner is looking at
+      if (prefs.voice && prefs.target !== 'off' && n && !viewing(s, p.nodeId) && p.at - (spokenNeedsYou.get(p.nodeId) ?? 0) >= NEEDS_YOU_REPEAT_MS) {
+        spokenNeedsYou.set(p.nodeId, p.at)
+        deliver({ kind: failureOf(p.statusDetail) ? 'failed' : 'needs-you', title: n.data.title, lang: langFor(n.data.title, p.statusDetail) }, undefined, { toast: false, voice: true })
+      }
+    }
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = setTimeout(() => {
+      settleTimer = null
+      if (s.win.isDestroyed() || !done.settle(anyBusy())) return
+      const prefs = announceSettings(ctx.store.getSettings())
+      if (prefs.target === 'off') return
+      deliver({ kind: 'all-done', title: '', lang: langFor(...[...board.nodes.values()].map((n) => n.data.title)) }, undefined, prefs)
+    }, SETTLE_MS)
+  })
+  board.on('stop', (nodeId: string, message: string) => {
+    const n = board.nodes.get(nodeId)
+    if (!n) return
+    const prefs = announceSettings(ctx.store.getSettings())
+    const elapsed = lastTurnMs.get(nodeId)
+    lastTurnMs.delete(nodeId)
+    // the owner is looking at the card (the reply is on screen), or this card was announced seconds ago: the
+    // finish is not announced, so a settling board may still say "all cards have finished"
+    const announced = announcesStop(n.data.kind, elapsed, prefs) && !viewing(s, nodeId) && s.burst.allow(`finished:${nodeId}`, Date.now())
+    done.stopped(announced)
+    if (!announced) return
+    deliver({ kind: 'finished', title: n.data.title, lang: langFor(n.data.title, message) }, firstLine(message) || undefined, prefs)
+  })
+}
+
+/** What an autonomous run may do to this window: restart cards, close them, drop a note, keep the PC awake, tell the owner. */
+function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
+  const board = s.board
+  return {
+    board,
+    agents: () => board.snapshot(),
+    sendPrompt: (id, text) => sendPrompt(ctx, s, id, text),
+    removeCard: (id) => removeCard(ctx, s, id),
+    relaunch: (id, claude) => {
+      const n = board.nodes.get(id)
+      if (n) n.data.claude = claude
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: { claude }, restart: true })
+    },
+    addNote: (title, note) => sendToRenderer(s, IPC.boardAddNode, { id: nanoid(10), width: 600, height: 640, data: { kind: 'note', title, cwd: board.projectRoot, note } } satisfies AddNodePayload),
+    changed: (state) => sendToRenderer(s, IPC.autonomyChanged, state),
+    toast: (title, body) => {
+      if (Notification.isSupported()) {
+        const note = new Notification({ title, body })
+        note.on('click', () => {
+          if (!s.win.isDestroyed()) {
+            s.win.show()
+            s.win.focus()
+          }
+        })
+        note.show()
+      }
+      if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+    },
+    keepAwake: () => {
+      const id = powerSaveBlocker.start('prevent-app-suspension')
+      return () => {
+        if (powerSaveBlocker.isStarted(id)) powerSaveBlocker.stop(id)
+      }
+    },
+    get dir() {
+      return join(app.getPath('userData'), 'autonomy', basename(board.projectRoot || 'no-project').replace(/[^\w.-]+/g, '_'))
+    },
+    evidence: async (cwd) => {
+      const c = await getChanges(cwd)
+      return c.repo ? { branch: c.branch, added: c.added, removed: c.deleted, files: c.files.length } : undefined
+    }
+  }
 }
 
 const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
@@ -539,6 +749,7 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
     if (p.status !== 'needs-you') return
     const now = Date.now()
     if (now - (noticed.get(p.nodeId) ?? 0) < 60_000) return
+    if (launchFailed.has(p.nodeId)) return // nothing a Conductor can answer: the owner installs the CLI
     const src = board.nodes.get(p.nodeId)
     for (const edge of board.edges) {
       if (edge.source !== p.nodeId || edge.data.mode !== 'auto') continue
@@ -567,12 +778,16 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     board,
     initialProject,
     api: null as unknown as ApiHandlers,
+    autonomy: null as unknown as Autonomy,
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
+    selectedNodeId: null,
+    burst: new Burst(),
     get projectRoot() {
       return board.projectRoot
     },
     dispose() {
+      s.autonomy.dispose()
       for (const id of board.nodes.keys()) {
         ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
@@ -582,7 +797,9 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     }
   }
   s.api = createApiHandlers(ctx, s)
+  s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
+  installAnnouncer(ctx, s)
   board.on('status', (p: AgentStatusPayload) => {
     sendToRenderer(s, IPC.agentStatus, p)
     if (p.status === 'needs-you') notifyNeedsYou(ctx, s, p)
@@ -627,7 +844,16 @@ export function registerIpc(ctx: MainContext): void {
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
     if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting') {
-      if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+      // the shell could not find the CLI (that CLI, not a tool the shell profile wants): say so now (needs you,
+      // "failed:"), not after a stall timer gives up
+      const engine = n.data.engine ?? 'claude'
+      const out = ((launchOut.get(nodeId) ?? '') + data).slice(-LAUNCH_OUT_CAP)
+      launchOut.set(nodeId, out)
+      const missing = detectMissingCommand(out, engine)
+      if (missing) {
+        launchFailed.add(nodeId)
+        board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
+      } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
       else if (n.data.engine === 'codex' && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
         // Codex sends no session-start event: once it has printed more than the echoed launch line,
         // treat 4s of quiet as "ready"
@@ -644,6 +870,8 @@ export function registerIpc(ctx: MainContext): void {
   })
   ptys.on('exit', (nodeId: string, code: number) => {
     running.delete(nodeId)
+    launchOut.delete(nodeId)
+    launchFailed.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
     if (!s) return
     s.board.setPtyAlive(nodeId, false)
@@ -664,6 +892,10 @@ export function registerIpc(ctx: MainContext): void {
       return { ok: false, error: (err as Error).message }
     }
   })
+  ipcMain.on(IPC.boardSelected, (e, nodeId: string | null) => {
+    const s = sessionOf(e)
+    if (s) s.selectedNodeId = typeof nodeId === 'string' ? nodeId : null
+  })
   ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => void ptys.write(nodeId, data))
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
   ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
@@ -677,11 +909,14 @@ export function registerIpc(ctx: MainContext): void {
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const engine = opts.engine ?? 'claude'
+      // during an autonomous run only Claude launches: the deny rules are Claude settings, and 'auto' would mean yolo elsewhere
+      if (s.autonomy.on && engine !== 'claude') return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
         engine,
-        claude: opts.claude,
+        // during an autonomous run every Claude launch is auto mode (plan stays plan), the owner's own cards included
+        claude: { ...opts.claude, permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'] },
         shell,
         baseUrl: hookServer.baseUrl,
         token: hookServer.token,
@@ -690,10 +925,18 @@ export function registerIpc(ctx: MainContext): void {
         nodeBin: findNodeBinary(),
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
-        title: opts.title
+        title: opts.title,
+        settingsExtra: s.autonomy.settingsFragment()
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
-      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env }))
+      launchOut.delete(opts.nodeId)
+      launchFailed.delete(opts.nodeId)
+      // a stale ANTHROPIC_API_KEY in the owner's environment would beat the sign-in inside every Claude card
+      const login = engine === 'claude' ? claudeLoginFromFiles(claudeConfigDirOf(process.env, homedir()), existsSync, (p) => readFileSync(p, 'utf8')) : false
+      const omitEnv = claudeEnvKeysToStrip(process.env, login, store.getSettings().keepEnvApiKey === true)
+      if (omitEnv.length) log(`claude launch ${opts.nodeId}: ${omitEnv.join(', ')} not passed to the card (signed in; Settings → keep the environment key to change this)`)
+      else if (login === undefined && claudeEnvKeysToStrip(process.env, true, false).length) log(`claude launch ${opts.nodeId}: sign-in files unreadable, environment key kept`)
+      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
       if (prepared.initialPrompt) {
@@ -757,16 +1000,42 @@ export function registerIpc(ctx: MainContext): void {
     return file
   }
   ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => savePasted(bytes, ext))
+  // The sidebar composer's screenshots go to a Claude Code card the way Claude Code itself pastes them: the image
+  // on the clipboard, then its paste key (Alt+V = ESC v); the prompt shows "[Image #N]". One card at a time.
+  ipcMain.handle(IPC.ptyPasteImage, async (e, nodeId: string, path: string): Promise<{ ok: boolean; error?: string }> => {
+    const s = sessionOf(e)
+    if (!s || !s.board.nodes.has(nodeId) || !ctx.ptys.isAlive(nodeId)) return { ok: false, error: 'card is not running' }
+    if (!isAbsolute(path) || !existsSync(path)) return { ok: false, error: 'image file not found' }
+    const ext = path.split('.').pop()?.toLowerCase() ?? ''
+    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/png'
+    const chips = (): number => (stripAnsi(s.board.getOutput(nodeId)).match(/\[Image #\d+\]/g) ?? []).length
+    const before = chips()
+    const keepText = (await clipboard.readText()).trim()
+    try {
+      await clipboard.write([new ClipboardItem({ [type]: new Blob([readFileSync(path)], { type }) })])
+    } catch (err) {
+      return { ok: false, error: `clipboard: ${String(err)}` }
+    }
+    ctx.ptys.write(nodeId, '\x1bv')
+    const deadline = Date.now() + 4000
+    while (Date.now() < deadline && chips() <= before) await new Promise((r) => setTimeout(r, 100))
+    if (keepText) await clipboard.writeText(keepText).catch(() => undefined)
+    return chips() > before ? { ok: true } : { ok: false, error: 'the card did not take the image (is Claude Code at its prompt?)' }
+  })
   ipcMain.handle(IPC.skillsList, (_e, cwd: string) => listSkills(typeof cwd === 'string' ? cwd : ''))
+  ipcMain.handle(IPC.rolesList, (_e, cwd: string) => ctx.roles.list(typeof cwd === 'string' ? cwd : ''))
+  ipcMain.handle(IPC.rolesFetch, () => ctx.roles.fetch())
+  ipcMain.handle(IPC.rolesRead, (_e, cwd: string, id: string) => (typeof id === 'string' ? ctx.roles.prompt(typeof cwd === 'string' ? cwd : '', id) : undefined))
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
-  ipcMain.handle(IPC.filesPasteClipboard, async (): Promise<{ path?: string; text?: string }> => {
+  ipcMain.handle(IPC.filesPasteClipboard, async (_e, saveImage = true): Promise<{ path?: string; text?: string; image?: boolean }> => {
     // Office apps put a bitmap next to the copied cells: text wins whenever there is any
     const text = await clipboard.readText()
     if (text.trim()) return { text }
     for (const item of await clipboard.read()) {
       const type = item.types.find((t) => t === 'image/png') ?? item.types.find((t) => t.startsWith('image/'))
       if (!type) continue
+      if (!saveImage) return { image: true }
       const blob = (await item.getType(type)) as Blob
       return { path: savePasted(new Uint8Array(await blob.arrayBuffer()), type.split('/')[1] || 'png') }
     }
@@ -779,6 +1048,19 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.shellOpenExternal, (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url)
     return undefined
+  })
+  // a path out of a card's reply, clicked by the owner: main decides where it resolves and whether it is
+  // opened or only revealed (scripts, installers, shortcuts and unknown types are never run from a click)
+  ipcMain.handle(IPC.shellOpenPath, async (_e, p: unknown, cwd?: unknown) => {
+    const r = resolveOpenPath(p, cwd, homedir())
+    if (!r.ok) return { ok: false, path: String(p), error: r.error }
+    if (!existsSync(r.abs)) return { ok: false, path: r.abs, error: 'Not found' }
+    if (openMode(r.abs, statSync(r.abs).isDirectory()) === 'reveal') {
+      shell.showItemInFolder(r.abs)
+      return { ok: true, path: r.abs, revealed: true }
+    }
+    const err = await shell.openPath(r.abs)
+    return err ? { ok: false, path: r.abs, error: err } : { ok: true, path: r.abs }
   })
 
   ipcMain.handle(IPC.settingsGet, () => store.getSettings())
@@ -856,17 +1138,27 @@ export function registerIpc(ctx: MainContext): void {
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
   ipcMain.handle(IPC.enginesDetect, () => detectEngines())
-  ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number) => (await sessionOf(e)?.api.tidy(minutes, true))?.candidates ?? [])
+  ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number, includeOwn: boolean) => (await sessionOf(e)?.api.tidy({ olderThanMinutes: minutes, includeOwn }, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
     const s = sessionOf(e)
     let removed = 0
     if (s) for (const id of ids) if (await s.api.removeAgent(id)) removed++
     return { removed }
   })
-  // optional auto-tidy, every window
+  ipcMain.handle(IPC.autonomyStart, (e, config: AutonomyConfig) => {
+    const s = sessionOf(e)
+    if (!s) return null
+    const until = Math.min(Number(config?.until), Date.now() + 36 * 3_600_000) // a run is a night or a day, never a forgotten week
+    if (!Number.isFinite(until) || until <= Date.now()) return s.autonomy.public()
+    const clamp = (v: unknown, lo: number, hi: number, d: number): number => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d)
+    return s.autonomy.start({ until, maxDispatches: clamp(config.maxDispatches, 0, 500, 20), maxRetriesPerTitle: clamp(config.maxRetriesPerTitle, 0, 20, 3), stallMinutes: clamp(config.stallMinutes, 0, 240, 10) })
+  })
+  ipcMain.handle(IPC.autonomyStop, (e) => sessionOf(e)?.autonomy.stop('stopped by the owner') ?? null)
+  ipcMain.handle(IPC.autonomyState, (e) => sessionOf(e)?.autonomy.public() ?? null)
+  // dispatched cards retire on their own once their report is in (every window, once a minute); owner-made cards never
   setInterval(() => {
-    const minutes = store.getSettings().autoTidyMinutes ?? 0
-    if (minutes > 0) for (const s of ctx.windows.all()) void s.api.tidy(minutes, false)
+    if ((store.getSettings().retireMinutes ?? DEFAULT_RETIRE_MINUTES) <= 0) return
+    for (const s of ctx.windows.all()) void s.api.tidy({ auto: true }, false)
   }, 60_000)
 
   ctx.updater.on('status', (st) => broadcast(ctx, IPC.updateStatus, st))
@@ -877,6 +1169,19 @@ export function registerIpc(ctx: MainContext): void {
     const enc = encryptToken(String(token ?? '').trim())
     store.setSettings({ githubTokenEnc: enc || undefined })
     return { ok: true, hasToken: Boolean(enc) }
+  })
+
+  const TTS_KEY_ENGINES: TtsKeyEngine[] = ['gemini', 'openai', 'elevenlabs']
+  ipcMain.handle(IPC.ttsSynthesize, (_e, text: string) => synthesize(store.getSettings(), String(text ?? '').trim()))
+  ipcMain.handle(IPC.ttsSetKey, (_e, engine: TtsKeyEngine, key: string) => {
+    if (!TTS_KEY_ENGINES.includes(engine)) return { ok: false, hasKey: false }
+    const settings = store.getSettings()
+    store.setSettings(ttsKeyPatch(settings, engine, String(key ?? '')))
+    return { ok: true, hasKey: Boolean(ttsKeyFor(store.getSettings(), engine)) }
+  })
+  ipcMain.handle(IPC.ttsKeys, () => {
+    const settings = store.getSettings()
+    return Object.fromEntries(TTS_KEY_ENGINES.map((e) => [e, Boolean(ttsKeyFor(settings, e))])) as Record<TtsKeyEngine, boolean>
   })
 }
 

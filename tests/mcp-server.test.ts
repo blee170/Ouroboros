@@ -33,6 +33,7 @@ describe('bundled mcp server', () => {
         else if (req.url === '/api/agents/a1/prompt') res.end(JSON.stringify({ ok: true }))
         else if (req.url === '/api/agents' && req.method === 'POST') res.end(JSON.stringify({ id: 'new1' }))
         else if (req.url === '/api/agents/a1' && req.method === 'PATCH') res.end(JSON.stringify({ ok: true }))
+        else if (req.url?.startsWith('/api/tidy')) res.end(JSON.stringify({ candidates: [{ id: 'a1', title: 'A', reason: 'reported, done for 6 min' }], removed: 0 }))
         else if (req.url?.startsWith('/api/agents/a1/changes')) res.end(JSON.stringify({ repo: true, files: [{ path: 'x.ts', status: 'M', added: 1, deleted: 0 }] }))
         else if (req.url === '/api/agents/a1/checkpoints' && req.method === 'POST') res.end(JSON.stringify({ ok: true, checkpoint: { id: '1700000000000-abcd', label: 'before implement' } }))
         else if (req.url === '/api/agents/a1/checkpoints' && req.method === 'GET') res.end(JSON.stringify({ ok: true, checkpoints: [] }))
@@ -51,7 +52,7 @@ describe('bundled mcp server', () => {
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'list_agents', 'list_checkpoints', 'list_handoffs', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_prompt', 'set_board_tools', 'set_note', 'tidy_board', 'wait_for_agents'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_prompt', 'set_board_tools', 'set_note', 'tidy_board', 'wait_for_agents'])
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text
@@ -73,6 +74,10 @@ describe('bundled mcp server', () => {
     const self2 = await client.callTool({ name: 'set_board_tools', arguments: { agent_id: 'me' } })
     expect(self2.isError).toBe(true)
     await client.callTool({ name: 'set_board_tools', arguments: { agent_id: 'a1' } })
+
+    const tidy = await client.callTool({ name: 'tidy_board', arguments: { dry_run: true } })
+    expect((tidy.content as Array<{ text: string }>)[0].text).toContain('reported, done for 6 min')
+    expect(calls.find((c) => c.url.startsWith('/api/tidy'))).toMatchObject({ method: 'GET', url: '/api/tidy?minutes=30&dry_run=1' })
     expect(calls.find((c) => c.url === '/api/agents/a1' && c.method === 'PATCH')?.body).toBe('{"board_tools":true,"restart":true}')
     expect(calls.every((c) => c.method !== 'PATCH' || c.url === '/api/agents/a1')).toBe(true)
     const ch = await client.callTool({ name: 'get_changes', arguments: { agent_id: 'a1', diff: true } })

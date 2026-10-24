@@ -19,7 +19,8 @@ const BUILTIN: Array<[string, string]> = [
   ['resume', 'Resume a past session'],
   ['review', 'Review a pull request'],
   ['status', 'Version, model, account'],
-  ['fast', 'Toggle fast mode']
+  ['fast', 'Toggle fast mode'],
+  ['voice', 'Voice dictation: hold or tap Space to speak (claude.ai sign-in; /voice tap, /voice off)']
 ]
 
 function frontmatter(file: string): { name?: string; description?: string } {

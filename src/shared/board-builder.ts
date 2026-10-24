@@ -50,6 +50,8 @@ export interface BuildBoardInput {
   extraFolders: Array<{ cwd: string; title: string; sessionId?: string }>
   /** Shared worktree/role folder; defaults to conductor.cwd */
   roleCwd?: string
+  /** Specialist cards (a role from the library each): the file's body is the card's extra system prompt. */
+  specialists?: Array<{ id: string; name: string; prompt: string; emoji?: string }>
   /** Add a browser card (default true). */
   browser?: boolean
   browserUrl?: string
@@ -73,13 +75,22 @@ function basename(p: string): string {
 export function conductorPrompt(input: BuildBoardInput): string {
   const roleLines = input.roles.map((r) => `- "${ROLE_PRESETS[r].title}": ${ROLE_PRESETS[r].prompt.split('.')[0].replace(/^Role: /, '')}`)
   const extras = input.extraFolders.map((f) => `- "${f.title}": folder ${f.cwd}`)
+  const specialists = (input.specialists ?? []).map((sp) => `- "${specialistTitle(sp)}": specialist card (role ${sp.id}); give it the work its title says, with the markers you expect`)
   return [
     `Board for project ${basename(input.conductor.cwd)} (${input.conductor.cwd}).`,
     'Cards available on this board (use list_agents for live ids and statuses):',
     ...roleLines,
+    ...specialists,
     ...extras,
     'Routing rules: implementation work goes to the Implementer; after it reports RESULT the Tester runs automatically through a handoff line and the Reviewer follows when tests PASS. If the Reviewer says CHANGES REQUESTED, send the findings back to the Implementer with send_prompt. Ops handles deploys and health checks only. Keep your own replies to the human short: what was dispatched, what is waiting on them, what finished.'
   ].join('\n')
+}
+
+/** Specialist cards sit in rows of this many under the role row. */
+const SPECIALISTS_PER_ROW = 4
+
+export function specialistTitle(sp: { name: string; emoji?: string }): string {
+  return `${sp.emoji ?? '🎭'} ${sp.name}`
 }
 
 /**
@@ -90,7 +101,9 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
   const edges: WorkspaceEdge[] = []
   const roleCwd = input.roleCwd ?? input.conductor.cwd
   const roles = ROLE_ORDER.filter((r) => input.roles.includes(r))
-  const columns = Math.max(roles.length, input.extraFolders.length, 2)
+  const specialists = input.specialists ?? []
+  const specialistRows = Math.ceil(specialists.length / SPECIALISTS_PER_ROW)
+  const columns = Math.max(roles.length, input.extraFolders.length, Math.min(SPECIALISTS_PER_ROW, specialists.length), 2)
   const rowWidth = columns * CARD_W + (columns - 1) * GAP_X
 
   // Row 0: note + conductor
@@ -162,12 +175,24 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
     })
   }
 
-  // Row 2: extra folders resuming their latest session
+  // Rows 2…: specialist cards, four per row, each with its role file as the system prompt
+  specialists.forEach((sp, i) => {
+    const data: NodeData = { kind: 'claude', title: specialistTitle(sp), cwd: roleCwd, claude: { appendSystemPrompt: sp.prompt }, role: sp.id }
+    nodes.push({
+      id: makeId(),
+      position: { x: (i % SPECIALISTS_PER_ROW) * (CARD_W + GAP_X), y: (2 + Math.floor(i / SPECIALISTS_PER_ROW)) * (CARD_H + GAP_Y) },
+      width: CARD_W,
+      height: CARD_H,
+      data
+    })
+  })
+
+  // Last row: extra folders resuming their latest session
   input.extraFolders.forEach((f, i) => {
     const id = makeId()
     nodes.push({
       id,
-      position: { x: i * (CARD_W + GAP_X), y: 2 * (CARD_H + GAP_Y) },
+      position: { x: i * (CARD_W + GAP_X), y: (2 + specialistRows) * (CARD_H + GAP_Y) },
       width: CARD_W,
       height: CARD_H,
       // resume the folder's latest session when we know one; otherwise start fresh (--continue would fail)

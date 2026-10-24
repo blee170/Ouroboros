@@ -1,18 +1,23 @@
 import { memo } from 'react'
 import type { NodeProps } from '@xyflow/react'
-import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
+import { STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
+import { StateGlyph } from '@/lib/StateGlyph'
+import { kindIcon } from '@/lib/cardKinds'
 
-function ExternalNodeImpl({ id, data }: NodeProps<BoardNode>) {
+const ExternalIcon = kindIcon('external')
+
+function ExternalNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const pullExternal = useBoard((s) => s.pullExternal)
   const status = data.status ?? 'idle'
   return (
-    <div className="external-node" style={{ borderColor: STATUS_COLOR[status] }}>
+    <div className={`external-node${selected ? ' selected' : ''}`}>
       <div className="node-header">
-        <span className="status-dot" style={{ background: STATUS_COLOR[status] }} />
+        <StateGlyph status={status} />
         <span className="title" title={data.cwd}>
-          ⇢ {data.title}
+          <ExternalIcon className="ico kind" size={13} aria-hidden="true" />
+          <span>{data.title}</span>
         </span>
         <span className="status-text">{STATUS_LABEL[status]}</span>
       </div>

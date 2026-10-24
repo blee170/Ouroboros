@@ -3,6 +3,10 @@ import { NodeResizer, useStore, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
 import { setDragShield } from '@/lib/dragShield'
+import { Icon } from '@/lib/icons'
+import { kindIcon } from '@/lib/cardKinds'
+
+const BrowserIcon = kindIcon('browser')
 
 /** Minimal surface of Electron's <webview> element that we use. */
 interface WebviewEl extends HTMLElement {
@@ -117,32 +121,33 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         minWidth={360}
         minHeight={240}
         isVisible={selected}
-        lineStyle={{ borderColor: '#38bdf8' }}
-        handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }}
+        lineStyle={{ borderColor: 'var(--ring)' }}
+        handleStyle={{ background: 'var(--text)', width: 14, height: 14, borderRadius: 3 }}
         onResizeStart={() => setDragShield(true)}
         onResizeEnd={() => setDragShield(false)}
       />
       <div className="node-header">
         <span className="title" title={pageTitle}>
-          🌐 {data.title}
+          <BrowserIcon className="ico kind" size={13} aria-hidden="true" />
+          <span>{data.title}</span>
         </span>
-        <button className="icon-btn nodrag" title="Back" onClick={() => ref.current?.goBack()}>
-          ‹
+        <button className="icon-btn nodrag" title="Back" aria-label="Back" onClick={() => ref.current?.goBack()}>
+          <Icon name="back" size={14} />
         </button>
-        <button className="icon-btn nodrag" title="Forward" onClick={() => ref.current?.goForward()}>
-          ›
+        <button className="icon-btn nodrag" title="Forward" aria-label="Forward" onClick={() => ref.current?.goForward()}>
+          <Icon name="forward" size={14} />
         </button>
-        <button className="icon-btn nodrag" title="Reload" onClick={() => ref.current?.reload()}>
-          ↻
+        <button className="icon-btn nodrag" title="Reload" aria-label="Reload" onClick={() => ref.current?.reload()}>
+          <Icon name="refresh" size={13} />
         </button>
-        <button className="icon-btn nodrag" title="Chrome / Edge bookmarks" onClick={() => void openBookmarks()}>
-          ★
+        <button className="icon-btn nodrag" title="Chrome / Edge bookmarks" aria-label="Bookmarks" onClick={() => void openBookmarks()}>
+          <Icon name="star" size={13} />
         </button>
-        <button className="icon-btn nodrag" title="Cycle size: 640×480 → 960×720 → 1280×900 → 1600×1100 (or drag any edge or corner)" onClick={() => cycleSize()}>
-          ⤢
+        <button className="icon-btn nodrag" title="Cycle size: 640×480 → 960×720 → 1280×900 → 1600×1100 (or drag any edge or corner)" aria-label="Cycle size" onClick={() => cycleSize()}>
+          <Icon name="expand" size={13} />
         </button>
-        <button className="icon-btn nodrag" title="Open this page in your system browser (sites that refuse embedded sign-in)" onClick={() => void window.ouroboros.shell.openExternal(ref.current?.getURL() || address)}>
-          ↗
+        <button className="icon-btn nodrag" title="Open this page in your system browser (sites that refuse embedded sign-in)" aria-label="Open in system browser" onClick={() => void window.ouroboros.shell.openExternal(ref.current?.getURL() || address)}>
+          <Icon name="external" size={13} />
         </button>
         <input
           className="address nodrag"
@@ -156,8 +161,8 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         <span className="status-text" title={pageTitle}>
           {ready ? pageTitle : 'loading…'}
         </span>
-        <button className="icon-btn nodrag" title="Close" onClick={() => void removeNode(id)}>
-          ✕
+        <button className="icon-btn nodrag" title="Close" aria-label="Close card" onClick={() => void removeNode(id)}>
+          <Icon name="close" size={14} />
         </button>
       </div>
       {bmOpen && (

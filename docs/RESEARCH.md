@@ -115,3 +115,166 @@ Zapier Copilot/Canvas, Make AI, n8n AI Builder, Gumloop, Google Opal, Power Auto
 
 출처: openai/codex `codex-rs/hooks/src/legacy_notify.rs`, `codex-rs/utils/cli/src/config_override.rs`, `codex-rs/rmcp-client/src/utils.rs`, `codex-rs/core/config.schema.json`; google-gemini/gemini-cli `docs/hooks/reference.md`, `docs/cli/cli-reference.md`, `docs/cli/settings.md`, `docs/tools/mcp-server.md`, `packages/cli/src/config/settings.ts`, `packages/cli/src/config/settingsSchema.ts`, `packages/core/src/hooks/hookRunner.ts`.
 미검증: Codex TUI의 "준비됨" 출력 문구(없어서 출력 후 4초 정적을 준비로 간주), `codex resume` 앞에 둔 전역 플래그(`-m`, 승인 플래그) 수용 여부.
+
+## 8. 음성 입력·완료 알림 조사 (2026-10-23, 0.3.4) — 검증한 사실
+
+**결론**: 음성 *입력*은 Claude Code 내장 `/voice`를 쓰고(코드 0줄), 우로보로스는 *알림*(토스트+음성)만 만든다. 자체 STT는 보류.
+
+| 항목 | 사실 | 출처 |
+|---|---|---|
+| Claude Code `/voice` | v2.1.69+ 내장 받아쓰기. Space 홀드(기본) 또는 `/voice tap`(2.1.116+). 한국어 포함 20개 언어, `language` 설정을 따름. 오디오는 Anthropic 서버에서 전사(로컬 아님), **claude.ai 로그인 필요**(API 키·Bedrock 불가), 토큰 소모 없음. Windows 네이티브 지원. 녹음은 claude 프로세스의 네이티브 모듈이 직접 → 터미널이 xterm이어도 무관. | https://code.claude.com/docs/en/voice-dictation |
+| Electron Web Speech API | `webkitSpeechRecognition`은 Electron에서 `network` 에러(Chromium이 Google 서버를 쓰는데 Electron엔 키가 없음). 온디바이스 인식(`processLocally`)도 Electron이 `unavailable` 스텁 처리. | electron/electron#46143, electron/electron#52955 |
+| Windows Win+H | Claude Code TUI에서는 "no text box selected"로 실패. | anthropics/claude-code#37095 |
+| 자체 STT 후보(보류) | 로컬 whisper.cpp 애드온(`@kutalia/whisper-node-addon`, 프리빌드·Vulkan; small 466 MB, 한국어 CER ~18%) · Groq `whisper-large-v3-turbo` $0.04/시간(키 필요 → "자체 모델 호출 없음" 원칙과 충돌). Codex/Gemini 카드에 음성이 필요해질 때 다시 본다. | micdrop.dev/blog/local-speech-to-text-node, console.groq.com/docs/speech-to-text |
+| TTS | 렌더러 `speechSynthesis`는 Electron에서 동작하나 **SAPI 음성만** 노출(이 PC: Microsoft Heami Desktop ko-KR, Zira en-US). Windows 11 "자연 음성"·Edge 온라인 음성은 서드파티 앱에 안 열림(WebView2Feedback#2660). `getVoices()`는 첫 호출에 비어 있을 수 있어 `voiceschanged`를 기다린다. | MicrosoftEdge/WebView2Feedback#2660, super-productivity#6437 |
+| 자연 음성 TTS (2026-10-24) | Heami가 너무 딱딱해 사용자 자기 키로 쓰는 엔진을 붙임(`src/shared/tts.ts`, `src/main/tts.ts`). **Gemini**: `POST https://generativelanguage.googleapis.com/v1beta/interactions`, 헤더 `x-goog-api-key`, 본문 `input[{type:user_input, content[{type:text, text, annotations[{type:speech_metadata, style}]}]}]` + `response_format{type:audio}` + `generation_config.speech_config[{voice}]`, 응답 `steps[type=model_output].content[type=audio].data`(base64, WAV 24 kHz mono 16-bit). 모델 `gemini-3.8-flash-lite-tts`(무료 티어; `-flash-tts`는 더 고품질), 30개 프리빌트 음성(Kore·Zephyr·Puck·Achird·Sulafat…), 한국어 자동 인식. AI Studio 키(aistudio.google.com/app/apikey); Gemini CLI의 OAuth는 못 씀. **OpenAI**: `POST /v1/audio/speech` `gpt-4o-mini-tts` + `instructions`, mp3(2027-01-06 종료 예정). **ElevenLabs**: `POST /v1/text-to-speech/{voice_id}` `xi-api-key`, `eleven_multilingual_v2`, 무료 1만 크레딧. Edge 온라인 음성(비공식)은 2026-10-10 깨짐 → 제외. 로컬 자연 음성(Supertonic 3, ONNX, 한·영)은 onnxruntime-node 의존이라 보류. | ai.google.dev/gemini-api/docs/speech-generation (2026-10-24 스크랩), platform.openai.com/docs/guides/text-to-speech, elevenlabs.io/docs |
+| 선행 사례 공통 패턴 | 소리/토스트/음성 각각 토글(claude-code#45619 제안), 창 포커스 시 억제(Herdr), 10초 미만 작업은 안 알림(docker-agent `sound_threshold`), 매 턴 알림은 짜증(claude-code#87351), 300자 넘으면 "보고서 확인" 문구(heard.dev 가이드). VoiceMode MCP(mbailey/voicemode, MIT)는 양방향 대화형 — 총괄과 "통화"가 필요해지면 후보. | 각 저장소 |
+
+**채택 규칙** (`src/shared/announce.ts`): 대상 off/총괄만(기본)/전부 · 토스트·음성 각각 · 턴 10초 미만 무시 · 문장은 고정("○○ 작업이 끝났습니다. 보고를 확인해 주세요" — 답변 본문은 절대 안 읽음; 네 명의 의견 수렴 후 Jev 선택 a 0.69/grounded 0.80) · 한글이 제목/답변에 있으면 한국어, 한국어 음성 없으면 영어 문장으로 폴백 · needs-you는 카드당 60초에 한 번 음성 · 여러 카드가 돈 뒤 5초 정적이면 "모든 카드 작업이 끝났습니다"(마지막 턴이 이미 개별로 알려졌으면 생략) · 음성 엔진은 설정에서 고름(기본 Windows; Gemini/OpenAI/ElevenLabs는 본인 키, safeStorage 암호화, 문장별 `userData/tts/` 캐시, 실패 시 Windows 음성 폴백 + 설정에 이유 표시).
+
+**알려진 한계**: tap 모드 마이크가 열린 채면 TTS 문장이 받아쓰기에 섞인다(README에 적음) · 알림은 창 포커스와 무관하게 나간다(설정 없음, 단순 유지).
+
+## 9. 자율 운영(팀·워커 수명·컨텍스트·자율성) 조사 (2026-10-24, 0.4 계획 전) — 검증한 사실
+
+**질문**: "팀 카드가 워커를 스스로 띄우고 거두고, 컨텍스트가 차면 스스로 넘기고, 사장님은 결정 게이트에서만" — 이 방향이 맞는지, 2025–26 선행 사례에서 무엇이 되고 무엇이 망했는지. 세 갈래(팀/워커 오케스트레이션 · 컨텍스트 한계 · 자율성 경계)를 Opus 리서치 3개로 병렬 조사, 아래는 교차 확인된 것만.
+
+### 9.1 세 시스템 이상에서 반복되는 패턴 (= 베낄 것)
+
+| 패턴 | 어디서 | 우로보로스 현재 |
+|---|---|---|
+| **에이전트 밖의 내구성 작업 원장**(work ledger): 워커가 항목을 claim하고 상태·의존을 갱신 | Gas Town beads · Claude Code agent teams 태스크 리스트(의존·파일 락) · Anthropic 기능 목록 JSON(`passes`만 바뀜) · MS Magentic task ledger · OpenAI 저장소 내 실행 계획 | **없음** — `set_note` 자유 마크다운은 덮어써짐 |
+| **명시적 완료 신호로 은퇴**, idle 시간은 폴백 | `gt done`(브랜치 푸시→머지 요청→자기 세션 종료) · agent-teams 종료 핸드셰이크+idle 알림에 최종 답 포함 · Codex는 모든 결과 대기 | **idle 시간만** — `tidy_board`는 done/idle 30분 |
+| **역할·헌장은 세션과 분리된 파일** | `.claude/agents/*.md` · `.codex/agents/*.toml` · Gas Town identity/sandbox/session 3층 · CrewAI role/backstory | 카드 안 `role_prompt`뿐, 팀 헌장 파일 없음 |
+| **정체·조기종료 감시(watchdog)** | Gas Town 3분 heartbeat → `GUPP_VIOLATION` · Magentic `max_stall_count`→재계획 · agent-teams `TeammateIdle` exit 2 · Anthropic "기능 목록 대조 전엔 못 멈춤" | **없음** |
+| **매니저는 조율·전달만, 구현·요약 금지** | agent-teams 리드가 직접 구현해버리는 실패 · CrewAI 매니저가 모든 태스크 실행 · LangGraph "전화 놀이"(`forward_message`로 ~50% 개선) · Gas Town Witness | 프롬프트 규칙만("Do not do the coding yourself") |
+| **워커당 worktree + 단일 머지 단계** | Gas Town Refinery · 서브에이전트 `isolation: worktree` · Claude Squad · Conductor · Codex 동시 쓰기 충돌 경고 | worktree 있음, 머지 큐 없음 |
+| **스폰 프롬프트가 전체 맥락을 들고 감** | agent-teams 팀원은 리드 히스토리 상속 안 함 · Anthropic 리서치 브리프(목표·형식·경계) | 있음(`role_prompt`+`prompt`) |
+| **동시성·깊이 상한을 코드로** | agent-teams 3–5명·중첩 금지 · Codex `max_concurrent_threads_per_session` · Gas Town 20–30 | 프롬프트 권고만 |
+
+### 9.2 실패한 것 (= 안 할 것)
+
+- **Gas Town**(Yegge, 2026-01 → 2026-09 중단): 영속 워커 풀 → 좀비 워커·stale 브랜치 219개, Witness 단일 병목, "expensive as hell", 모델이 Gas Town 자체를 자꾸 손대서("just two more things") 유지에 "too much elbow grease". 남긴 교훈은 **beads(원장)뿐**이라고 본인이 정리.
+- **동등한 에이전트 떼·여러 쓰기 주체·락 파일**: Cognition "mostly a distraction"(2026-04-22), Cursor "bottleneck, risk-averse".
+- **LLM 매니저 혼자 맡기기**: CrewAI 매니저가 모든 태스크를 직접 함/`coworker not found`; 단계별 명시 지시로만 고쳐짐.
+- **AutoGPT류 무한 루프·자원 고갈**; 테스트 없이 "완료" 선언(Anthropic 2025-11-26, Cursor).
+- **자체 권한 분류기**: Anthropic 것도 false-negative 17%(2026-03-25) → 벤더 모드만 쓴다.
+- Claude Code agent teams 한계: in-process 팀원 resume 불가, Windows Terminal 분할 미지원, 중첩 금지 → **우로보로스 캔버스+`--resume`+`set_board_tools` 중첩은 이미 그 틈을 메운다**.
+
+### 9.3 컨텍스트 한계 — 사실
+
+| 항목 | 사실 | 출처 |
+|---|---|---|
+| CC 자동 compact | 윈도 미설정 시 모델 한계에서 발동(네이티브 1M 모델 ~967K). `CLAUDE_CODE_AUTO_COMPACT_WINDOW`(100K–1M, 최우선) · `--autocompact <auto\|tokens>`(2.1.309 확인) · `autoCompactWindow` · `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`(낮추기만). `DISABLE_AUTO_COMPACT=1`. | code.claude.com/docs/en/env-vars, model-config |
+| idle compact | ~54분 idle & ≥200K면 조용히 압축(인터랙티브 기본 on). `idleCompaction:false`로 끔 — **캔버스 idle 카드가 몰래 압축될 수 있음** | settings-reference#idlecompaction |
+| PreCompact 훅 | `trigger` manual/auto, exit 2 또는 `decision:"block"`으로 차단 가능하나 **복구 compact 차단 시 요청 실패**; `systemMessage` 버려져 요약 방향 못 정함. PostCompact엔 `compact_summary` 들어옴 | docs/en/hooks |
+| SessionStart 훅 | `source`: startup/resume/compact/fork, `additionalContext` 주입, resume/fork엔 `context_tokens` | docs/en/hooks |
+| 신호 | JSONL `compact_boundary` 레코드(`compactMetadata{trigger,preTokens,postTokens,durationMs}`); 로컬 샘플 497,898→25,441 토큰 97초. 통계줄 `used_percentage`는 자동압축 윈도 아닌 전체 윈도 기준 | 로컬 관측, statusline 문서 |
+| `--fork-session` | **전체 히스토리 복사** → 새 컨텍스트가 아님 | cli-reference |
+| Codex / Gemini | Codex `model_auto_compact_token_limit`, `compact_prompt`, `codex resume/fork` · Gemini `model.compressionThreshold` 기본 **0.5**, `/compress`, `/chat save`, `checkpointing` | 각 문서 |
+| compact vs 핸드오프 | Anthropic: "compaction isn't sufficient"(지시 전달 불완전) → 진행 파일+커밋+세션당 기능 1개. Factory 측정(36,611 메시지): 어떤 압축도 **파일 변경 흔적(artifact trail) 2.2–2.5/5**로 가장 약함. 컨텍스트 커질수록 18개 모델 전부 성능 저하(Chroma context-rot) | anthropic.com/engineering/effective-harnesses-for-long-running-agents, factory.com/news/evaluating-compression, trychroma.com/research/context-rot |
+
+### 9.4 자율성 사다리에서 우로보로스 위치
+
+L1 감독형 → L2 태스크 에이전트(마커·체크포인트·diff) → **L3 파이프라인(조건 라인·루프 가드·사람 게이트·보고 라인·wait) = 충족** → L4 자가 편성 팀(원장·워치독·예산·새 컨텍스트·단일 머지) = **절반**(팀장·tidy·note 있음 / 원장·워치독·예산·컨텍스트 순환 없음) → L5 자가 지시(스케줄·트리거·자율 지표·롤백) = 없음. 측정 지표: 개입/세션(Anthropic 5.4→3.3), 무인 분/개입, 게이트 요청/일, 체크포인트 복원률, 머지당 비용.
+
+### 9.5 하네스 vs CLI vs 모델 경계
+
+지금 가능: 원장 · 작업/임계 기준 워커 은퇴와 재스폰 · 정체 워치독 · worktree+단일 머저 · 기계적 게이트(테스트 실행, 다른 엔진 리뷰어) · Stop 훅 `decision:"block"` 계속 진행(Claude만; Codex/Gemini [미확인]). CLI 기능 필요: 하드 비용 상한(`--max-budget-usd`는 print 모드만) · 무인 권한 안전(벤더 분류기) · PC 꺼진 동안 실행(벤더 scheduled tasks). 모델 발전 필요: 표류·조기 완료·만지작거림 수렴(판정자+새 시작으로 완화만).
+
+### 9.6 원래 계획 대비 바뀐 것
+
+| 원안(이 세션 초안) | 조사 후 |
+|---|---|
+| Tidy: 파견 플래그 + idle N분 | **완료 신호로 은퇴**(보고 라인이 상위에 전달됨 + done)가 기본, idle은 폴백. 상주 카드는 opt-in으로만 |
+| 팀 = 컨덕터 + `appendSystemPrompt` 헌장 | 헌장은 **파일**(`.ouroboros/teams/<slug>.md`) + 팀 진행 로그(태스크 닫힐 때 한 줄, 시작 시 앞 200줄 주입) + 보고는 **원문 그대로** 위로 + 워커 수·깊이(총괄→팀→워커) 상한을 코드로 |
+| 컨텍스트: 75%/90% 배너 | **절대 토큰** 밴드(<150K / 150–250K 인계 준비 / >250K 다음 경계에서 인계), 스폰 시 `--autocompact` 백스톱, 인계는 **경계에서만**(턴 종료 ∧ 커밋/스테이지 완료 ∧ 백그라운드 없음), 노트는 카드 자신이 작성, 옛 세션은 `--resume` 가능하게 보존, 사장님 카드는 클릭 없이는 절대 안 함, 자동 인계 계보당 3회 상한 |
+| (없음) | **작업 원장**(`task_create/claim/update/list`, 상태·의존·부모)이 백본 — 두 리서치 모두 1순위 |
+| (없음) | **정체 워치독**: Working인데 훅 이벤트 N분 없음 / needs-you N분 / 같은 라인 반복 → 부모에 `[card stalled]`, 3회면 총괄+알림 |
+| (없음) | 완료 게이트: 코딩 태스크는 `RESULT:` 마커 + `get_changes` 비어있지 않아야 완료 |
+
+**안 만들 것**: 영속 워커 풀 · 동등 에이전트 떼/여러 쓰기 주체 · 자체 권한 분류기 · 워커가 우로보로스/보드 설정 편집 · 구독 돌려쓰기 · 테마 역할명 잔뜩 · 자체 클라우드 실행층 · 사장님 없는 main 머지/배포.
+
+**미확인**: Codex/Gemini의 Stop-훅 대응물 · `contextWindowFor`가 Opus 4.7+를 1M으로 안 잡을 가능성(실제 모델 id에 따라) · compact vs 핸드오프 직접 비교 측정 없음.
+
+## 10. Orca(onorca.dev) 해부 (2026-10-24, 0.7 계획 전) — 검증한 사실
+
+사장님이 "딱 이거네"라고 한 Orca를 소스 수준에서 뜯어본 기록. 소스는 `stablyai/orca`(MIT, 103k 스타, 2026-03 생성, 매일 릴리즈, Windows 설치 exe 포함) 커밋 01652255를 얕게 클론해 읽었다. 스택이 우로보로스와 같다(Electron + electron-vite + TypeScript + zustand). 결론은 §10.4.
+
+### 10.1 디자인 시스템 — 사실 (`docs/STYLEGUIDE.md`, `src/renderer/src/assets/main.css` .dark 블록 298-466행)
+
+- **원칙**: "monochrome and quiet — 중립 회색이 크롬을 맡고, 색은 상태(선택 링·파괴적 동작·git 장식)에만"(STYLEGUIDE 7행). "muted/accent/border를 먼저 집어라"(11행), "컴포넌트에 hex 금지"(24행). Tailwind 4 + lucide-react 아이콘만.
+- **중립 토큰(다크)**: background `#0a0a0a` · 에디터면 `#1e1e1e` · foreground `#fafafa` · card/popover `#171717` · primary 버튼 `#e5e5e5` 글자 `#171717` · secondary/muted 면 `#262626` · muted 글자 `#a1a1a1` · accent(호버/활성 채움) `#404040` · border `rgb(255 255 255/.07)` · input 테두리 `white/.15` · ring `#737373`. 왼쪽 사이드바는 더 밝은 `#2a2a2a`(호버 `#353535`), 오른쪽 패널은 `#171717`.
+- **상태 색**(Tailwind 팔레트명 → 근사 hex는 에이전트의 Tailwind 지식, 저장소에 hex가 있는 건 아님): working = yellow-500(≈`#f0b100`, 회전하는 2px 링) · needs-you = **orange-500**(≈`#ff6900`, "amber가 아니라 orange: working-yellow와 구분") · done = emerald-500(≈`#00bc7d`, 체크 글리프) · error = red-500 점 · idle = neutral-500 40% 점 · destructive `#ff6568` · warning `#eab308`. git 장식: 추가 `#81b88b` 수정 `#e2c08d` 삭제 `#c74e39`, git 상태에만.
+- **색 쓰는 곳 / 회색인 곳**: 색 = 에이전트 상태 글리프, 파괴 동작, git, 포커스 링, 알림/안읽음 배지. 회색 = 파괴 외 모든 버튼, 내비 행, 헤더, 탭(활성 탭은 색이 아니라 2px foreground 바), 브랜드, 크롬의 링크, 아이콘(글자색 상속).
+- **타이포**: 본문 14px, `letter-spacing .01em` 전역. 대문자 메타 라벨 = **11px / 600 / uppercase / .05em** 한 가지 레시피. 12px 보조·경로·탭·상태바, 13px 사이드바 행·카드 제목(13/20), 11px 에이전트 행, 10px 배지·시각·모델 칩. 헤더 600, 내비 500, 메뉴 450, 다이얼로그 제목 18px/600.
+- **모양·깊이**: radius 기본 10px(sm 6 · md 8 · lg 10 · xl 14). 버튼·입력 8, 카드 14, 워크트리 카드·다이얼로그 10, 배지 full, kbd 4. **고도 3단계뿐**: 1px 헤어라인 → shadow-xs+border → 떠 있는 것 `0 10px 24px rgb(0 0 0/.18)`. 다이얼로그: border white/14, `rgba(23,23,23,.96)` + backdrop-blur, 그림자 `0 24px 72px rgba(0,0,0,.55), inset 0 1px 0 white/.06`, 패딩 24, 최대 512px, 오버레이 검정 55%.
+- **행 레시피**: 호버 accent · 키보드 선택 `accent + inset 0 0 0 1px color-mix(fg 16%)` · 현재 카드 `border color-mix(fg 18%, border)`, `bg color-mix(fg 10%)` · 다중 선택 `ring 30%` · 에이전트 행 호버 `color-mix(accent 18%)`. 포커스 링 `0 0 0 3px color-mix(#737373 50%)`. 스크롤바 thin, 썸 `muted 28%`, 사이드바는 호버 전 숨김. kbd 칩: min 24px, radius 4, border/80, secondary/70, 12px/500 muted. 툴팁: fg 배경 + bg 글자, 400ms 지연.
+- **셸 치수**: 타이틀바 36px(4px 드래그 + 32px 탭 줄), 앱 이름 12px/600 muted, 아이콘 버튼 24px(패딩 4, radius 4, 호버 accent 채움). 왼쪽 사이드바 280px(220–500 리사이즈): 8px 패딩 내비 블록(Search 행 + Tasks/Artifacts/Skills/Automations/Agent dashboard/Mobile 행, 13px/500, 패딩 6 8, radius 8, 16px 아이콘 비활성 30%) → 32px 헤더("Projects" 12px/600 muted/80 + 오른쪽 벨 아이콘에 Needs you/Working/Idle 카운트) → 가상화 목록(섹션 헤더 28px 13px/600 + 16px 아이콘 + 14px 셰브런, 깊이당 10px 들여쓰기 · 워크트리 카드 radius 10 · 에이전트 행 패딩 4 8, 상태 글리프 10–12px + 14px 종류 아이콘 + 11px 글자 + 10px mono 모델 + 뒤쪽 상대시각 10px muted/60, 자식 행 20px 들여쓰기 + 1.5px 연결선) → 하단 툴바(위 1px 선, 패딩 6 8, 14px 아이콘). 탭 180px(≥1280에서 220), 활성 = `color-mix(fg 6%, card)` + 2px fg 밑줄. 오른쪽 패널 350px, 36px 헤더(11px 대문자), 40px 액티비티 바. **상태바 24px**, 12px 글자. 알림 스택 우하단 360px.
+
+### 10.1-매핑 우로보로스 토큰·표면 변경표 — 제안
+
+| 우로보로스 | 채택 |
+|---|---|
+| `--bg #0e1016` | `#0a0a0a`, 캔버스 radial gradient 제거 |
+| `--panel #151823` | `#171717` |
+| (신규) `--sidebar` | `#2a2a2a`, 호버 `#353535` |
+| `--panel-2 #1b1f2d` | `#262626` |
+| `--panel-3 #222738` | `#404040` (호버/선택 채움) |
+| `--border #2a2f3d` | `rgb(255 255 255/.07)` |
+| `--text #d9dce3` | `#fafafa` |
+| `--muted #8b90a0` | `#a1a1a1` |
+| `--accent #38bdf8`(시안) | **색으로서 은퇴**. 포커스 = `--ring #737373`, primary 버튼 = `#e5e5e5` 위 `#171717` |
+| `--info`(working 파랑) | working 노랑 ≈`#f0b100` — **파랑→노랑은 결정 사항** |
+| `--warn`(needs-you 앰버) | orange ≈`#ff6900`; 경고용 `#eab308`은 따로 |
+| `--ok` | 점 ≈`#00bc7d`, 글자 `#86efac` |
+| `--danger` | `#ff6568` |
+| (신규) git 색 | +`#81b88b` −`#c74e39` 수정 `#e2c08d` |
+| `--shadow` | `0 10px 24px rgb(0 0 0/.18)`, 떠 있는 면에만 |
+
+`src/shared/status.ts`의 `STATUS_COLOR`(미니맵이 읽음)도 같이: starting/idle `rgb(115 115 115/.4)`, working 노랑, needs-you 오렌지, done 에메랄드, ended `#a1a1a1`.
+
+표면: **툴바** → 36px 타이틀바(카드색, 헤어라인; 왼쪽 12px/600 muted 워드마크 + 프로젝트 버튼; "+ Claude/+ Terminal/More" 셋 → 24px 아웃라인 "New card" 하나(종류 메뉴); 오른쪽은 24px 고스트 아이콘 버튼; Roster/Inspector = 패널 토글 아이콘; 상태 스트립은 사이드바 헤더 카운트로; 자율모드 필·업데이트 배지는 **24px 상태바**로). **Roster** → 왼쪽 사이드바 280px(Search 행 → 프로젝트 헤더 → 상태 섹션 Needs you/Working/Idle/Ended 28px → 카드 행: 12px 상태 글리프 + 종류 아이콘 + 13px 제목 + 호버 시 핫키 칩, 2줄째 11px 상태 + 10px 경과시각, 11px 마지막 답장 한 줄, 체크박스는 호버/선택 시만 → 컴포저 → 하단 툴바). 워커는 Conductor 아래 1.5px 연결선으로 중첩(선이 이미 관계를 안다). **Inspector** → 오른쪽 패널 350px, 36px 헤더 11px 대문자, 섹션 h4 11/600/.05em. **카드 헤더** 32px(패딩 3 14), 상태 글리프가 색 점 대체, 제목 13/600, 상태 11px muted, 아이콘 버튼 24px/12px 아이콘; 카드 테두리 1px 토큰(2px 상태색 테두리 폐지), radius 10, 선택 = 1px 링 + 현재 카드 워시. **다이얼로그** = Orca dialog 값 그대로, 제목 18/600, 푸터 오른쪽 primary + Cancel 고스트.
+
+**우로보로스가 지금 어기는 것**(styles.css 기준): ① 시안을 크롬 색으로 — 브랜드·primary·모든 버튼 호버 테두리·`.btn.active`·링크·포트·찾기 상자·auto-pill ② 이모지/유니코드 아이콘 — `◎` `⬆` `▣`, 카드 종류 🎼🌐⚡🅰📝, `↻ ★ ⤢ ↗`, `⛁ ⟲ ✕ ▾`, `⎌ ▸`, `▶ ⧉` ③ 색 버튼 — 초록 `.btn.saved`, `.update-badge`, 시안 `.btn.active` ④ 깜빡임·글로우 — needs-you 무한 펄스, 흐르는 엣지 + drop-shadow ⑤ 2px 상태색 카드 테두리, working 틴트 링 ⑥ CSS 안 raw hex 10여 개 ⑦ 대문자 라벨 레시피 3종 ⑧ 손으로 만든 kbd 칩, "Ctrl+N" 하드코딩 ⑨ `title=`를 툴팁으로 ⑩ 포커스 2px 시안 outline.
+
+### 10.2 셸 UX·상태 모델·어텐션 — 사실
+
+- **레이아웃**: 왼쪽 사이드바 → 타이틀바 + 워크벤치(터미널/에디터/브라우저) → 선택적 오른쪽 사이드바(`app-shell/AppWorkspaceShell.tsx:115-213`). 워크스페이스 미선택 시 가운데는 Landing. 설정·태스크·자동화·모바일 같은 페이지가 가운데를 차지한다.
+- **사이드바**: 위 내비(Search=Cmd+J 팔레트, Artifacts, Skills, Automations, Mobile) → "Projects" 헤더 + **벨 토글**(본문을 워크스페이스 목록 ↔ 에이전트 목록으로 전환; 벨에 어텐션 수, 없으면 working 수, 어텐션>0이면 물음표 글리프) → 목록(none/status/repo/PR 그룹핑, 핀 섹션, "Smart" 정렬 = Needs you › Done(최근) › Working › Unverifiable › Idle, **재정렬은 3초 유예**해서 행이 매 업데이트마다 튀지 않게 `sort-settle.ts`). 워크스페이스 카드의 상태 글리프는 소속 에이전트에서 permission › working › monitoring › active › inactive 순으로 롤업, 안읽음 배지 오버레이, 수동 "안읽음 표시" 벨, 별 = primary 워크트리.
+- **에이전트 행**: 상태 점 + 종류 아이콘 · **보조 줄**은 우선순위(프로그램이 보고한 블록(로그인 등) › 턴 판정 › "no update for Xm" › 중지 중 › 툴 미리보기 › 마지막 답장) · 모델, `+N` 자식 수, 프롬프트 캐시 타이머, "done X ago"/"started X ago". **안 본 행은 굵게**.
+- **이동**: Cmd+J "Jump to…"(채팅·터미널·워크스페이스·태스크·설정·액션 검색, Tab으로 필터), Cmd+P 파일, Cmd+Shift+↑/↓ 이전/다음 워크트리, Cmd+1–9, Cmd+B/L 패널 토글. **"다음 needs-attention" 단축키는 없음**.
+- **상태바**: Claude/Codex 사용량 칩(5시간·주간 %, 리셋 카운트다운; 트랜스크립트 스캔 + OAuth usage 요청), 리소스·포트·SSH·업데이트.
+- **상태 모델**: 와이어 상태는 working / blocked / waiting / done 넷뿐. 훅이 권위, OSC 7501(프로그램이 터미널에 직접 쓰는 상태)이 빈틈을 메우고 훅이 2분 침묵하면 넘겨받음, 터미널 제목에선 절대 추론 안 함. Claude 훅: PermissionRequest·AskUserQuestion → waiting. 표시 상태는 더 많음: monitoring, interrupted, failed, idle, **unverifiable**(프로세스 살아있는데 침묵), **unconfirmed**(턴 끝났는데 결과 불명), permission. 30분 지난 항목은 프로세스 살아있으면 unverifiable, 아니면 idle로 **감쇠하되 절대 done으로는 안 감**. 글리프: working 노란 스피너, done 초록 체크, unverifiable/unconfirmed 앰버 점선 원, waiting 오렌지 물음표, blocked/failed 빨간 점.
+- **턴 판정**(`agent-turn-idle-verdict.ts`): 프롬프트 뒤 새 done이 왔거나, 터미널 마지막 6줄에 "command not found / is not recognized"(→ failed)거나, 상태 없는 패널이 2분 유예를 넘겼을 때만 완료로 침.
+- **알림**: 완료 시 250ms(최대 1.5s) 훅 상세를 기다렸다 발송. 문구는 상태·결과에서 고름(needs input / failed / stopped / finished), **working 중엔 절대 "finished"라 안 함**. 본문은 마지막 답장 또는 "Using Tool: …". 전달 순서: ① 트레이 어텐션 점 먼저(어떤 게이트보다 앞) ② 모바일 푸시 ③ 설정 게이트 ④ **창이 포커스 + 그 워크트리가 활성이면 억제** ⑤ 워크트리당 5초 버스트 쿨다운 ⑥ macOS는 권한 차단 감지 시 인앱 토스트. 소리는 배너가 실제로 나갔을 때만. 자리 비움 = 시스템 유휴 180초.
+- **어텐션**: 음소거 워크스페이스는 안 받음 · 라이브 세션 없으면 거부 · **보고 있는 표면은 전달은 하되 안읽음은 안 남김** · 안읽음은 전달 전에 기록(배너가 억제돼도 표식은 남음). 안읽음 사유: 완료, 터미널 벨, 수동. 턴은 `stateStartedAt` 이후 확인될 때까지 안읽음; 같은 상태의 반복 핑은 재발화 안 함; 수동 안읽음은 자리를 뜨거나 새 턴이 시작되면 소멸. **done은 안 본 동안만 "done", 보고 나면 idle**(이게 헤더 카운트의 원천). 탭에는 앰버 벨(라이브 working/needs-input이 우선).
+- **온보딩**: FirstLaunchBanner는 텔레메트리 고지일 뿐. 첫 실행 5단계(에이전트, 테마, 통합, Windows 터미널, 알림 소리 선택) → 그 뒤 세션당 기능 팁 모달 하나 → Landing(로고, "Add a project", 단축키 목록, 사전점검 경고, 스타 버튼) → 8단계 설정 체크리스트(사이드바에 done/total, 끝나면 숨김).
+
+### 10.3 모바일 컴패니언 — 사실
+
+- **전송**: 같은 LAN에서는 React Native 앱이 데스크톱의 평문 `ws://<ip>:6768`에 직접 붙는다(`mobile/README.md`, `runtime-rpc-pairing-types.ts:20`). 서버는 처음엔 `127.0.0.1`에만 묶이고, **네트워크 페어링을 한 번 만들면 그때부터 `0.0.0.0`으로 넓힌다**(`runtime-rpc-lifecycle.ts:166-178`, `ipc/mobile.ts:170-190`). Windows에선 방화벽 규칙을 점검·복구한다(`mobile.ts:278-292`).
+- **집 밖**: ① Tailscale 등 다른 IP로 저장된 호스트 주소만 바꾸거나(재페어링 없음) ② **Orca Relay**(`relay.onorca.dev`, Stably가 GCP Cloud Run에서 운영, Orca 계정 로그인 필요). 폰과 데스크톱이 각각 아웃바운드 WS를 열고 릴레이가 프레임을 이어 붙인다. 앱 계층 E2EE(NaCl, X25519 공개키를 QR에 핀)라 릴레이는 메타데이터·타이밍·크기만 본다(릴레이 코드 자체는 감사 안 함 — 미확인).
+- **페어링**: Settings → Mobile의 QR = `orca://pair?code=<base64url JSON{endpoint, deviceToken(192bit), publicKey, deviceId, scope}>`. 브라우저 링크는 URL `#fragment`에 넣어 로그·Referer에 안 남긴다. **LAN 토큰은 만료가 없다** — "Regenerate QR"로 돌리거나 revoke할 때까지(`device-registry.ts:99-151`). Relay 초대는 10분 만료.
+- **프로토콜**: `{id, deviceToken, method, params}` 봉투, 메서드 약 300개(terminal.*, worktree.*, git.*, github/linear/jira, files.*, 브라우저 스크린캐스트…), 모바일 스코프는 허용 목록으로 제한. 워크트리 목록은 **포그라운드에서 3초 폴링**, 변경은 `clientEvents` 구독으로 푸시, 알림은 256개 리플레이 버퍼. 터미널 출력은 16바이트 헤더 바이너리 프레임, 5ms 배치, ACK 윈도 흐름제어(스트림당 512KiB). 입력 프레임 1MiB, 응답 4MiB 상한.
+- **"권한 대기" 응답은 구조화 API가 아니라 글자 그대로의 키 입력**(`terminal.send`로 옵션 번호, 거부는 Esc)(`mobile-native-chat-permission.ts:43-60`). 빨간 점 = 막힘/대기.
+- **푸시 알림**은 릴레이와 별개의 클라우드 게이트웨이 `push.onorca.dev`가 APNs/FCM으로 보낸다. 제목 80자·본문 180자 **평문**으로 POST(`push-gateway-client.ts`). 즉 Apple·Google·Stably가 알림 문구를 본다.
+- **보안**: LAN에 TLS 없음, WS 업그레이드에 Origin 검사 없음 → 기밀성은 전적으로 앱 계층 E2EE에 의존. 인증 실패 속도 제한 없음(192비트라 무력화는 어려움). 폰 토큰은 SecureStore(백업 제외). 문서화된 위험: 스캔 전 QR 유출 시 회전 전까지 유효, 키쌍 재생성은 모든 기기 페어 해제.
+
+### 10.3-설계 우로보로스 린 컴패니언 (앱스토어·클라우드 없음) — 제안
+
+1. **별도 `PhoneServer`**: 훅 서버(127.0.0.1:47821, CLI와 MCP가 의존)는 그대로. 새 `http.Server`를 **기본 꺼짐**, Settings에서 켬. 바인드는 사용자가 고른 인터페이스 IP 하나(기본 Tailscale `100.x`), `0.0.0.0` 조용히 금지. Windows 방화벽 규칙 점검.
+2. **전송 보안**: **Tailscale 전용으로 먼저 출시** — WireGuard 위 평문 HTTP, 출발지가 `100.64.0.0/10` 밖이면 거부. 필요하면 `tailscale serve/cert`로 진짜 HTTPS(`*.ts.net`, 웹푸시에 필요). LAN 모드는 TLS 없이는 세션 쿠키가 스니핑되므로 "신뢰하는 집 네트워크 전용" 라벨 또는 자체서명 인증서(폰에서 번거로움).
+3. **페어링**: Settings의 QR = `http(s)://<ip>:<port>/m#pair=<128bit 1회용 코드, 5분 만료>`. 페이지가 `/m/api/pair`에 POST → 192비트 기기 토큰(서버는 sha256만 저장 + 이름 + lastSeen), 페이지는 localStorage, 이후 `Authorization: Bearer`. Settings에 기기 목록 + Revoke.
+4. **라우트** (`/m/api/*`, `timingSafeEqual`): `GET /board`(상태별 카드, 마지막 답장 4KB 절단), `GET /events`(SSE; 폴링 3초 폴백; 재접속 시 재조회), `POST /cards/:id/prompt`, `POST /cards/:id/answer {key}`(`permission:` 카드에만, 브래킷 페이스트 없이 원시 키 — **Claude Code 다이얼로그가 붙여넣은 "1"을 받는지 미검증**), `GET /report/latest`, 정적 `GET /m`(빌드 없음, CDN 없음, PWA 매니페스트).
+5. **알림(선택)**: VAPID 웹푸시(결국 FCM/Apple 경유, HTTPS 필요, iOS는 홈화면 설치 필요) 또는 Telegram/Discord 웹훅(제목+카드명만, 답장 본문은 안 보냄).
+6. **보안 요구**: 기본 꺼짐·명시적 바인드·보이는 토글, 1회용 단명 코드, 해시 저장·회수 가능·상수시간 비교 토큰, `Host`/`Origin` 검사(DNS 리바인딩·CSRF), `CSP default-src 'self'`, 본문 64KB·프롬프트 16KB 상한, IP별 인증 실패 제한, `/hook/*`·`/api/*`는 폰 리스너에 절대 노출 금지, 폰발 프롬프트/응답은 전부 로그(모닝 리포트에 표시).
+7. **범위 밖**: 터미널 스트리밍, 파일 열람·편집, git 조작, 카드 생성·삭제, 설정 변경, 멀티 데스크톱, 네이티브 앱, 클라우드 릴레이.
+
+### 10.4 결정 (2026-10-24) — 0.7 "Orca-style shell"
+
+사장님 지시 "참고하고 복제해서 만들어줘" + 두 번째 "진행". 통째 복제는 안 한다(103k 스타 저장소를 혼자 따라갈 수 없고, 이미 Windows에서 공짜로 돌아간다). 우로보로스의 고유 가치(캔버스 위의 선, 총괄 + 보드 MCP, 자율모드 레일, 체크포인트, 음성 알림)는 유지하고 **셸과 시각 언어를 Orca 쪽으로** 옮긴다. 결정이 필요하다고 보고된 4개는 모두 Orca 쪽으로(working 파랑→노랑, 카드 종류 이모지→SVG 아이콘, 총괄 아래 워커 중첩, 상태바 추가) — 사장님이 한 줄로 뒤집을 수 있는 가역 선택.
+
+**1단계 (0.7.0, 지금)**: §10.1-매핑 그대로. 조용한 모노크롬 토큰 + Orca 상태색, raw hex 제거, 대문자 라벨 레시피 하나, 포커스 링·스크롤바·kbd·다이얼로그 레시피 · 36px 타이틀바(워드마크, 프로젝트, "New card" 하나 + 종류 메뉴, 24px 고스트 아이콘, 패널 토글) · 왼쪽 사이드바 280px(검색 행, 프로젝트 헤더 + 카운트, 상태 섹션, 글리프 카드 행, 총괄 아래 워커 중첩, 컴포저) · 오른쪽 패널 350px(36px 헤더) · 카드 헤더 32px + 상태 글리프, 1px 테두리, 펄스·글로우 제거 · 24px 상태바(자율모드 필, 업데이트, 저장 상태) · lucide 아이콘.
+**2단계 (0.7.x)**: §10.2 판정의 Adopt/Adapt — 턴 확인(done은 볼 때까지만, 안읽음 굵게), 3초 재정렬 유예, 상태·결과 기반 토스트 문구 + 5초 버스트 쿨다운 + "포커스 + 선택된 카드"일 때만 억제, 누락 명령 꼬리 스캔(3분 park 대신 수 초), unverifiable/unconfirmed 표시 상태, Ctrl+J 점프 팔레트, 다음 needs-you 단축키, 상태바 사용량 칩, 온보딩에 엔진 선택·소리 테스트 단계.
+**3단계 (Type 1, 승인 후)**: §10.3-설계 린 폰 컴패니언, Tailscale 전용부터.
+**Skip**: OSC 7501 진행 링, 네이티브 모바일 앱·클라우드 릴레이·푸시 게이트웨이, 오른쪽 탐색기/SCM/포트 패널(캔버스와 경쟁), 숨김 워크스페이스 음소거, FirstLaunchBanner.

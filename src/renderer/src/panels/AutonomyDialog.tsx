@@ -104,7 +104,7 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
           <ul className="auto-plan">
             {relaunch.map(({ n }) => (
               <li key={n.id}>
-                <span className="dot" style={{ background: 'var(--accent)' }} /> <b>{n.data.title}</b> restarts in auto mode with the deny rules ({n.data.sessionId || n.data.claude?.resume ? 'same conversation' : n.data.claude?.continue ? '--continue' : 'fresh conversation'})
+                <span className="dot" style={{ background: 'var(--working)' }} /> <b>{n.data.title}</b> restarts in auto mode with the deny rules ({n.data.sessionId || n.data.claude?.resume ? 'same conversation' : n.data.claude?.continue ? '--continue' : 'fresh conversation'})
                 {n.data.status === 'working' ? '; its current turn is cut and it is told to carry on' : ''}
                 {n.data.kind === 'conductor' ? '; it gets the autonomous-mode brief' : ''}
               </li>
@@ -124,7 +124,7 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
             <li>A card that asks a question, needs a permission or hits an error is <b>parked</b>: never answered for you, listed first in the report. The run ends early once nothing has worked for {IDLE_END_MINUTES} min.</li>
             <li>Every card launched during the run is denied: git push, merge, rebase, reset --hard, branch -D, clean, force-add; gh pr merge / workflow run / release / api; npm publish, docker push, vercel, wrangler, firebase / netlify / fly deploy, terraform apply, supabase db push / reset, prisma migrate deploy / reset; rm -rf /, ~; editing .ouroboros.json, Claude settings or ~/.claude; clicking or typing in the board browser. The rules match the command as typed (git -C, an alias, a wrapper script or a nested shell is not caught), so keep production credentials out of worker folders.</li>
             <li>During the run only Claude cards can be created, nothing is typed into terminal or command cards, no card answers a parked permission prompt, and a checkpoint restore never moves HEAD.</li>
-            <li>The PC stays awake. Stop any time with ■ in the toolbar. The report (waiting on you · every card's branch, diff and last reply · denials · stalls · timeline) lands on the canvas as a note and in the app's data folder.</li>
+            <li>The PC stays awake. Stop any time with the stop button on the pill in the status bar. The report (waiting on you · every card's branch, diff and last reply · denials · stalls · timeline) lands on the canvas as a note and in the app's data folder.</li>
           </ul>
         </div>
         {autonomy.ended && (

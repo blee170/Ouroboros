@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
-import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload } from '@shared/protocol'
+import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, UpdateStatus } from '@shared/protocol'
 import type { AutonomyPublic } from '@shared/autonomy'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -47,6 +47,8 @@ interface BoardState {
   projectRoot: string
   /** last successful write of .ouroboros.json (ms) */
   savedAt?: number
+  /** The last save's error, until a save succeeds (OneDrive or antivirus locks make renameSync fail on Windows). */
+  saveError?: string
   nodes: BoardNode[]
   edges: BoardEdge[]
   settings: AppSettings
@@ -63,8 +65,11 @@ interface BoardState {
   arrangeUndo?: Record<string, { x: number; y: number }>
   /** This window's Autonomous mode run, as main reports it. */
   autonomy: AutonomyPublic
+  /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
+  updateStatus: UpdateStatus | null
   // actions
   setAutonomy(p: AutonomyPublic): void
+  setUpdateStatus(p: UpdateStatus): void
   init(): Promise<void>
   openProject(root: string): Promise<void>
   onNodesChange(changes: NodeChange<BoardNode>[]): void
@@ -129,6 +134,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   autonomy: { on: false, dispatches: 0, parked: [] },
   setAutonomy(p) {
     set({ autonomy: p })
+  },
+  updateStatus: null,
+  setUpdateStatus(p) {
+    set({ updateStatus: p })
   },
 
   async init() {
@@ -367,7 +376,10 @@ export const useBoard = create<BoardState>((set, get) => ({
         return { id: e.id, source: e.source, target: e.target, data }
       })
     }
-    void api().workspace.save(ws).then(() => set({ savedAt: Date.now() }))
+    void api().workspace.save(ws).then(
+      () => set({ savedAt: Date.now(), saveError: undefined }),
+      (err: unknown) => set({ saveError: err instanceof Error ? err.message : String(err) })
+    )
   }
 }))
 

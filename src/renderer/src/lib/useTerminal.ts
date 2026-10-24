@@ -40,10 +40,11 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       fontFamily: 'D2Coding, "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
       scrollback: 8000,
       theme: {
-        background: '#0b0d13',
-        foreground: '#d6d9e0',
-        cursor: '#38bdf8',
-        selectionBackground: '#334155',
+        // mirrors --bg / --text in styles.css (xterm wants literal colours)
+        background: '#0a0a0a',
+        foreground: '#e5e5e5',
+        cursor: '#fafafa',
+        selectionBackground: '#3a3a3a',
         black: '#1e2230', red: '#f87171', green: '#4ade80', yellow: '#facc15', blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e5e7eb',
         brightBlack: '#475569', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde68a', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#f8fafc'
       }

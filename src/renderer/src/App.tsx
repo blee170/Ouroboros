@@ -4,14 +4,17 @@ import { useBoard } from './store/board'
 import { Canvas } from './canvas/Canvas'
 import { Toolbar } from './panels/Toolbar'
 import { Inspector } from './panels/Inspector'
-import { Roster } from './panels/Roster'
+import { Sidebar } from './panels/Sidebar'
+import { StatusBar } from './panels/StatusBar'
 import { Welcome } from './panels/Welcome'
+import { Icon } from './lib/icons'
 import { speak } from './lib/speak'
 
 export default function App() {
   const projectRoot = useBoard((s) => s.projectRoot)
   const rosterOpen = useBoard((s) => s.rosterOpen)
   const inspectorOpen = useBoard((s) => s.inspectorOpen)
+  const toggleInspector = useBoard((s) => s.toggleInspector)
 
   useEffect(() => {
     const name = projectRoot.replace(/[\\/]+$/, '').split(/[\\/]/).pop()
@@ -25,7 +28,10 @@ export default function App() {
     })
     const api = window.ouroboros
     void api.autonomy.state().then((p) => p && useBoard.getState().setAutonomy(p))
+    // one quiet update check shortly after start, on the Welcome screen too; the result waits in the store
+    const updateTimer = setTimeout(() => void api.update.check(), 8000)
     const offs = [
+      api.update.onStatus((p) => useBoard.getState().setUpdateStatus(p)),
       api.autonomy.onChange((p) => useBoard.getState().setAutonomy(p)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
@@ -61,6 +67,7 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => {
       offs.forEach((off) => off())
+      clearTimeout(updateTimer)
       window.removeEventListener('keydown', onKey)
     }
   }, [])
@@ -70,22 +77,23 @@ export default function App() {
       <div className="app">
         <Toolbar />
         <div className="main">
+          {projectRoot && rosterOpen && <Sidebar />}
           {projectRoot ? <Canvas /> : <Welcome />}
-          {projectRoot && (rosterOpen || inspectorOpen) && (
-            <aside className="side">
-              {rosterOpen && (
-                <div className={`side-roster${inspectorOpen ? '' : ' alone'}`}>
-                  <Roster />
-                </div>
-              )}
-              {inspectorOpen && (
-                <div className="side-inspector">
-                  <Inspector />
-                </div>
-              )}
+          {projectRoot && inspectorOpen && (
+            <aside className="rpanel">
+              <div className="rpanel-header">
+                <h2>Inspector</h2>
+                <button className="ghost" onClick={toggleInspector} title="Close the Inspector" aria-label="Close inspector">
+                  <Icon name="close" size={14} />
+                </button>
+              </div>
+              <div className="rpanel-body">
+                <Inspector />
+              </div>
             </aside>
           )}
         </div>
+        {projectRoot && <StatusBar />}
       </div>
     </ReactFlowProvider>
   )

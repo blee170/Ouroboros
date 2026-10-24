@@ -50,7 +50,7 @@ export function Inspector() {
           Mode
           <select value={d.mode} onChange={(e) => updateEdgeData(edgeId, { mode: e.target.value as 'auto' | 'manual' })}>
             <option value="auto">auto — fire when the source finishes a reply</option>
-            <option value="manual">manual — only when ▶ is pressed</option>
+            <option value="manual">manual — only when Send now is pressed</option>
           </select>
         </label>
         <label>
@@ -72,7 +72,7 @@ export function Inspector() {
               })
             }
           >
-            ▶ Send now
+            <Icon name="play" size={12} /> Send now
           </button>
           <button className="btn danger" onClick={() => removeEdge(edgeId)}>
             Delete line
@@ -85,7 +85,6 @@ export function Inspector() {
   if (!node || !nodeId) {
     return (
       <div className="panel inspector" ref={root}>
-        <h3>Inspector</h3>
         <div className="muted small">Select a card or a line. Right-click the canvas to add cards; drag from a card's right port to another card's left port to draw a line.</div>
       </div>
     )

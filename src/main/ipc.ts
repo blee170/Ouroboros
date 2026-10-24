@@ -934,7 +934,7 @@ export function registerIpc(ctx: MainContext): void {
     return file
   }
   ipcMain.handle(IPC.filesSaveImage, (_e, bytes: Uint8Array, ext: string) => savePasted(bytes, ext))
-  // The Roster composer's screenshots go to a Claude Code card the way Claude Code itself pastes them: the image
+  // The sidebar composer's screenshots go to a Claude Code card the way Claude Code itself pastes them: the image
   // on the clipboard, then its paste key (Alt+V = ESC v); the prompt shows "[Image #N]". One card at a time.
   ipcMain.handle(IPC.ptyPasteImage, async (e, nodeId: string, path: string): Promise<{ ok: boolean; error?: string }> => {
     const s = sessionOf(e)

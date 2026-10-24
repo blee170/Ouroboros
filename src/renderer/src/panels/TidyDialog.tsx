@@ -59,12 +59,11 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
             <Icon name="refresh" size={13} /> Refresh
           </button>
         </div>
-        <ul className="roster-list" style={{ maxHeight: 260, overflowY: 'auto' }}>
+        <ul className="tidy-list" style={{ maxHeight: 260, overflowY: 'auto' }}>
           {cands.map((c) => (
-            <li key={c.id} className="roster-item">
+            <li key={c.id} className="tidy-row">
               <input type="checkbox" checked={Boolean(checked[c.id])} onChange={(e) => setChecked({ ...checked, [c.id]: e.target.checked })} aria-label={`Close ${c.title}`} />
-              <div className="roster-main" style={{ cursor: 'default' }}>
-                <span className="status-dot" style={{ background: 'var(--muted)' }} />
+              <div className="tidy-main">
                 <span className="title">{c.title}</span>
                 <span className="muted small">{c.reason}</span>
               </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Icon } from '@/lib/icons'
 import type { Checkpoint } from '@shared/protocol'
 
 function when(ms: number): string {
@@ -68,10 +69,10 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
     <div className="changes">
       <div className="row between">
         <button className="link" onClick={() => setOpen(!open)}>
-          {open ? '▾' : '▸'} Checkpoints · {items.length}
+          <Icon name="chevron" size={12} style={{ transform: open ? 'none' : 'rotate(-90deg)' }} /> Checkpoints · {items.length}
         </button>
-        <button className="icon-btn" title="Refresh" onClick={() => void load()}>
-          ↻
+        <button className="icon-btn" title="Refresh" aria-label="Refresh checkpoints" onClick={() => void load()}>
+          <Icon name="refresh" size={14} />
         </button>
       </div>
       {open && (
@@ -88,7 +89,7 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
               }}
             />
             <button className="btn" disabled={busy} onClick={() => void snapshot()} title="Git snapshot of this folder (every non-gitignored file); changes nothing on disk">
-              ⛁ Snapshot
+              <Icon name="snapshot" size={14} /> Snapshot
             </button>
           </div>
           {items.length === 0 && <div className="muted small">No snapshots yet. Take one before a risky step; the Conductor does this on its own.</div>}
@@ -105,11 +106,11 @@ export function CheckpointsPanel({ cwd }: { cwd: string }) {
                       {c.headMoved ? ' · HEAD moved' : ''}
                     </span>
                   </span>
-                  <button className="icon-btn" title="Restore this snapshot (undoable)" disabled={busy} onClick={() => restore(c)}>
-                    ⟲
+                  <button className="icon-btn" title="Restore this snapshot (undoable)" aria-label="Restore this snapshot" disabled={busy} onClick={() => restore(c)}>
+                    <Icon name="restore" size={13} />
                   </button>
-                  <button className="icon-btn" title="Delete this snapshot" disabled={busy} onClick={() => remove(c)}>
-                    ✕
+                  <button className="icon-btn" title="Delete this snapshot" aria-label="Delete this snapshot" disabled={busy} onClick={() => remove(c)}>
+                    <Icon name="close" size={13} />
                   </button>
                 </li>
               ))}

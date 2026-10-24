@@ -1,8 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { setDragShield } from '@/lib/dragShield'
 import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow/react'
-import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
+import { STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
+import { StateGlyph } from '@/lib/StateGlyph'
+import { kindIcon } from '@/lib/cardKinds'
 import { useBoard } from '@/store/board'
 import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
 import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
@@ -79,14 +81,14 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     setTimeout(() => typePrompt(id, prompt, 200), 1200)
   }, [data.initialPrompt, status, id, updateNodeData])
 
-  const color = STATUS_COLOR[status]
+  const KindIcon = kindIcon(kind, data.engine)
   return (
-    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}`} style={{ borderColor: selected ? 'var(--accent)' : color }}>
-      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: 'var(--accent)' }} handleStyle={{ background: 'var(--accent)', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
+    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}${selected ? ' selected' : ''}`}>
+      <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: 'var(--ring)' }} handleStyle={{ background: 'var(--text)', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <Handle type="target" position={Position.Left} className="port port-in" />
       <Handle type="source" position={Position.Right} className="port port-out" />
       <div className="node-header">
-        <span className="status-dot" style={{ background: color }} title={STATUS_LABEL[status]} />
+        <StateGlyph status={status} />
         {editing ? (
           <input
             className="title-input nodrag"
@@ -103,8 +105,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           />
         ) : (
           <span className="title" onDoubleClick={() => setEditing(true)} title={`${data.title}\n${data.cwd}`}>
-            {kind === 'conductor' ? '🎼 ' : kind === 'claude' ? (data.engine === 'codex' ? '◎ ' : data.engine === 'gemini' ? '✧ ' : '✦ ') : kind === 'command' ? '⚡ ' : '▣ '}
-            {data.title}
+            <KindIcon className="ico kind" size={13} aria-hidden="true" />
+            <span>{data.title}</span>
           </span>
         )}
         <span className="status-text" title={data.statusDetail}>
@@ -145,8 +147,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           <div className="card-summary">
             <div className="summary-title">{data.title}</div>
             <div className="summary-status">
-              {STATUS_LABEL[status]}
-              {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+              <StateGlyph status={status} size={22} />
+              <span>
+                {STATUS_LABEL[status]}
+                {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+              </span>
             </div>
             {summary && <div className="summary-text">{summary}</div>}
           </div>

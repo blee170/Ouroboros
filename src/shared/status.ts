@@ -74,13 +74,14 @@ export const STATUS_LABEL: Record<AgentStatus, string> = {
   ended: 'Ended'
 }
 
+/** State colours for what cannot carry a glyph (the minimap). Colour marks state only; the chrome itself is grey. */
 export const STATUS_COLOR: Record<AgentStatus, string> = {
-  starting: '#8b8b8b',
-  idle: '#6b7280',
-  working: '#3b82f6',
-  'needs-you': '#f59e0b',
-  done: '#22c55e',
-  ended: '#525252'
+  starting: '#737373',
+  idle: '#525252',
+  working: '#f0b100',
+  'needs-you': '#ff6900',
+  done: '#00bc7d',
+  ended: '#3a3a3a'
 }
 
 /** True when a chunk of terminal output shows the Claude Code TUI is up (fallback when SessionStart hooks do not arrive). */

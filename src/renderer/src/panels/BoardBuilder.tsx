@@ -128,7 +128,7 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
                           setSessionId('') // a session belongs to its folder
                         }}
                         title="Use this folder for the Conductor and the role cards">
-                        {isConductor ? '🎼 Conductor' : 'Conduct here'}
+                        {isConductor ? 'Conductor' : 'Conduct here'}
                       </button>
                       <label className="row small">
                         <input type="checkbox" disabled={isConductor} checked={Boolean(extras[f.path]) && !isConductor} onChange={(e) => setExtras({ ...extras, [f.path]: e.target.checked })} /> card
@@ -210,7 +210,7 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
             ))}
             <label className="role-row">
               <input type="checkbox" checked={withBrowser} onChange={(e) => setWithBrowser(e.target.checked)} />
-              <span>🌐 Browser card</span>
+              <span>Browser card</span>
               <span className="desc">a page the agents can drive with the browser tools</span>
             </label>
             <div className="muted small" style={{ marginTop: 10 }}>

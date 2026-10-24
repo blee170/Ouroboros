@@ -131,15 +131,17 @@ export function Canvas() {
         proOptions={{ hideAttribution: true }}
         colorMode="dark"
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#2a2f3d" />
-        <MiniMap pannable zoomable nodeColor={(n) => STATUS_COLOR[(n.data as { status?: keyof typeof STATUS_COLOR }).status ?? 'idle']} maskColor="rgba(15,17,23,0.7)" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(255,255,255,0.08)" />
+        <MiniMap pannable zoomable nodeColor={(n) => STATUS_COLOR[(n.data as { status?: keyof typeof STATUS_COLOR }).status ?? 'idle']} maskColor="rgba(10,10,10,0.75)" />
         <Controls showInteractive={false} />
       </ReactFlow>
       {menu && (
         <div className="context-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 330) }}>
           {CARD_KINDS.map((k) => (
             <button key={k.label} role="menuitem" title={k.hint} onClick={() => add(k)}>
-              <span className="glyph">{k.glyph}</span>
+              <span className="glyph">
+                <k.icon size={14} aria-hidden="true" />
+              </span>
               {k.label}
             </button>
           ))}

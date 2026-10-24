@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { Icon } from '@/lib/icons'
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@xyflow/react'
 import type { BoardEdge } from '@/store/board'
 import { useBoard } from '@/store/board'
@@ -27,8 +28,8 @@ function HandoffEdgeImpl(props: EdgeProps<BoardEdge>) {
       <EdgeLabelRenderer>
         <div className={`edge-label nodrag nopan${state}`} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }} onClick={() => select(null, id)}>
           <span className={`chip ${mode}`}>{mode === 'auto' ? 'auto' : 'manual'}</span>
-          <button className="icon-btn" title="Send handoff now" onClick={(e) => { e.stopPropagation(); void fire() }}>
-            ▶
+          <button className="icon-btn" title="Send handoff now" aria-label="Send handoff now" onClick={(e) => { e.stopPropagation(); void fire() }}>
+            <Icon name="play" size={11} />
           </button>
         </div>
       </EdgeLabelRenderer>

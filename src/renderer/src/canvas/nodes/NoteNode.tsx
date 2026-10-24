@@ -4,7 +4,10 @@ import { NodeResizer, type NodeProps } from '@xyflow/react'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
+import { kindIcon } from '@/lib/cardKinds'
 import { markdownHtml, onMarkdownClick } from '@/lib/markdown'
+
+const NoteIcon = kindIcon('note')
 
 /** A note shows its markdown rendered (paths open on click); ✎ or a double-click edits it, an empty note starts in the editor. */
 function NoteNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
@@ -20,9 +23,12 @@ function NoteNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   }, [note])
   return (
     <div className={`note-node${selected ? ' selected' : ''}`}>
-      <NodeResizer minWidth={200} minHeight={120} isVisible={selected} lineStyle={{ borderColor: '#facc15' }} handleStyle={{ background: '#facc15', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
+      <NodeResizer minWidth={200} minHeight={120} isVisible={selected} lineStyle={{ borderColor: 'var(--ring)' }} handleStyle={{ background: 'var(--text)', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <div className="node-header">
-        <span className="title">📝 {data.title}</span>
+        <span className="title">
+          <NoteIcon className="ico kind" size={13} aria-hidden="true" />
+          <span>{data.title}</span>
+        </span>
         <span className="spacer" />
         <button className={`icon-btn nodrag${editing ? ' active' : ''}`} title={editing ? 'Done editing (shows the note rendered)' : 'Edit the markdown'} aria-label={editing ? 'Done editing' : 'Edit note'} aria-pressed={editing} onClick={() => setEditing((v) => !v)}>
           <Icon name="pencil" size={14} />

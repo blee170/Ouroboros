@@ -9,13 +9,13 @@ const LINKS = [
 ]
 
 const STEPS: Array<{ title: string; text: string }> = [
-  { title: 'Add a card', text: '+ Claude in the toolbar (or right-click the canvas for Codex, Gemini, Conductor, Terminal, Browser, Note). A card is a real terminal running the CLI in your project folder; answer its first "trust this folder?" like in any terminal.' },
-  { title: 'Read the status', text: 'Blue = working, amber = needs you, green = done. The strip in the toolbar and the Roster list every card by state; click to jump. Zoom out and a card shows its last reply in large type.' },
+  { title: 'Add a card', text: 'New card in the title bar adds your default agent; its arrow (or a right-click on the canvas) lists Codex, Gemini, Conductor, Terminal, Browser, Note. A card is a real terminal running the CLI in your project folder; answer its first "trust this folder?" like in any terminal.' },
+  { title: 'Read the status', text: 'A turning ring = working, an orange ? = needs you, a green check = done. The sidebar lists every card by state, what needs you first; the status bar counts them. Click either to jump. Zoom out and a card shows its last reply in large type.' },
   { title: 'Draw a line', text: 'Drag a card\'s right port to another\'s left port. When the first card finishes a reply, the line types it into the second (Auto), or you press ▶ (Manual). The Inspector edits the template and a condition such as PASS or /SCORE: 9/.' },
   { title: 'Check the diff', text: 'The +n −m badge on a card opens its uncommitted changes: per-file diff, discard, "ask the card to review". Read diffs, not replies.' },
-  { title: 'Snapshot before risk', text: 'Inspector → Work → ⛁ Snapshot takes a git checkpoint of the folder without touching your tree. ⟲ restores it, and a restore saves a "before restore" snapshot first, so it can be undone.' },
+  { title: 'Snapshot before risk', text: 'Inspector → Work → Snapshot takes a git checkpoint of the folder without touching your tree. Restore brings it back, and a restore saves a "before restore" snapshot first, so it can be undone.' },
   { title: 'Conduct', text: 'A Conductor card gets the board as tools: it creates workers (on their own worktrees), wires report lines, runs plan → implement → review → score, and waits for your APPROVED BY OWNER before anything leaves the machine. Give it one small goal at a time.' },
-  { title: 'Leave', text: 'Finished turns are announced by toast or voice (⚙). For hours away, 🌙 Autonomous mode keeps the board working with deny rules and parks every question for you; a morning report lands on the canvas. First night: 4 hours, low-stakes tasks.' }
+  { title: 'Leave', text: 'Finished turns are announced by toast or voice (Settings). For hours away, Autonomous mode (the moon in the title bar) keeps the board working with deny rules and parks every question for you; a morning report lands on the canvas. First night: 4 hours, low-stakes tasks.' }
 ]
 
 const SHORTCUTS: Array<[string, string]> = [
@@ -29,7 +29,7 @@ const SHORTCUTS: Array<[string, string]> = [
 
 /**
  * The first-run guide: the first hour in seven steps, the shortcuts, and the links to the long versions. Opens by
- * itself once (settings.tourSeen) and from ? in the toolbar after that.
+ * itself once (settings.tourSeen) and from ? in the title bar after that.
  */
 export function HelpDialog({ onClose }: { onClose: () => void }) {
   useEscape(onClose)
@@ -82,7 +82,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
           </ul>
         </div>
         <div className="row right">
-          <span className="hint">This opens again from ? in the toolbar.</span>
+          <span className="hint">This opens again from ? in the title bar.</span>
           {/* no autoFocus: focusing the last control scrolls the dialog to its bottom and hides the title */}
           <button className="btn primary" onClick={onClose}>
             Got it

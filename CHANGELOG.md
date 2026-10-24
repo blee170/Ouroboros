@@ -7,8 +7,24 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 ## [Unreleased]
 
 ### Added
-- **First-run guide**: `?` in the toolbar opens a Help dialog with the first hour in seven steps, the shortcuts and links to the tutorial, README and changelog. It opens by itself once, the first time a project is open (`tourSeen` in settings), and from `?` after that.
+- **Orca-style shell** (see `docs/RESEARCH.md` §10 for the study of [Orca](https://github.com/stablyai/orca) it comes from). A 36 px **title bar**: sidebar toggle, wordmark, project, *New card* (the button adds the default agent, its arrow lists every kind with the default marked), Build board, Tidy, Arrange, Autonomous mode, Help, Settings and the Inspector toggle as 24 px ghost icons. A 24 px **status bar**: the state counts (*working / need you / ready / idle*, click to jump), the autonomous-run pill, the update badge and the save state. The Roster became a left **sidebar** (280 px, drag the edge to resize): a search row, the project with its counts, one 28 px section per state, card rows with the state glyph, the kind icon, the title, a hover hotkey chip, the state detail, how long ago it last moved and the last reply; workers sit under their Conductor when both are in the same section; the composer stays at the bottom. The Inspector is a 350 px right panel with a 36 px header.
+- **State glyph**: one glyph says what a card is doing, on the card, in the sidebar and in the status bar: a turning yellow ring (working), an orange ? (needs you), a green check (done), a dashed circle (starting), a grey dot (idle, dimmer when ended). Zoomed far out the card shows it large.
+- **First-run guide**: `?` in the title bar opens a Help dialog with the first hour in seven steps, the shortcuts and links to the tutorial, README and changelog. It opens by itself once, the first time a project is open (`tourSeen` in settings), and from `?` after that.
 - Documentation: this changelog and `docs/TUTORIAL.md`, a first-hour guide.
+
+
+### Changed
+- **Quiet, monochrome chrome**: four greys, a 7 % hairline, no cyan accent; selection and focus use the foreground, colour marks state only. Cards have a 1 px border and no pulse or glow (a card that needs you tints its border orange). Lucide icons replace every emoji and text glyph in the chrome (card kinds, browser controls, changes and checkpoints, engines); menus, dialogs, scrollbars and `kbd` follow one recipe. The terminal background matches the window. The old status strip, the Roster/Inspector text buttons and the collapsing-label breakpoints are gone.
+- The minimap and anything else without a glyph use the same state colours (`STATUS_COLOR`).
+- `lucide-react` is a new dependency; `src/renderer/src/lib/icons.tsx` maps the app's icon names onto it.
+
+### Fixed
+- The status bar says **Save failed** (with the error on hover, click to retry) when writing `.ouroboros.json` fails; before, the last successful time stayed on screen.
+- An update whose download fails stays visible as a red badge with the reason, instead of disappearing.
+- A board file carrying a card kind or engine this build does not know falls back to a generic icon instead of blanking the window.
+- The update check runs on the Welcome screen too (it moved into the app shell), and the result waits in the store for the status bar.
+- The sidebar and the status bar count a card with no status yet the same way (starting), and "jump to the first" follows the sidebar's order.
+- `scripts/smoke.mjs` opens the New card menu for its terminal cards and skips the first-run guide.
 
 ## [0.6.0] — 2026-10-24
 

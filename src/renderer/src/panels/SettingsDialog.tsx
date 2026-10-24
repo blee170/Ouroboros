@@ -163,7 +163,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <label className="check">
             <input type="checkbox" checked={settings.claudeLinksExternal === true} onChange={(e) => void setSettings({ claudeLinksExternal: e.target.checked })} /> Open claude.ai briefs in the system browser instead of a browser card
           </label>
-          <div className="hint">Only if claude.ai refuses to sign in inside the card; the card's ↗ button does the same per page.</div>
+          <div className="hint">Only if claude.ai refuses to sign in inside the card; the card's open-in-browser button does the same per page.</div>
           <label className="field">
             <span>Browser home</span>
             <div className="ctl">

@@ -1,5 +1,6 @@
 import type { LucideIcon, LucideProps } from 'lucide-react'
 import {
+  Activity,
   AppWindow,
   ArrowDown,
   ArrowUp,
@@ -86,8 +87,10 @@ export type IconName =
   | 'moon'
   | 'stop'
   | 'play'
+  | 'usage'
 
 const ICONS: Record<IconName, LucideIcon> = {
+  usage: Activity,
   help: CircleHelp,
   folder: Folder,
   window: AppWindow,

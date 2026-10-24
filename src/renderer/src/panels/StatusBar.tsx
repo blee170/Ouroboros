@@ -6,6 +6,7 @@ import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { rosterOrder } from '@/lib/rosterOrder'
+import { hottestWindow, resetsIn } from '@shared/usage'
 
 const hhmm = (t: number): string => {
   const d = new Date(t)
@@ -51,6 +52,24 @@ export function StatusBar() {
         .sort((a, b) => b.pct - a.pct),
     [nodes, usage]
   )
+  // the account's plan windows, one chip: "Claude 5h 42% · 7d 61%" (the Claude plan, else Codex); orange from 90%
+  const accountUsage = useBoard((s) => s.accountUsage)
+  const setUsageOpen = useBoard((s) => s.setUsageOpen)
+  const planChip = useMemo(() => {
+    const u = accountUsage?.engines.find((e) => e.windows.length) ?? undefined
+    if (!u) return null
+    const five = u.windows.find((w) => w.id === 'five_hour')
+    const week = u.windows.find((w) => w.id === 'seven_day')
+    const shown = [five && { short: '5h', w: five }, week && { short: '7d', w: week }].filter(Boolean) as Array<{ short: string; w: (typeof u.windows)[number] }>
+    const lead = shown.length ? shown : [{ short: '', w: hottestWindow(u.windows)! }]
+    const name = u.engine === 'claude' ? 'Claude' : u.engine === 'codex' ? 'Codex' : 'Gemini'
+    const now = Date.now()
+    return {
+      text: `${name} ${lead.map((x) => `${x.short ? x.short + ' ' : ''}${Math.round(x.w.usedPct)}%`).join(' · ')}`,
+      hot: lead.some((x) => x.w.usedPct >= 90),
+      title: `${name} plan usage: ${u.windows.map((w) => `${w.label} ${Math.round(w.usedPct)}%${w.resetsAt ? ` (${resetsIn(w.resetsAt, now)})` : ''}`).join(', ')}. Click for every engine.`
+    }
+  }, [accountUsage])
   const count = (...statuses: string[]): number => agents.filter((n) => statuses.includes(n.data.status ?? 'starting')).length
   const groups: Array<{ status: AgentStatus; statuses: string[]; label: string; hint: string }> = [
     { status: 'working', statuses: ['working', 'starting'], label: 'working', hint: 'Cards working now' },
@@ -99,6 +118,12 @@ export function StatusBar() {
               <span className="n">{taskCounts.blocked}</span> need you
             </>
           )}
+        </button>
+      )}
+      {planChip && (
+        <button className={`ghost plan-chip${planChip.hot ? ' hot' : ''}`} onClick={() => setUsageOpen(true)} title={planChip.title}>
+          <Icon name="usage" size={12} />
+          {planChip.text}
         </button>
       )}
       {hot.length > 0 && (

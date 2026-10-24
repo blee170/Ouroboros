@@ -11,6 +11,9 @@ import { PtyManager } from './pty-manager'
 import { UserStore } from './workspace-store'
 import { Updater, decryptToken } from './updater'
 import { SessionRegistry } from './windows'
+import { UsageMonitor } from './usage'
+import { detectEngines } from './engines'
+import { homedir } from 'node:os'
 
 const isDev = !app.isPackaged
 let tray: Tray | null = null
@@ -149,12 +152,14 @@ async function main(): Promise<void> {
     tmpDir: join(app.getPath('userData'), 'claude-launch'),
     mcpScriptPath: resolveMcpScriptPath(),
     roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
-    hookServer: null as unknown as HookServer
+    hookServer: null as unknown as HookServer,
+    usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines })
   }
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))
   ctx.hookServer = new HookServer({
     onHook: (nodeId, event) => routeHook(ctx, nodeId, event),
     onExternalHook: (event) => routeExternalHook(ctx, event),
+    onStatusLine: (nodeId, body) => ctx.usage.onStatusLine(nodeId, body),
     // A caller identifies its window by its own card id; unscoped calls go to the current window.
     resolveApi: (selfId) => (selfId ? ctx.windows.forNode(selfId) : undefined)?.api ?? ctx.windows.current()?.api
   })

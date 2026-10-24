@@ -82,6 +82,8 @@ export interface ApiHandlers {
 export interface HookServerDeps {
   onHook(nodeId: string, event: HookEvent): void
   onExternalHook(event: HookEvent): void
+  /** A Claude card's status-line JSON (its `statusLine` command POSTs it on every API response). */
+  onStatusLine?(nodeId: string, body: unknown): void
   /** API scoped to the window that owns `selfId` (the caller's own card id); unscoped = current window. */
   resolveApi(selfId?: string): ApiHandlers | undefined
 }
@@ -173,6 +175,16 @@ export class HookServer {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
     const method = req.method ?? 'GET'
+
+    // --- Claude Code status line (plan usage, cost, context per card) ---------
+    const sl = /^\/hook\/([^/]+)\/statusline$/.exec(path)
+    if (method === 'POST' && sl) {
+      const body = await readJson(req, 200_000)
+      // no body: the card's curl prints nothing, so Claude Code shows no status line in the terminal
+      res.writeHead(204).end()
+      if (body && typeof body === 'object') this.deps.onStatusLine?.(decodeURIComponent(sl[1]), body)
+      return
+    }
 
     // --- Claude Code hooks ---------------------------------------------------
     if (method === 'POST' && path.startsWith('/hook/')) {

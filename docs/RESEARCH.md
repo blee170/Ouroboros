@@ -278,3 +278,48 @@ L1 감독형 → L2 태스크 에이전트(마커·체크포인트·diff) → **
 **2단계 (0.7.x)**: §10.2 판정의 Adopt/Adapt — 턴 확인(done은 볼 때까지만, 안읽음 굵게), 3초 재정렬 유예, 상태·결과 기반 토스트 문구 + 5초 버스트 쿨다운 + "포커스 + 선택된 카드"일 때만 억제, 누락 명령 꼬리 스캔(3분 park 대신 수 초), unverifiable/unconfirmed 표시 상태, Ctrl+J 점프 팔레트, 다음 needs-you 단축키, 상태바 사용량 칩, 온보딩에 엔진 선택·소리 테스트 단계.
 **3단계 (Type 1, 승인 후)**: §10.3-설계 린 폰 컴패니언, Tailscale 전용부터.
 **Skip**: OSC 7501 진행 링, 네이티브 모바일 앱·클라우드 릴레이·푸시 게이트웨이, 오른쪽 탐색기/SCM/포트 패널(캔버스와 경쟁), 숨김 워크스페이스 음소거, FirstLaunchBanner.
+
+## 12. 계정 사용량·쿼터 표시 조사 (2026-10-25, Usage 뷰 계획 전) — 검증한 사실
+
+사장님 말: "각 AI 주간 사용량등 사용량 디테일들 정확히 보여주는거 있어야할거같아. 다들 있는거같은데 우리 우로보로스엔 안나오는거같네." 지금 우로보로스가 보여주는 "usage"는 카드별 **컨텍스트 창** 점유율뿐이다(`src/main/claude-history.ts`의 `parseUsageTail` → 카드의 게이지, 상태바의 *near context limit* 칩). 계정의 5시간·주간 한도는 어디에도 없다. 아래는 다른 콕핏들이 그 숫자를 어디서 얻는지 소스 수준으로 확인한 기록. 로컬에서 읽기 전용으로 뜯은 것: 설치된 Claude Code 2.1.310 바이너리(`~/.local/bin/claude.exe`, 문자열만 grep), 전역 `ccusage` 18.0.10 번들. 토큰·키는 어디에도 출력·복사하지 않았다. Codex CLI·Gemini CLI는 이 PC에 설치돼 있지 않아 공개 소스로만 확인했다.
+
+### 12.1 Claude Code — 두 경로가 있고, 하나는 공식이다
+
+**(A) 상태줄 JSON — 공식 문서, 토큰 불필요.** Claude Code는 `statusLine: { type: "command", command }` 설정의 명령에 **매 API 응답마다** JSON을 stdin으로 넘긴다(https://code.claude.com/docs/en/statusline). 그 JSON에 계정 한도가 들어 있다:
+
+- `rate_limits.five_hour.used_percentage`(0–100) · `rate_limits.five_hour.resets_at`(Unix **초**) · `rate_limits.seven_day.*` 같은 꼴. 문서에 적힌 것은 이 둘과 `spend_limit`(게이트웨이 전용, `used_usd`/`limit_usd`)뿐이다.
+- **2.1.310 바이너리에는 더 있다**(zod 스키마 문자열): `rate_limits: { five_hour, seven_day, seven_day_oauth_apps, seven_day_opus, seven_day_sonnet, model_scoped: [{ display_name /* 예: 'Fable' */, utilization, resets_at }] }`. 즉 **모델별 주간 버킷**도 상태줄로 온다. 바이너리 안의 `/usage` 화면 라벨도 같은 구조다: "Current session" / "Current week (all models)" / "Current week (Sonnet only)" / "% used".
+- 함께 오는 것: `cost.total_cost_usd`(이 세션의 **리스트 가격 추정**, `/clear`에 리셋) · `context_window.used_percentage` · `model.display_name`.
+- 조건: `rate_limits`는 **claude.ai Pro/Max/Team 로그인일 때만**, 그리고 세션의 **첫 API 응답 뒤부터** 온다. API 키(`ANTHROPIC_API_KEY`) 인증이면 없다. 창이 하나만 올 수도 있고, `resets_at`이 지난 창은 빠진다.
+- 우로보로스에 맞는 이유: 카드마다 이미 `--settings <tmp>/<id>.settings.json`을 쓰고(`claude-launcher.ts` `buildHookSettings`) 훅을 `hook-server.ts`로 POST한다. 상태줄 명령 한 줄(`curl.exe -s --data-binary @- http://127.0.0.1:<port>/hook/<id>/statusline`)을 같은 파일에 넣으면 **토큰을 만지지 않고** 정확한 숫자가 카드에서 밀려온다. 사장님의 `~/.claude/settings.json`에는 `statusLine`이 없어 덮어쓰는 것도 없다(카드의 `--settings`는 그 카드에만 적용).
+- 한계: **카드가 턴을 돌 때만** 갱신된다. 카드가 하나도 안 돌면 마지막 값이 그대로다.
+
+**(B) `GET https://api.anthropic.com/api/oauth/usage` — 비공식, Claude Code 자신이 쓰는 경로.** 바이너리 확인: `/api/oauth/usage`(변형: `?skip_spend=1`, `?at_wall=1`)를 `Authorization: Bearer <jwt>` + `User-Agent: claude-code/<ver>`로 GET하고, 실패 시 "Showing last-known usage (could not refresh)", 429면 "rate limited until …"을 띄운다(공식 문서 https://code.claude.com/docs/en/costs 의 `/usage` 설명과 일치: 60분 안의 마지막 값을 보여주고 `r`로 재시도). 응답 꼴(두 독립 소스 + 바이너리 일치): `five_hour / seven_day / seven_day_opus / seven_day_sonnet: { utilization(0–100), resets_at(ISO) }`, `extra_usage: { is_enabled, monthly_limit, used_credits, utilization, currency }`, 바이너리에만 보이는 추가 버킷 `seven_day_oauth_apps`, `seven_day_cowork`, `seven_day_overage_included`. 베타 헤더 `anthropic-beta: oauth-2025-04-20`(gist https://gist.github.com/jtbr/4f99671d1cee06b44106456958caba8b, Claude-Code-Usage-Monitor #202).
+  - 토큰 위치: Windows/Linux `~/.claude/.credentials.json` → `claudeAiOauth.accessToken` / `expiresAt`(ms) / `scopes`; macOS는 키체인 "Claude Code-credentials"; `CLAUDE_CODE_OAUTH_TOKEN` 환경변수도 인정. **refresh token은 1회용** — 제3자가 갱신하면 Claude Code 로그인이 깨진다는 보고가 있으니 **절대 갱신하지 않는다**(만료면 "카드에서 다시 로그인"이라고만 보여준다).
+  - 429: 30–60초 폴링에서 지속 429 보고(anthropics/claude-code #31637, #31021, #30930; `Retry-After` 없음, 본문 `rate_limit_error`). 커뮤니티 권고 **≥180초**, 안전하게 5분. `claude-code/<ver>` User-Agent가 없으면 즉시 429라는 주장은 [미확인].
+  - 플랜·티어 라벨: `~/.claude.json`의 `oauthAccount`에 `billingType`, `organizationRateLimitTier`, `userRateLimitTier`, `hasExtraUsageEnabled`, `organizationType`가 있다(이 PC에서 키 이름만 확인). Anthropic은 Pro/Max의 **숫자 상한을 공개하지 않는다**(support.claude.com/en/articles/11145838) — 퍼센트만 있다. Max엔 Fable 전용 주간 한도가 따로 있다.
+
+**다른 콕핏들**: ccusage(`~/.claude/projects/**/*.jsonl` 토큰 합 × LiteLLM 단가 `https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`; 5시간 "블록"은 첫 메시지부터 UTC 5시간, **달러만** 내고 퍼센트는 못 낸다; `ccusage statusline`은 상태줄 stdin JSON을 쓴다, OAuth 엔드포인트 호출 없음 — 번들 grep으로 확인) · CCometixLine / claude-code-statusline / Claude-Code-Usage-Monitor / cc-usage-bar(경로 B) · Claude Code 자신의 `/usage`(경로 B + 로컬 히스토리로 스킬·서브에이전트·MCP별 "attribution" — 근사치).
+
+### 12.2 Codex CLI — 로컬 rollout 파일에 스냅샷이 있다
+
+- **숫자의 원천**(1차 소스 `codex-rs/codex-api/src/rate_limits.rs`): ChatGPT 백엔드 응답 헤더 `x-codex-primary-used-percent`, `x-codex-primary-window-minutes`, `x-codex-primary-reset-at`(Unix 초), `x-codex-secondary-*`, `x-codex-limit-name`, 크레딧 `x-codex-credits-{has-credits,unlimited,balance}`; 또는 SSE 이벤트 `codex.rate_limits`(여기에만 `plan_type`). 구조체(`protocol/src/protocol.rs`): `RateLimitSnapshot { limit_id, limit_name, primary, secondary, credits, plan_type, rate_limit_reached_type, … }`, `RateLimitWindow { used_percent(0–100), window_minutes?, resets_at?(Unix 초) }`. **슬롯이 아니라 `window_minutes`로 분류**한다(300 = 5시간, 10080 = 주간; quotadial #2, loom #8963 — 슬롯이 뒤바뀌는 보고).
+- **로컬 파일**: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`(+`archived_sessions/`)의 `event_msg` 중 `token_count`: `{ info: { total_token_usage: { input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens, total_tokens }, last_token_usage, model_context_window }, rate_limits: RateLimitSnapshot | null }`. 주의: `codex exec` rollout은 `info`만 있고 `rate_limits: null`, VS Code 모드는 반대였다는 보고(openai/codex #14728, 수정 미확정). 스냅샷은 **마지막 요청 시점** 값이라 쉬는 동안 낡는다.
+- **`/status`**: 플랜, "5h limit"/"Weekly limit"(남은 %, 리셋), Credits, 컨텍스트. 0.144.5 Plus에서 5h 줄이 사라졌다는 포럼 글 [미확인]. 비대화형 `codex status --json`은 **없다**(#56370).
+- **대안 경로**: `codex app-server`(JSON-RPC, 공식 문서 learn.chatgpt.com/docs/app-server) `account/read` → `account.type`(apiKey/chatgpt, `planType`), `account/rateLimits/read` → `rateLimitsByLimitId[].{primary,secondary}.{usedPercent, windowDurationMins, resetsAt}`, 알림 `account/rateLimits/updated`. TUI는 `GET https://chatgpt.com/backend-api/wham/usage`(Bearer + `ChatGPT-Account-Id`)를 **약 60초마다** 폴링(#10869), API 키 인증이면 폴링 안 함(PR #10973). 응답 내부 필드명 [미확인]. CodexBar·QuotaDial이 이 경로.
+- 인증 파일 `~/.codex/auth.json`: access token·`account_id`·`last_refresh`(필드명은 2차 소스). **이 PC엔 없음** → 실측 불가, 픽스처 테스트만.
+
+### 12.3 Gemini CLI — 쿼터는 비공개 엔드포인트, 토큰은 세션 파일
+
+- **`/stats`**(`packages/cli/src/ui/commands/statsCommand.ts`): session(기간, `selectedAuthType`, `tier`, `currentModel`, `creditBalance`, 쿼터가 있으면 `pooledRemaining/pooledLimit/pooledResetTime`), model(모델별 토큰 + 쿼터 캐시), tools. `/stats session`이 `refreshUserQuota()`를 호출. `/quota` 명령은 없다.
+- **쿼터 엔드포인트**(`packages/core/src/code_assist/server.ts`, `types.ts`): `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` → `{ buckets: [{ remainingAmount?, remainingFraction?(0–1), resetTime?, tokenType?, modelId? }] }`. 프로젝트 id는 `:loadCodeAssist`의 `cloudaicompanionProject`에서(2단계). 비공개·버전마다 바뀔 수 있음. CodexBar가 `~/.gemini/oauth_creds.json`(`access_token`, `expiry_date`, `refresh_token`; 2차 소스)으로 이 경로를 쓴다.
+- **한도**(docs/resources/quota-and-pricing.md): Google 로그인 개인 1,000 req/일 · API 키 무료 250/일(Flash) · Standard 1,500 · Enterprise 2,000. 분당 한도 숫자는 문서에 없음("60/분"은 [미확인]).
+- **세션 파일**: `~/.gemini/tmp/<project-hash>/chats/session-<ISO>-<id>.jsonl`(현 main; 예전엔 `.json`) `ConversationRecord { sessionId, startTime, lastUpdated, messages[] }`, 메시지마다 `tokens: { input, output, cached, thoughts?, tool?, total }`. 이 PC의 사용량만, 요청 수는 하한.
+- 텔레메트리 `gemini_cli.token.usage` / `gemini_cli.api.request.count`는 기본 꺼짐, 파일 싱크 포맷 [미확인]. **이 PC엔 미설치** → 픽스처 테스트만.
+
+### 12.4 결론 → Usage 뷰 설계
+
+1. **Claude는 경로 A가 1순위**(공식·정확·토큰 무관·모델별 버킷 포함), 경로 B는 "카드가 안 돌 때"의 보조(5분 이상 간격, 마지막 값 캐시, 429면 30분 물러섬, 토큰 갱신 금지, `.credentials.json`은 읽기만). 둘 다 **퍼센트와 리셋 시각만** 정확하고, 토큰 수·달러는 Claude가 주지 않는다(`cost.total_cost_usd`는 카드별 리스트 가격 추정).
+2. **Codex는 rollout `token_count` 마지막 스냅샷**(정확하되 "마지막 요청 시각" 표기) + `total_token_usage`. app-server 폴링은 2단계.
+3. **Gemini는 세션 파일 토큰 합**(오늘·7일, 이 PC) + 쿼터 엔드포인트는 선택(OAuth 파일 읽기 + 2단계 호출, 비공개 API라 깨질 수 있음을 표시).
+4. 표시 규칙: 정확/추정/낡음(as of)을 항상 라벨링; 실패는 "Not signed in" / "API key: no plan limits" / "Unavailable (rate limited until …)" / "Not installed"로 말로.

@@ -3,6 +3,7 @@ import type { AnnouncePayload } from './announce'
 import type { AutonomyConfig, AutonomyPublic } from './autonomy'
 import type { RolesListing } from './roles'
 import type { LedgerApiResult, Task, TaskInput, TaskPatch } from './ledger'
+import type { UsageSnapshot } from './usage'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -42,6 +43,8 @@ export const IPC = {
   checkpointsRestore: 'checkpoints:restore',
   checkpointsDelete: 'checkpoints:delete',
   sessionUsage: 'session:usage',
+  usageGet: 'usage:get',
+  usageRefresh: 'usage:refresh',
   enginesDetect: 'engines:detect',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
@@ -71,6 +74,7 @@ export const IPC = {
   autonomyState: 'autonomy:state',
   // main -> renderer (send)
   autonomyChanged: 'autonomy:changed',
+  usageChanged: 'usage:changed',
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
   agentStatus: 'agent:status',
@@ -371,6 +375,15 @@ export interface OuroborosApi {
   session: {
     /** Context usage of the last turn, read from the Claude Code transcript. */
     usage(sessionId: string): Promise<SessionUsage | null>
+  }
+  /** Account usage per engine: plan windows (5-hour, weekly, per model), token totals; see shared/usage.ts. */
+  usage: {
+    /** The current picture (cheap: files and cached values). */
+    get(): Promise<UsageSnapshot>
+    /** Read again now, asking the Claude usage endpoint when no card is reporting and its interval allows. */
+    refresh(): Promise<UsageSnapshot>
+    /** A Claude card's status line brought new numbers. */
+    onChange(cb: (s: UsageSnapshot) => void): () => void
   }
   engines: {
     /** Installed / signed-in state of claude, codex and gemini. */

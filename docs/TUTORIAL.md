@@ -74,7 +74,7 @@ A **Conductor** is a Claude card that gets an MCP server with the board as tools
 4. The Conductor's report lands as a reply; **📄** on the Conductor reopens the brief it published. Open the worker's diff badge before you believe the report.
 5. Human gates: the Conductor proposes a push, a merge, a deploy or anything that spends money, and waits until you answer `APPROVED BY OWNER`. Nothing is pushed on its own.
 
-When the run is over, **🧹 Tidy** closes finished cards (dispatched workers retire by themselves a few minutes after their report is in; pin a card with *Keep* to exempt it), and **⊞ Arrange** lines the board up along its lines. Press **✨ Build board** if you would rather start from a generated board based on your folder and your Claude Code history.
+When the run is over, **🧹 Tidy** closes finished cards (dispatched workers retire by themselves a few minutes after their report is in; pin a card with *Keep* to exempt it), and **⊞ Arrange** lines the board up along its lines. Press **✨ Build board** if you would rather start from a generated board based on your folder and your Claude Code history; its *Specialists* section adds cards with a persona from your `.claude/agents` files or the Agency roster (press *Get the Agency roster* once; a runbook ticks a whole team).
 
 ## 6. Hands-free: announcements, voice, and Autonomous mode (10 min)
 

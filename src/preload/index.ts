@@ -104,6 +104,11 @@ const api: OuroborosApi = {
   skills: {
     list: (cwd) => ipcRenderer.invoke(IPC.skillsList, cwd)
   },
+  roles: {
+    list: (cwd) => ipcRenderer.invoke(IPC.rolesList, cwd),
+    fetch: () => ipcRenderer.invoke(IPC.rolesFetch),
+    read: (cwd, id) => ipcRenderer.invoke(IPC.rolesRead, cwd, id)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

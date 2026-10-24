@@ -376,6 +376,12 @@ body.ouro-dragging webview { pointer-events: none; }
 .session-line { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .role-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); column-gap: 8px; align-items: center; margin: 6px 0; }
 .role-row .desc { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.role-list { list-style: none; margin: 4px 0 0; padding: 0 2px; max-height: 190px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.role-list li { padding: 0 6px; }
+.role-list .role-row { margin: 3px 0; }
+.runbook-groups { margin: 4px 0 6px; padding: 4px 8px; background: var(--panel-2); border-radius: var(--r-sm); }
+.specialists-empty { margin: 4px 0; }
+.specialists-empty .btn { margin: 0 6px; }
 
 /* browser card */
 .browser-node { position: relative; }

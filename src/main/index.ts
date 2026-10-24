@@ -6,6 +6,7 @@ import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer } from './hook-server'
 import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeHook, type MainContext, type WindowSession } from './ipc'
+import { RoleLibrary } from './roles'
 import { PtyManager } from './pty-manager'
 import { UserStore } from './workspace-store'
 import { Updater, decryptToken } from './updater'
@@ -147,6 +148,7 @@ async function main(): Promise<void> {
     updater: null as unknown as Updater,
     tmpDir: join(app.getPath('userData'), 'claude-launch'),
     mcpScriptPath: resolveMcpScriptPath(),
+    roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
     hookServer: null as unknown as HookServer
   }
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))

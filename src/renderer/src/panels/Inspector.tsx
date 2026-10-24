@@ -1,8 +1,9 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useBoard } from '@/store/board'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 import { MCP_PRESETS, normalizeEngine, type ClaudeOptions, type McpServerSpec } from '@shared/types'
 import { Icon } from '@/lib/icons'
+import type { RoleEntry } from '@shared/roles'
 import { ChangesPanel } from './ChangesPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
 import { ReplyView } from './ReplyView'
@@ -30,6 +31,14 @@ export function Inspector() {
   const restartNode = useBoard((s) => s.restartNode)
   const projectRoot = useBoard((s) => s.projectRoot)
   const retireMinutes = useBoard((s) => s.settings.retireMinutes ?? 5)
+  // specialist roles for the Launch section; read once per project
+  const [roles, setRoles] = useState<RoleEntry[] | null>(null)
+  const isAgentNode = node?.data.kind === 'claude' || node?.data.kind === 'conductor'
+  useEffect(() => {
+    if (!isAgentNode) return
+    // per selection: the catalog may have been fetched in Build board since the last look
+    window.ouroboros.roles.list(projectRoot).then((l) => setRoles(l.roles), () => setRoles([]))
+  }, [isAgentNode, nodeId, projectRoot])
   // a new selection starts at the top of the panel, whatever was scrolled before
   const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -252,9 +261,43 @@ export function Inspector() {
               </select>
             </div>
           </label>
+          <label className="field">
+            <span>Specialist</span>
+            <div className="ctl">
+              <select
+                value={typeof d.role === 'string' ? d.role : ''}
+                onChange={(e) => {
+                  const id = e.target.value
+                  if (!id) {
+                    // only the label goes: the prompt text stays as it is (it may be hand-edited)
+                    updateNodeData(nodeId, { role: undefined })
+                    return
+                  }
+                  void window.ouroboros.roles.read(projectRoot, id).then((prompt) => {
+                    if (prompt) updateNodeData(nodeId, { role: id, claude: { ...claude, appendSystemPrompt: prompt } })
+                  })
+                }}
+              >
+                <option value="">{roles && roles.length === 0 ? 'none (no role files: Build board → Get the Agency roster)' : 'none'}</option>
+                {typeof d.role === 'string' && roles && !roles.some((r) => r.id === d.role) && <option value={d.role}>{d.role} (not in the library)</option>}
+                {[...new Set((roles ?? []).map((r) => r.division))].map((division) => (
+                  <optgroup key={division} label={division === 'project' || division === 'user' ? `${division} · .claude/agents` : `agency · ${division}`}>
+                    {(roles ?? [])
+                      .filter((r) => r.division === division)
+                      .map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <div className="hint">A role file (.claude/agents or the agency catalog) replaces the extra system prompt below; editing the text afterwards keeps it and drops the label. Picking none keeps the text.</div>
+          </label>
           <label>
             Extra system prompt
-            <textarea rows={3} value={claude.appendSystemPrompt ?? ''} onChange={(e) => setClaude({ appendSystemPrompt: e.target.value || undefined })} />
+            <textarea rows={3} value={claude.appendSystemPrompt ?? ''} onChange={(e) => updateNodeData(nodeId, { claude: { ...claude, appendSystemPrompt: e.target.value || undefined }, ...(typeof d.role === 'string' ? { role: undefined } : {}) })} />
           </label>
           <div className="block">
             <div className="muted small">MCP servers on this card {d.kind === 'conductor' ? '(the board server "ouroboros" is always added)' : ''}</div>

@@ -89,6 +89,8 @@ export interface NodeData {
   commandTemplate?: string
   /** Sent once to the card's Claude session as soon as it is ready, then cleared. */
   initialPrompt?: string
+  /** Specialist role id (an agent file in .claude/agents or the agency catalog) whose body is the extra system prompt. */
+  role?: string
   /** Claude Code session id once known (SessionStart hook). */
   sessionId?: string
   /** Conductor cards: the last brief (claude.ai artifact, report URL) they published; the 📄 button reopens it. */

@@ -87,16 +87,38 @@ server.registerTool(
 )
 
 server.registerTool(
+  'list_roles',
+  {
+    title: 'List specialist roles for cards',
+    description:
+      "The roles a card can be given: the owner's and the project's .claude/agents files and the agency catalog (msitarzewski/agency-agents: engineering, design, marketing, testing, security, product, support, …), each with id, name, description, division and source, plus the catalog's runbooks (team rosters for a startup MVP, an enterprise feature, a marketing campaign, an incident). query narrows to roles whose name, id, description or division contain every word of it (one topic per call: 'frontend', then 'security'); without a query every role comes back, one line each, plus the runbooks. Pass an id as role to create_agent; the file's persona becomes that card's system prompt. An empty list with no catalog means the owner has not fetched it (Build board → Get the Agency roster).",
+    inputSchema: { query: z.string().optional() }
+  },
+  async ({ query }) => {
+    const r = (await api('GET', `/api/roles${query ? `?q=${encodeURIComponent(query)}` : ''}`)) as {
+      roles: Array<{ id: string; name: string; description?: string; division: string; source: string }>
+      runbooks: Array<{ slug: string; title: string; duration?: string; groups: Array<{ group: string; activation: string; agents: string[] }> }>
+      catalog?: { version?: string }
+    }
+    const lines = r.roles.map((x) => `${x.id} — ${x.name} [${x.division}${x.source === 'agency' ? '' : `, ${x.source}`}]${x.description ? `: ${x.description.slice(0, 120)}` : ''}`)
+    const head = `${r.roles.length} role${r.roles.length === 1 ? '' : 's'}${query ? ` for "${query}"` : ''}${r.catalog ? ` (Agency catalog ${r.catalog.version ?? 'fetched'})` : ' (no Agency catalog: the owner can fetch it in Build board)'}`
+    const runbooks = query ? [] : r.runbooks.map((rb) => `runbook ${rb.slug} — ${rb.title}${rb.duration ? ` (${rb.duration})` : ''}: ${rb.groups.map((g) => `${g.group} [${g.activation}]: ${g.agents.join(', ')}`).join('; ')}`)
+    return text([head, ...lines, ...(runbooks.length ? ['', ...runbooks] : [])].join('\n'))
+  }
+)
+
+server.registerTool(
   'create_agent',
   {
     title: 'Create a new Claude Code agent card',
     description:
-      'Add a card to the board. kind=claude (default) runs an interactive coding agent: engine=claude (Claude Code), codex (OpenAI Codex CLI) or gemini (Gemini CLI); omitted = the owner\'s default engine from Settings. All get the same hooks, lines and board tools. kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt). A title that already exists in the same folder reuses that card when it is idle or done (the prompt goes to it; a changed role_prompt is given to it first; the result says reused=true) and replaces it when its process has ended (replaced=<old id>), so keep one stable title per role instead of inventing new names each round; a card that is still working is left alone and a second one is created. Cards you create are dispatched by you: they are retired automatically 5 minutes after their report reaches you (send them more work before then to keep them), you may have at most 6 live ones at once (maxWorkersPerLead in settings.json), and the chain goes no deeper than Conductor → team → worker — the call fails with the reason.',
+      'Add a card to the board. kind=claude (default) runs an interactive coding agent: engine=claude (Claude Code), codex (OpenAI Codex CLI) or gemini (Gemini CLI); omitted = the owner\'s default engine from Settings. All get the same hooks, lines and board tools. kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). role=<id from list_roles> gives the card a specialist persona (its agent file) as that prompt, with role_prompt appended after it; an unknown id fails with the reason. worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt). A title that already exists in the same folder reuses that card when it is idle or done (the prompt goes to it; a changed role_prompt is given to it first; the result says reused=true) and replaces it when its process has ended (replaced=<old id>), so keep one stable title per role instead of inventing new names each round; a card that is still working is left alone and a second one is created. Cards you create are dispatched by you: they are retired automatically 5 minutes after their report reaches you (send them more work before then to keep them), you may have at most 6 live ones at once (maxWorkersPerLead in settings.json), and the chain goes no deeper than Conductor → team → worker — the call fails with the reason.',
     inputSchema: {
       cwd: z.string().optional(),
       title: z.string().optional(),
       prompt: z.string().optional(),
       role_prompt: z.string().optional(),
+      role: z.string().optional(),
       permission_mode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions']).optional(),
       model: z.string().optional(),
       worktree: z.boolean().optional(),

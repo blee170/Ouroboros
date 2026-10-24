@@ -1,6 +1,7 @@
 import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
 import type { AnnouncePayload } from './announce'
 import type { AutonomyConfig, AutonomyPublic } from './autonomy'
+import type { RolesListing } from './roles'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -25,6 +26,9 @@ export const IPC = {
   filesSaveImage: 'files:saveImage',
   filesPasteClipboard: 'files:pasteClipboard',
   skillsList: 'skills:list',
+  rolesList: 'roles:list',
+  rolesFetch: 'roles:fetch',
+  rolesRead: 'roles:read',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -381,6 +385,14 @@ export interface OuroborosApi {
   skills: {
     /** Slash commands a Claude Code card in `cwd` offers (built-ins, user, project, plugins). */
     list(cwd: string): Promise<SkillEntry[]>
+  }
+  roles: {
+    /** Specialist roles for cards (project and user `.claude/agents`, the agency catalog) and the catalog's runbooks. */
+    list(cwd: string): Promise<RolesListing>
+    /** Clone or update the agency catalog (msitarzewski/agency-agents) with git. */
+    fetch(): Promise<{ ok: true; version: string } | { ok: false; error: string }>
+    /** The extra system prompt a role gives a card, or undefined for an unknown id. */
+    read(cwd: string, id: string): Promise<string | undefined>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

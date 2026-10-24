@@ -8,6 +8,8 @@ export type CheckpointApiResult = ({ ok: boolean; error?: string } & Record<stri
 
 export interface ApiHandlers {
   listAgents(): unknown
+  /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
+  listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
   sendPrompt(nodeId: string, text: string): boolean
   createAgent(input: {
@@ -20,6 +22,8 @@ export interface ApiHandlers {
     /** command cards: shell template with {{prompt}} / {{prompt_file}} */
     command_template?: string
     role_prompt?: string
+    /** A role id from list_roles: its file becomes the extra system prompt (role_prompt is appended after it). */
+    role?: string
     permission_mode?: string
     model?: string
     worktree?: boolean
@@ -180,6 +184,7 @@ export class HookServer {
       if (!api) return send(res, 503, { error: 'no window open' })
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt|changes))?$/.exec(path)
       if (method === 'GET' && path === '/api/agents') return send(res, 200, { agents: api.listAgents() })
+      if (method === 'GET' && path === '/api/roles') return send(res, 200, await api.listRoles(url.searchParams.get('q') ?? undefined))
       if (method === 'GET' && path === '/api/bookmarks') return send(res, 200, { bookmarks: api.bookmarks(url.searchParams.get('q') ?? undefined) })
       if (path === '/api/tidy' && (method === 'GET' || method === 'POST')) {
         const minutes = Number(url.searchParams.get('minutes') ?? 30) | 0 || 30

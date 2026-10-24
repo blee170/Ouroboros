@@ -4,6 +4,11 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Specialist roles** (after [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents), MIT): cards can carry a persona from an agent file. The library reads your `~/.claude/agents`, the project's `.claude/agents`, and the Agency catalog once *Get the Agency roster* in Build board has cloned it (shallow, into the app's data folder; nothing is written to `~/.claude`, so Claude Code does not load 270 subagents). Build board lists them with search, a *runbook* select (Startup MVP, Enterprise feature, Marketing campaign, Incident response; always-on groups ticked, optional groups a checkbox each) and makes one Claude card per role, in rows of four under the role cards, each with a report line to the Conductor. The Inspector gets a *Specialist* select on agent cards. A Conductor gets `list_roles` and `create_agent role=<id>` (an unknown id fails with the reason; `role_prompt` is appended after the persona). Every role prompt ends with a short board footer: how work arrives, the `RESULT:` marker, what goes under `APPROVAL NEEDED:`.
+
 ## [0.7.1] — 2026-10-24
 
 The attention model (RESEARCH §10.2, after Orca): the sidebar tells you what you have not looked at yet, and the app stops telling you about the card you are looking at.

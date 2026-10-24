@@ -13,6 +13,8 @@ import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, ann
 import type { Board } from './board'
 import { findBriefUrl } from './briefs'
 import { listSkills } from './skills'
+import type { RoleLibrary } from './roles'
+import { filterRoles } from '@shared/roles'
 import { prepareLaunch } from './claude-launcher'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -75,6 +77,8 @@ export interface MainContext {
   updater: Updater
   tmpDir: string
   mcpScriptPath: string
+  /** Specialist roles for cards (.claude/agents files and the agency catalog under userData/roles). */
+  roles: RoleLibrary
 }
 
 const EDGE_COOLDOWN_MS = 8_000
@@ -288,10 +292,22 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       type: (id, input) => ctx.browsers.type(id, input),
       screenshot: (id) => ctx.browsers.screenshot(id, join(ctx.tmpDir, 'screenshots'))
     },
+    listRoles: async (query) => {
+      const l = await ctx.roles.list(board.projectRoot)
+      return query ? { ...l, roles: filterRoles(l.roles, query) } : l
+    },
     createAgent: async (input) => {
       const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
       const parentId = input.created_by && board.nodes.has(input.created_by) ? input.created_by : undefined
       let cwd = input.cwd || board.projectRoot || app.getPath('home')
+      // a specialist role: its file is the system prompt, the caller's own role_prompt follows it
+      const roleId = input.role?.trim() || undefined
+      if (roleId) {
+        if (input.kind === 'terminal' || input.kind === 'command') return { error: 'role applies to agent cards only (kind=claude)' }
+        const rolePrompt = ctx.roles.prompt(board.projectRoot, roleId)
+        if (!rolePrompt) return { error: `no role "${roleId}": list_roles shows the ids the library has` }
+        input = { ...input, role_prompt: [rolePrompt, input.role_prompt?.trim()].filter(Boolean).join('\n\n') }
+      }
       const title = input.title || basename(cwd)
       const kind = input.kind === 'terminal' ? 'terminal' : input.kind === 'command' ? 'command' : 'claude'
       // The same title asked for again (a Conductor tends to want its "Brief writer" every round): a card that
@@ -307,7 +323,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
             // a new role for a live session goes in as a role turn; the task waits for its "ready"
             const claudeOpts = { ...twin.data.claude, appendSystemPrompt: role }
             twin.data.claude = claudeOpts
-            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { claude: claudeOpts }, restart: false })
+            twin.data.role = roleId
+            sendToRenderer(s, IPC.boardUpdateNode, { nodeId: twin.id, data: { claude: claudeOpts, role: roleId }, restart: false })
             board.markRoleTurn(twin.id)
             sendPrompt(ctx, s, twin.id, roleAsMessage(role))
             if (input.prompt) pendingPrompts.set(twin.id, input.prompt)
@@ -382,6 +399,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           worktree,
           claude,
           commandTemplate: input.kind === 'command' ? input.command_template || 'echo {{prompt}}' : undefined,
+          role: claude ? roleId : undefined,
           parentId,
           createdAt: Date.now()
         }
@@ -1005,6 +1023,9 @@ export function registerIpc(ctx: MainContext): void {
     return chips() > before ? { ok: true } : { ok: false, error: 'the card did not take the image (is Claude Code at its prompt?)' }
   })
   ipcMain.handle(IPC.skillsList, (_e, cwd: string) => listSkills(typeof cwd === 'string' ? cwd : ''))
+  ipcMain.handle(IPC.rolesList, (_e, cwd: string) => ctx.roles.list(typeof cwd === 'string' ? cwd : ''))
+  ipcMain.handle(IPC.rolesFetch, () => ctx.roles.fetch())
+  ipcMain.handle(IPC.rolesRead, (_e, cwd: string, id: string) => (typeof id === 'string' ? ctx.roles.prompt(typeof cwd === 'string' ? cwd : '', id) : undefined))
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
   ipcMain.handle(IPC.filesPasteClipboard, async (_e, saveImage = true): Promise<{ path?: string; text?: string; image?: boolean }> => {

@@ -109,6 +109,12 @@ const api: OuroborosApi = {
     fetch: () => ipcRenderer.invoke(IPC.rolesFetch),
     read: (cwd, id) => ipcRenderer.invoke(IPC.rolesRead, cwd, id)
   },
+  tasks: {
+    list: () => ipcRenderer.invoke(IPC.tasksList),
+    create: (input) => ipcRenderer.invoke(IPC.tasksCreate, input),
+    update: (id, patch) => ipcRenderer.invoke(IPC.tasksUpdate, id, patch),
+    onChange: (cb) => on(IPC.tasksChanged, cb)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

@@ -34,7 +34,17 @@ import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } 
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
 import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
-import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
+import { loadWorkspace, saveLedger, saveWorkspace, UserStore } from './workspace-store'
+import { Ledger } from './ledger'
+import { OWNER, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
+
+/** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
+const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
+
+function liveCards(board: Board): Set<string> {
+  // a killed card keeps a stale status, so the process decides; a card that has not spawned yet is starting
+  return new Set(board.snapshot().filter((a) => a.status === 'starting' || (a.ptyAlive && a.status !== 'ended')).map((a) => a.id))
+}
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
@@ -55,6 +65,8 @@ export interface WindowSession {
   api: ApiHandlers
   /** This window's Autonomous mode run (off until the owner starts one). */
   autonomy: Autonomy
+  /** The project's task ledger (task_* tools, the Tasks tab, the morning report). */
+  ledger: Ledger
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
   /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
@@ -185,6 +197,7 @@ export function createHandoffEdge(
 function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.ptys.kill(id)
   s.board.setPtyAlive(id, false)
+  s.ledger.release(id, s.board.nodes.get(id)?.data.title ?? id)
   s.board.nodes.delete(id)
   ctx.windows.unbindNode(id)
   running.delete(id)
@@ -242,6 +255,30 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       sendToRenderer(s, IPC.boardSetNote, { nodeId, note })
       return true
     },
+    taskList: (filter) => {
+      const tasks = s.ledger.list(filter)
+      const titles = new Map<string, string>()
+      for (const n of board.nodes.values()) titles.set(n.id, n.data.title)
+      return { text: formatTasks(tasks, s.ledger.data.tasks, titles), tasks }
+    },
+    taskCreate: (input, by) => {
+      if (input?.owner && !board.nodes.has(input.owner)) return { ok: false, error: `no card ${input.owner}` }
+      const r = s.ledger.create(input, by)
+      if (r.ok && r.task.owner) s.ledger.cardStopped(board, r.task.owner) // handed back later unless the card is (or comes) alive
+      return toApiResult(r)
+    },
+    taskClaim: (id, agentId, self) => {
+      const cardId = agentId ?? self
+      if (!cardId) return { ok: false, error: 'agent_id required' }
+      if (!board.nodes.has(cardId)) return { ok: false, error: `no card ${cardId}` }
+      const r = s.ledger.claim(id, cardId, liveCards(board))
+      if (r.ok) s.ledger.cardStopped(board, cardId) // a claim for a dead card is handed back after the grace period
+      return toApiResult(r)
+    },
+    taskUpdate: (id, patch, by) => {
+      if (patch.owner && !board.nodes.has(patch.owner)) return { ok: false, error: `no card ${patch.owner}` }
+      return toApiResult(s.ledger.update(id, patch, by))
+    },
     listHandoffs: () =>
       board.edges.map((e) => ({
         id: e.id,
@@ -297,7 +334,6 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       return query ? { ...l, roles: filterRoles(l.roles, query) } : l
     },
     createAgent: async (input) => {
-      const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
       const parentId = input.created_by && board.nodes.has(input.created_by) ? input.created_by : undefined
       let cwd = input.cwd || board.projectRoot || app.getPath('home')
       // a specialist role: its file is the system prompt, the caller's own role_prompt follows it
@@ -658,7 +694,8 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
     evidence: async (cwd) => {
       const c = await getChanges(cwd)
       return c.repo ? { branch: c.branch, added: c.added, removed: c.deleted, files: c.files.length } : undefined
-    }
+    },
+    tasks: () => s.ledger.data.tasks
   }
 }
 
@@ -779,6 +816,14 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     initialProject,
     api: null as unknown as ApiHandlers,
     autonomy: null as unknown as Autonomy,
+    ledger: new Ledger((data) => {
+      if (!board.projectRoot) return
+      try {
+        saveLedger(board.projectRoot, data)
+      } catch (err) {
+        log(`[ledger] save failed: ${(err as Error).message}`)
+      }
+    }),
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
     selectedNodeId: null,
@@ -788,6 +833,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     },
     dispose() {
       s.autonomy.dispose()
+      s.ledger.dispose()
       for (const id of board.nodes.keys()) {
         ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
@@ -800,6 +846,8 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
+  s.ledger.attach(board)
+  s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   board.on('status', (p: AgentStatusPayload) => {
     sendToRenderer(s, IPC.agentStatus, p)
     if (p.status === 'needs-you') notifyNeedsYou(ctx, s, p)
@@ -900,7 +948,11 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
   ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
     ptys.kill(nodeId)
-    sessionOf(e)?.board.setPtyAlive(nodeId, false)
+    const s = sessionOf(e)
+    if (!s) return
+    s.board.setPtyAlive(nodeId, false)
+    // an explicit kill reports no exit: the ledger hears about it here (a restart spawns again before the grace period ends)
+    if (s.board.nodes.has(nodeId)) s.ledger.cardStopped(s.board, nodeId)
   })
 
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
@@ -969,11 +1021,21 @@ export function registerIpc(ctx: MainContext): void {
       other.win.focus()
       return { workspace: null, projectRoot, alreadyOpen: true }
     }
+    s?.ledger.flush() // the previous project's pending ledger write goes to its own file first
     if (s) s.board.projectRoot = projectRoot
     store.pushRecent(projectRoot)
-    return { workspace: loadWorkspace(projectRoot), projectRoot }
+    const workspace = loadWorkspace(projectRoot)
+    s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
+    return { workspace, projectRoot }
   })
-  ipcMain.handle(IPC.workspaceSave, (_e, ws: Workspace) => saveWorkspace(ws))
+  ipcMain.handle(IPC.workspaceSave, (e, ws: Workspace) => {
+    // the renderer never carries the ledger: main's copy goes into every save. A save for a project this window has
+    // already left (an autosave in flight during a switch) is dropped rather than written with the new project's tasks.
+    const s = sessionOf(e)
+    if (!s) return saveWorkspace(ws)
+    if (!s.board.projectRoot || !samePath(ws.projectRoot, s.board.projectRoot)) return
+    saveWorkspace({ ...ws, tasks: s.ledger.data.tasks, nextTaskId: s.ledger.data.nextTaskId })
+  })
   ipcMain.handle(IPC.projectOpen, async (e) => {
     const win = sessionOf(e)?.win
     const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Open project folder' }
@@ -1026,6 +1088,10 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.rolesList, (_e, cwd: string) => ctx.roles.list(typeof cwd === 'string' ? cwd : ''))
   ipcMain.handle(IPC.rolesFetch, () => ctx.roles.fetch())
   ipcMain.handle(IPC.rolesRead, (_e, cwd: string, id: string) => (typeof id === 'string' ? ctx.roles.prompt(typeof cwd === 'string' ? cwd : '', id) : undefined))
+  // the owner's Tasks tab: the same ledger the task_* tools use, with the owner as the actor
+  ipcMain.handle(IPC.tasksList, (e) => sessionOf(e)?.ledger.list({ all: true }) ?? [])
+  ipcMain.handle(IPC.tasksCreate, (e, input: TaskInput) => sessionOf(e)?.api.taskCreate(input, OWNER) ?? { ok: false, error: 'no window' })
+  ipcMain.handle(IPC.tasksUpdate, (e, id: string, patch: TaskPatch) => sessionOf(e)?.api.taskUpdate(String(id), patch ?? {}, OWNER) ?? { ok: false, error: 'no window' })
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
   ipcMain.handle(IPC.filesPasteClipboard, async (_e, saveImage = true): Promise<{ path?: string; text?: string; image?: boolean }> => {

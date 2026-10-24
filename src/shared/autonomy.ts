@@ -1,4 +1,5 @@
 import type { AgentSnapshot } from './types'
+import { summarizeTasks, type Task } from './ledger'
 
 /**
  * Autonomous mode ("Governor-lite"): the board keeps working for hours while the owner sleeps or is out.
@@ -250,11 +251,11 @@ export function autonomyBrief(until: number, maxDispatches: number): string {
   const hhmm = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`
   return [
     `AUTONOMOUS MODE is on until ${hhmm}. The owner is away and will not answer until then; the app enforces the rails, you keep the work moving.`,
-    '- Never wait for the owner. A card that asks a question or needs a permission is parked by the app (its report line says "needs input"): note it in the Pipeline note under "Waiting on you", do not answer for the owner, and move on to work that does not depend on it. If everything left depends on the owner, say so in one reply and stop; the run ends on its own.',
+    '- Never wait for the owner. A card that asks a question or needs a permission is parked by the app (its report line says "needs input"): mark its task blocked with the reason (task_update), do not answer for the owner, and move on to work that does not depend on it. If everything left depends on the owner, say so in one reply and stop; the run ends on its own.',
     '- Human gates stay gates: no push, merge, deploy, production data change or spend; those are refused by the app anyway. Prepare them (branch, commands, rollback) and list them for the morning.',
     `- Caps: ${maxDispatches} new cards for the whole run, a role may be re-made 3 times; reuse cards by title. A card silent too long is nudged once, then parked.`,
     '- Every stage must leave evidence: a branch and commit on its own worktree, tests run, a diff you reviewed with get_changes. "Tests green" is not "done": say what was verified and what was not.',
-    '- When the run ends you get no more turns; keep the Pipeline note current after every event so the morning report (built by the app from the log and the board) and the note agree.'
+    '- When the run ends you get no more turns; keep the task ledger current after every event (task_update: done with the result, blocked with the reason) so the morning report, which the app builds from the ledger, the log and the board, says what you know.'
   ].join('\n')
 }
 
@@ -267,7 +268,7 @@ const firstLine = (s: string | undefined): string => (s ?? '').split('\n').find(
 // titles, reasons and branch names come from cards (a Conductor names cards and can rename them): no card gets to add
 // its own rows, sections or list items to the report
 const oneLine = (s: string | undefined): string => (s ?? '').replace(/[\r\n]+/g, ' ').trim()
-const cell = (s: string | undefined): string => oneLine(s).replace(/\|/g, '\\|')
+const cell = (s: string | undefined): string => oneLine(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 /** The last events kept in the report; the JSONL log has every one. */
 const TIMELINE_MAX = 300
 
@@ -281,9 +282,10 @@ export interface CardEvidence {
 /**
  * The morning report: what waits on the owner first, then every card's outcome with its evidence
  * (branch, diff size, last reply line), the denials and stalls, the caps, and the timeline. Built from
- * the event log and the board, never from a card's own claims.
+ * the event log and the board; the Tasks table is what the cards recorded in the ledger and is marked as such.
  */
-export function reportMarkdown(state: RunState, events: RunEvent[], agents: AgentSnapshot[], evidence: Record<string, CardEvidence> = {}): string {
+export function reportMarkdown(state: RunState, events: RunEvent[], agents: AgentSnapshot[], evidence: Record<string, CardEvidence> = {}, tasks: Task[] = []): string {
+  const titleOf = (id: string | undefined): string => (id ? (agents.find((a) => a.id === id)?.title ?? id) : '—')
   const end = state.stopped?.at ?? Date.now()
   const lines: string[] = []
   lines.push(`# Autonomous run · ${new Date(state.startedAt).toLocaleDateString()} ${hhmm(state.startedAt)} → ${hhmm(end)} (${mins(end - state.startedAt)})`)
@@ -292,9 +294,23 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   lines.push('')
   const parked = Object.entries(state.parked)
   lines.push('## Waiting on you')
-  if (parked.length === 0) lines.push('Nothing. No card asked a question or hit a wall.')
-  else for (const [id, p] of parked) lines.push(`- **${oneLine(p.title)}** (${id}) since ${hhmm(p.at)}: ${oneLine(p.reason)}`)
+  const blocked = tasks.filter((t) => t.state === 'blocked')
+  if (parked.length === 0 && blocked.length === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
+  for (const t of blocked) lines.push(`- Task **${t.id} ${oneLine(t.title)}**${t.owner ? ` (${oneLine(titleOf(t.owner))})` : ''}: ${oneLine(t.reason)}`)
+  for (const [id, p] of parked) lines.push(`- **${oneLine(p.title)}** (${id}) since ${hhmm(p.at)}: ${oneLine(p.reason)}`)
   lines.push('')
+  if (tasks.length) {
+    const c = summarizeTasks(tasks)
+    lines.push(`## Tasks · ${c.done} done · ${c.doing} doing · ${c.blocked} blocked · ${c.todo} to do${c.dropped ? ` · ${c.dropped} dropped` : ''}`)
+    lines.push('As the Conductor and its cards recorded it; rows the owner changed say *by owner*.', '')
+    lines.push('| Task | State | Owner | Result / reason |')
+    lines.push('|---|---|---|---|')
+    for (const t of tasks) {
+      if (t.state === 'dropped') continue
+      lines.push(`| ${t.id} ${cell(t.title)} | ${t.state}${t.updatedBy === 'owner' ? ' *by owner*' : ''} | ${cell(titleOf(t.owner))} | ${cell(firstLine(t.state === 'done' ? t.result : t.reason)) || '—'} |`)
+    }
+    lines.push('')
+  }
   lines.push('## Cards')
   lines.push('| Card | Status | Evidence | Last reply |')
   lines.push('|---|---|---|---|')

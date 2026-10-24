@@ -4,6 +4,7 @@ import type { AgentStatusPayload } from '@shared/protocol'
 import type { AgentSnapshot, ClaudeOptions, HookEvent, NodeData } from '@shared/types'
 import { LIMIT_PROMPT, LIMIT_RETRY_MINUTES, NUDGE_PROMPT, RESUME_PROMPT, START_GRACE_MINUTES, autonomyBrief, autonomyDispatchRefusal, autonomyRetryRefusal, autonomySettingsFragment, endsEarly, isUsageLimit, newRunState, relaunchAction, reportMarkdown, stallActions, staleStarting, type AutonomyConfig, type AutonomyPublic, type CardEvidence, type RunEvent, type RunState } from '@shared/autonomy'
 import type { Board } from './board'
+import type { Task } from '@shared/ledger'
 
 export type { AutonomyPublic }
 
@@ -26,6 +27,8 @@ export interface AutonomyHost {
   dir: string
   /** Uncommitted-changes summary for a folder, for the report's evidence column. */
   evidence(cwd: string): Promise<CardEvidence | undefined>
+  /** The task ledger, for the report's Tasks section and the blocked tasks under "Waiting on you". */
+  tasks?(): Task[]
   now?: () => number
 }
 
@@ -132,7 +135,8 @@ export class Autonomy {
     this.resumePending.clear()
     this.record({ kind: 'stop', detail: reason })
     const agents = this.host.agents()
-    let saveError = this.writeReport(reportMarkdown(s, this.events, agents))
+    const tasks = this.host.tasks?.() ?? []
+    let saveError = this.writeReport(reportMarkdown(s, this.events, agents, {}, tasks))
     this.ended = { at: s.stopped.at, reason, reportPath: this.reportPath }
     this.host.changed(this.public())
     if (opts.quick) return this.public()
@@ -144,7 +148,7 @@ export class Autonomy {
       const ev = await this.host.evidence(cwd).catch(() => undefined)
       if (ev) evidence[a.id] = ev
     }
-    const md = reportMarkdown(s, this.events, agents, evidence)
+    const md = reportMarkdown(s, this.events, agents, evidence, tasks)
     saveError = this.writeReport(md)
     this.host.addNote('Morning report', `${md}\n\n_${saveError ? `Could not save the report file (${saveError}); this note is the only copy` : `Saved at ${this.reportPath}`}_`)
     this.host.toast('Autonomous run ended', `${reason}. ${Object.keys(s.parked).length} waiting on you; the report is on the canvas${saveError ? ' (file not saved)' : ''}.`)

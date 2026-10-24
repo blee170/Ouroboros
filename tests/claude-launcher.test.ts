@@ -94,6 +94,7 @@ describe('prepareLaunch', () => {
     expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('Conductor')
     expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('create_checkpoint')
     expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('list_roles')
+    expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('task_create / task_claim / task_update / task_list')
     const cfg = JSON.parse(readFileSync(cond.mcpConfigPath!, 'utf8')) as { mcpServers: Record<string, { command: string }> }
     expect(Object.keys(cfg.mcpServers).sort()).toEqual(['aside', 'ouroboros'])
     expect(cfg.mcpServers.ouroboros.command).toBe('/el') // no nodeBin given -> electron-as-node fallback

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import type { AgentStatus } from '@shared/types'
+import { summarizeTasks } from '@shared/ledger'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
@@ -34,6 +35,9 @@ export function StatusBar() {
   const justSaved = Boolean(savedAt && Date.now() - savedAt < 4000)
   const upd = useBoard((s) => s.updateStatus)
   const usage = useBoard((s) => s.usage)
+  const tasks = useBoard((s) => s.tasks)
+  const showRpanel = useBoard((s) => s.showRpanel)
+  const taskCounts = useMemo(() => summarizeTasks(tasks), [tasks])
 
   // the same cards in the same order as the sidebar: a card with no status yet counts as starting, and
   // "the first" card of a state is the first row there
@@ -85,6 +89,18 @@ export function StatusBar() {
         </button>
       )}
       <span className="spacer" />
+      {(taskCounts.doing > 0 || taskCounts.blocked > 0 || taskCounts.todo > 0) && (
+        <button className={`ghost${taskCounts.blocked ? ' ctx-chip' : ''}`} onClick={() => showRpanel('tasks')} title={`Task ledger: ${taskCounts.todo} to do, ${taskCounts.doing} doing, ${taskCounts.blocked} blocked, ${taskCounts.done} done. Click to open the Tasks tab.`}>
+          <Icon name="tasks" size={12} />
+          <span className="n">{taskCounts.doing}</span> doing
+          {taskCounts.blocked > 0 && (
+            <>
+              {' · '}
+              <span className="n">{taskCounts.blocked}</span> need you
+            </>
+          )}
+        </button>
+      )}
       {hot.length > 0 && (
         <button className="ghost ctx-chip" onClick={() => jumpToNode(hot[0].id)} title={`Context nearly full: ${hot.map((h) => `${h.title} ${h.pct}%`).join(', ')}. Ask the card to /compact, or start a fresh card. Click to jump to the fullest.`}>
           <Icon name="gauge" size={12} />

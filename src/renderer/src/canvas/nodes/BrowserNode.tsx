@@ -40,6 +40,22 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   // the webview's src is set once: every navigation writes the new URL into data.url, and re-setting
   // src to the page the webview is already on makes Electron load it a second time
   const [initialSrc] = useState(data.url ?? 'https://www.google.com')
+  // the last URL this card wrote into data.url itself; a data.url that differs came from outside (main
+  // pointing the Briefs card at a new brief while its page was not ready) and is loaded here
+  const ownUrl = useRef(data.url)
+  // a URL that arrived before the webview could take it (Electron throws synchronously until the guest is attached)
+  const pendingUrl = useRef<string | null>(null)
+  useEffect(() => {
+    const u = data.url
+    if (!u || u === ownUrl.current) return
+    ownUrl.current = u
+    setAddress(u)
+    try {
+      ref.current?.loadURL(u).catch(() => undefined)
+    } catch {
+      pendingUrl.current = u
+    }
+  }, [data.url])
   const [ready, setReady] = useState(false)
   const [pageTitle, setPageTitle] = useState('')
   const [bmOpen, setBmOpen] = useState(false)
@@ -74,9 +90,15 @@ function BrowserNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     const onReady = (): void => {
       setReady(true)
       api.browser.register(id, el.getWebContentsId())
+      const pending = pendingUrl.current
+      if (pending) {
+        pendingUrl.current = null
+        el.loadURL(pending).catch(() => undefined)
+      }
     }
     const onNav = (): void => {
       const u = el.getURL()
+      ownUrl.current = u
       setAddress(u)
       updateNodeData(id, { url: u })
     }

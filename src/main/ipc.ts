@@ -10,8 +10,8 @@ import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTempla
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
-import type { Board } from './board'
-import { findBriefUrl } from './briefs'
+import type { Board, NodeMeta } from './board'
+import { findBriefUrl, urlKey } from './briefs'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
@@ -699,8 +699,6 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
   }
 }
 
-const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
-
 /** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
 function browserShowing(ctx: MainContext, board: Board, url: string): string | undefined {
   const key = urlKey(url)
@@ -712,8 +710,24 @@ function browserShowing(ctx: MainContext, board: Board, url: string): string | u
   return undefined
 }
 
+const BRIEFS_TITLE = '📄 Briefs'
+const briefsCard = (board: Board): NodeMeta | undefined => [...board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === BRIEFS_TITLE)
+
+/** One brief open at a time per window: two Stop events in the same second must not both create the card. */
+const briefOpens = new WeakMap<WindowSession, Promise<void>>()
+/** A page that never finishes loading must not hold the window's briefs queue (loadURL settles only on finish/fail). */
+const BRIEF_STEP_MS = 15_000
+
 /** Show a brief (claude.ai artifact, report URL) in the window's "📄 Briefs" browser card, created on first use. */
-async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+  const run = (briefOpens.get(s) ?? Promise.resolve())
+    .then(() => Promise.race([openBriefNow(ctx, s, url), new Promise<void>((r) => setTimeout(r, BRIEF_STEP_MS))]))
+    .catch((e) => console.warn('[briefs] open failed', url, e))
+  briefOpens.set(s, run)
+  return run
+}
+
+async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
   // Briefs stay on the canvas. Only when the owner turned the setting on (claude.ai refusing to sign in
   // inside the card, which its ↗ button also works around per page) do claude.ai links go to the system browser.
   if (/^https:\/\/claude\.ai\//.test(url) && ctx.store.getSettings().claudeLinksExternal === true) {
@@ -722,9 +736,30 @@ async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promi
   }
   // a card already on that page (the Conductor's own browser_open, say) is enough: no second copy
   if (browserShowing(ctx, s.board, url)) return
-  const existing = [...s.board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
-  if (existing && ctx.browsers.has(existing.id)) await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
-  else await s.api.browser.create({ url, title: '📄 Briefs' })
+  const existing = briefsCard(s.board)
+  if (!existing) {
+    const { id } = await s.api.browser.create({ url, title: BRIEFS_TITLE })
+    // create returns at dom-ready; the card reaches main's board on the renderer's next (debounced) sync,
+    // and the next queued brief must find it there
+    for (let i = 0; i < 20 && !s.board.nodes.has(id); i++) await new Promise((r) => setTimeout(r, 100))
+    return
+  }
+  // The card is there but its page has not registered (still loading, stuck on claude.ai sign-in, crashed,
+  // restored from the board file a moment ago): wait for it rather than open a second Briefs card.
+  for (let i = 0; i < 40 && !ctx.browsers.has(existing.id) && s.board.nodes.has(existing.id); i++) await new Promise((r) => setTimeout(r, 250))
+  if (!s.board.nodes.has(existing.id)) {
+    await s.api.browser.create({ url, title: BRIEFS_TITLE })
+    return
+  }
+  if (ctx.browsers.has(existing.id)) {
+    await ctx.browsers.navigate(existing.id, url).catch((e) => console.warn('[briefs] navigate failed', url, e))
+    return
+  }
+  // never came up: point the card at the brief and let the renderer load it when it can
+  // (re-read: a board sync during the wait replaces main's node objects)
+  const node = s.board.nodes.get(existing.id)
+  if (node) node.data.url = url
+  sendToRenderer(s, IPC.boardUpdateNode, { nodeId: existing.id, data: { url }, restart: false })
 }
 
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
@@ -768,9 +803,9 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
     if (!found) return
     const { url, inMessage } = found
     // a link that is only in the scrollback was handled when it first appeared
-    if (!inMessage && src.data.lastBriefUrl === url) return
-    if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
-    lastOpened.set(url, Date.now())
+    if (!inMessage && src.data.lastBriefUrl && urlKey(src.data.lastBriefUrl) === urlKey(url)) return
+    if (Date.now() - (lastOpened.get(urlKey(url)) ?? 0) < 60_000) return
+    lastOpened.set(urlKey(url), Date.now())
     // remembered on the card and on every conductor so the owner can reopen it with the 📄 button
     for (const n of board.nodes.values()) {
       if (n.id !== nodeId && n.data.kind !== 'conductor') continue

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
@@ -138,7 +138,20 @@ function TaskDetails({ task, creator, onSave }: { task: Task; creator: string; o
   const [detail, setDetail] = useState(task.detail ?? '')
   const [reason, setReason] = useState(task.reason ?? '')
   const [result, setResult] = useState(task.result ?? '')
-  const dirty = detail !== (task.detail ?? '') || reason !== (task.reason ?? '') || result !== (task.result ?? '')
+  // a card changed the task while the row was open: show its values rather than overwrite them on Save
+  useEffect(() => {
+    setDetail(task.detail ?? '')
+    setReason(task.reason ?? '')
+    setResult(task.result ?? '')
+  }, [task.updatedAt, task.detail, task.reason, task.result])
+  const edited = (): { detail?: string; reason?: string; result?: string } => {
+    const p: { detail?: string; reason?: string; result?: string } = {}
+    if (detail !== (task.detail ?? '')) p.detail = detail
+    if (reason !== (task.reason ?? '')) p.reason = reason
+    if (result !== (task.result ?? '')) p.result = result
+    return p
+  }
+  const dirty = Object.keys(edited()).length > 0
   return (
     <div className="task-details">
       <label>
@@ -155,11 +168,11 @@ function TaskDetails({ task, creator, onSave }: { task: Task; creator: string; o
       </label>
       <div className="row right">
         {task.state !== 'done' && (
-          <button className="btn small" onClick={() => void onSave({ detail, reason, result: result.trim() || 'done by owner', state: 'done' })}>
+          <button className="btn small" onClick={() => void onSave({ ...edited(), result: result.trim() || task.result || 'done by owner', state: 'done' })}>
             <Icon name="check" size={12} /> Mark done
           </button>
         )}
-        <button className="btn small primary" disabled={!dirty} onClick={() => void onSave({ detail, reason, result })}>
+        <button className="btn small primary" disabled={!dirty} onClick={() => void onSave(edited())}>
           Save
         </button>
       </div>

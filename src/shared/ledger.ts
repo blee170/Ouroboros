@@ -30,6 +30,8 @@ export interface Task {
   result?: string
   /** Card id, or `owner` for the human. */
   createdBy: string
+  /** who last changed it: a card id, or `owner` for the Tasks tab (the owner's own edits are the trust signal) */
+  updatedBy?: string
   createdAt: number
   updatedAt: number
 }
@@ -73,25 +75,35 @@ export type LedgerApiResult = { ok: true; task: Task } | { ok: false; error: str
 export const toApiResult = (r: LedgerResult): LedgerApiResult => (r.ok ? { ok: true, task: r.task } : r)
 
 export const MAX_TASKS = 500
+/** at most this many tasks are read back from a board file */
+export const MAX_STORED = 1000
+export const MAX_DEPS = 50
+const MAX_ID = 999_999
+/** task_list shows at most this many tasks; the rest are a count */
+export const LIST_MAX = 100
 export const TITLE_MAX = 120
 export const DETAIL_MAX = 2000
 export const REASON_MAX = 300
 export const RESULT_MAX = 2000
 export const OWNER = 'owner'
 
+// control, C1, bidi, zero-width, soft-hyphen, Hangul fillers, variation selectors and Unicode tag characters: a model reads
+// them as text while the owner sees nothing, so they never reach prompts or the report
 // eslint-disable-next-line no-control-regex
-const UNSAFE_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮⁦-⁩]/g
+const UNSAFE_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/gu
+/** Unicode line and paragraph separators and NEL: a line break like any other */
+const ODD_BREAKS = /[\u0085\u2028\u2029]/g
 
 export const emptyLedger = (): LedgerData => ({ tasks: [], nextTaskId: 1 })
 
 /** One line, no control or bidi characters, bounded. */
 export function cleanLine(s: unknown, max: number): string {
-  return String(s ?? '').replace(UNSAFE_TEXT, '').replace(/\s*\r?\n\s*/g, ' ').trim().slice(0, max)
+  return String(s ?? '').replace(ODD_BREAKS, '\n').replace(UNSAFE_TEXT, '').replace(/\s*\r?\n\s*/g, ' ').trim().slice(0, max)
 }
 
 /** Several lines allowed, no control or bidi characters, bounded. */
 export function cleanText(s: unknown, max: number): string {
-  return String(s ?? '').replace(UNSAFE_TEXT, '').replace(/\r\n?/g, '\n').trim().slice(0, max)
+  return String(s ?? '').replace(ODD_BREAKS, '\n').replace(UNSAFE_TEXT, '').replace(/\r\n?/g, '\n').trim().slice(0, max)
 }
 
 const ID_RE = /^T\d{1,6}$/
@@ -108,6 +120,7 @@ function findTask(data: LedgerData, id: string): Task | undefined {
 function checkDeps(data: LedgerData, id: string | undefined, deps: unknown): { ok: true; deps: string[] } | { ok: false; error: string } {
   if (deps === undefined) return { ok: true, deps: [] }
   if (!Array.isArray(deps)) return { ok: false, error: 'deps must be a list of task ids' }
+  if (deps.length > MAX_DEPS) return { ok: false, error: `at most ${MAX_DEPS} deps` }
   const out: string[] = []
   for (const d of deps) {
     if (typeof d !== 'string' || !ID_RE.test(d)) return { ok: false, error: `bad task id in deps: ${cleanLine(d, 20)}` }
@@ -152,18 +165,22 @@ function replace(data: LedgerData, task: Task): LedgerData {
 export function createTask(data: LedgerData, input: TaskInput, by: string, now = Date.now()): LedgerResult {
   const title = cleanLine(input?.title, TITLE_MAX)
   if (!title) return { ok: false, error: 'title required' }
-  if (data.tasks.length >= MAX_TASKS) return { ok: false, error: `the ledger holds at most ${MAX_TASKS} tasks; drop or finish some first` }
+  if (data.nextTaskId > MAX_ID) return { ok: false, error: 'the ledger has run out of ids' }
+  if (openCount(data) >= MAX_TASKS) return { ok: false, error: `the ledger holds at most ${MAX_TASKS} open tasks; finish or drop some first` }
   const parent = checkParent(data, undefined, input.parent)
   if (!parent.ok) return parent
   const deps = checkDeps(data, undefined, input.deps)
   if (!deps.ok) return deps
   const id = `T${data.nextTaskId}`
-  const task: Task = { id, title, state: 'todo', deps: deps.deps, createdBy: cleanLine(by, 80) || OWNER, createdAt: now, updatedAt: now }
+  const actor = cleanLine(by, 80) || OWNER
+  const task: Task = { id, title, state: 'todo', deps: deps.deps, createdBy: actor, updatedBy: actor, createdAt: now, updatedAt: now }
   const detail = cleanText(input.detail, DETAIL_MAX)
   if (detail) task.detail = detail
   if (parent.parent) task.parent = parent.parent
   const owner = cleanLine(input.owner, 80)
   if (owner) {
+    const unmet = task.deps.filter((d) => findTask(data, d)?.state !== 'done')
+    if (unmet.length) return { ok: false, error: `cannot start it: waits for ${unmet.join(', ')} (not done)` }
     task.owner = owner
     task.state = 'doing'
   }
@@ -185,7 +202,7 @@ export function claimTask(data: LedgerData, id: string, cardId: string, liveCard
   if (task.owner && task.owner !== cardId && liveCards.has(task.owner)) {
     return { ok: false, error: `${id} is owned by a live card (${task.owner}); task_update owner= reassigns it` }
   }
-  const next: Task = { ...task, owner: cardId, state: 'doing', updatedAt: now }
+  const next: Task = { ...task, owner: cardId, state: 'doing', updatedBy: cardId, updatedAt: now }
   delete next.reason
   return { ok: true, task: next, data: replace(data, next) }
 }
@@ -193,7 +210,7 @@ export function claimTask(data: LedgerData, id: string, cardId: string, liveCard
 export function updateTask(data: LedgerData, id: string, patch: TaskPatch, by: string, now = Date.now()): LedgerResult {
   const task = findTask(data, id)
   if (!task) return { ok: false, error: `no task ${cleanLine(id, 20)}` }
-  const next: Task = { ...task, deps: [...task.deps], updatedAt: now }
+  const next: Task = { ...task, deps: [...task.deps], updatedBy: cleanLine(by, 80) || OWNER, updatedAt: now }
   if (patch.title !== undefined) {
     const title = cleanLine(patch.title, TITLE_MAX)
     if (!title) return { ok: false, error: 'title required' }
@@ -244,6 +261,7 @@ export function updateTask(data: LedgerData, id: string, patch: TaskPatch, by: s
     next.state = 'doing'
   }
   if (next.state === 'done' || next.state === 'dropped') delete next.owner
+  if (next.state === 'doing' && !next.owner) next.state = 'todo' // owner= cleared on a doing task
   return { ok: true, task: next, data: replace(data, next) }
 }
 
@@ -278,6 +296,10 @@ export interface TaskCounts {
   dropped: number
 }
 
+function openCount(data: LedgerData): number {
+  return data.tasks.filter((t) => t.state !== 'done' && t.state !== 'dropped').length
+}
+
 export function summarizeTasks(tasks: Task[]): TaskCounts {
   const c: TaskCounts = { todo: 0, doing: 0, blocked: 0, done: 0, dropped: 0 }
   for (const t of tasks) c[t.state]++
@@ -290,9 +312,10 @@ export function formatTasks(tasks: Task[], all: Task[], titles: ReadonlyMap<stri
   const head = `${all.length} tasks: ${c.todo} todo · ${c.doing} doing · ${c.blocked} blocked · ${c.done} done · ${c.dropped} dropped`
   if (tasks.length === 0) return `${head}\n(none match; task_list all=true shows done and dropped ones)`
   const lines = [head]
-  for (const t of tasks) {
+  for (const t of tasks.slice(0, LIST_MAX)) {
     const bits = [`${t.id} [${t.state}] ${t.title}`]
-    if (t.owner) bits.push(`owner: ${titles.get(t.owner) ?? t.owner}`)
+    if (t.owner) bits.push(`owner: ${cleanLine(titles.get(t.owner) ?? t.owner, 80)}`)
+    if (t.updatedBy === OWNER) bits.push('by owner')
     if (t.parent) bits.push(`parent: ${t.parent}`)
     if (t.deps.length) bits.push(`deps: ${t.deps.join(', ')}`)
     lines.push(bits.join(' · '))
@@ -300,6 +323,7 @@ export function formatTasks(tasks: Task[], all: Task[], titles: ReadonlyMap<stri
     if (t.reason) lines.push(`    reason: ${t.reason}`)
     if (t.result) lines.push(`    result: ${cleanLine(t.result, 200)}`)
   }
+  if (tasks.length > LIST_MAX) lines.push(`… ${tasks.length - LIST_MAX} more (filter by state, owner or parent)`)
   return lines.join('\n')
 }
 
@@ -322,6 +346,7 @@ export function sanitizeLedger(raw: unknown): LedgerData {
       state,
       deps: Array.isArray(x.deps) ? (x.deps as unknown[]).filter((d): d is string => typeof d === 'string' && ID_RE.test(d) && d !== id) : [],
       createdBy: cleanLine(x.createdBy, 80) || OWNER,
+      updatedBy: cleanLine(x.updatedBy, 80) || undefined,
       createdAt: typeof x.createdAt === 'number' ? x.createdAt : 0,
       updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : 0
     }
@@ -337,13 +362,14 @@ export function sanitizeLedger(raw: unknown): LedgerData {
     seen.add(id)
     max = Math.max(max, taskNumber(id))
     out.tasks.push(t)
-    if (out.tasks.length >= MAX_TASKS) break
+    if (out.tasks.length >= MAX_STORED) break
   }
   // references to tasks that were dropped as malformed
   for (const t of out.tasks) {
     t.deps = t.deps.filter((d) => seen.has(d))
     if (t.parent && !seen.has(t.parent)) delete t.parent
   }
-  out.nextTaskId = Math.max(typeof r.nextTaskId === 'number' && r.nextTaskId > max ? Math.floor(r.nextTaskId) : 0, max + 1)
+  const stored = typeof r.nextTaskId === 'number' && Number.isSafeInteger(r.nextTaskId) ? r.nextTaskId : 0
+  out.nextTaskId = Math.min(Math.max(stored, max + 1), MAX_ID + 1)
   return out
 }

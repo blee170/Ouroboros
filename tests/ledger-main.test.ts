@@ -55,6 +55,7 @@ describe('Ledger (main)', () => {
     // c2 ends and comes back within the grace period: keeps its task
     b.setStatus('c2', { status: 'ended' })
     vi.advanceTimersByTime(RELEASE_GRACE_MS / 2)
+    b.setPtyAlive('c2', true) // a relaunch: the process is back before the status says starting
     b.setStatus('c2', { status: 'starting' })
     vi.advanceTimersByTime(RELEASE_GRACE_MS)
     expect(l.get('T2')).toMatchObject({ state: 'doing', owner: 'c2' })
@@ -64,6 +65,15 @@ describe('Ledger (main)', () => {
     vi.advanceTimersByTime(RELEASE_GRACE_MS + 1)
     expect(l.get('T1')).toMatchObject({ state: 'todo', reason: 'card 🛠 Implementer ended before it finished' })
     expect(l.get('T1')?.owner).toBeUndefined()
+    // Claude exits inside a shell that stays open: the process is alive but the card is ended, so the task is released
+    l.claim('T1', 'c1', new Set(['c1']))
+    b.setPtyAlive('c1', true)
+    b.setStatus('c1', { status: 'ended' })
+    b.setStatus('c1', { status: 'working' }) // a stray hook after the end does not cancel the hand-back
+    b.setStatus('c1', { status: 'ended' })
+    vi.advanceTimersByTime(RELEASE_GRACE_MS + 1)
+    expect(l.get('T1')?.state).toBe('todo')
+    b.setPtyAlive('c1', false)
     // an explicit kill (no status event) that is followed by a respawn keeps the task; one that is not releases it
     l.cardStopped(b, 'c2')
     b.setPtyAlive('c2', true)
@@ -78,6 +88,10 @@ describe('Ledger (main)', () => {
     expect(l.release('c2', 'Other')).toEqual(['T2'])
     expect(l.get('T2')?.state).toBe('todo')
     expect(l.release('c2', 'Other')).toEqual([])
+    // a ledger loaded from the board file: doing tasks of cards that never come up are handed back
+    l.load({ tasks: [{ id: 'T7', title: 'restored', state: 'doing', owner: 'c1', deps: [] }], nextTaskId: 8 })
+    vi.advanceTimersByTime(RELEASE_GRACE_MS + 1)
+    expect(l.get('T7')).toMatchObject({ state: 'todo', reason: 'card 🛠 Implementer ended before it finished' })
   })
 })
 

@@ -16,6 +16,7 @@ export class Ledger extends EventEmitter {
   data: LedgerData = emptyLedger()
   private saveTimer?: NodeJS.Timeout
   private releaseTimers = new Map<string, NodeJS.Timeout>()
+  private board?: Board
 
   constructor(
     private save: (data: LedgerData) => void,
@@ -24,24 +25,31 @@ export class Ledger extends EventEmitter {
     super()
   }
 
-  /** Replace the ledger with what the board file holds (a project was opened). Emits, does not save. */
+  /**
+   * Replace the ledger with what the board file holds (a project was opened). Emits, does not save. Doing tasks
+   * come back owned by cards that are not running yet: each gets the grace period, so a card the renderer
+   * relaunches keeps its task and one that stays down hands it back.
+   */
   load(raw: unknown): void {
     this.cancelReleases()
     this.data = sanitizeLedger(raw)
     this.emit('change', this.data.tasks)
+    if (this.board) for (const t of this.data.tasks) if (t.state === 'doing' && t.owner) this.cardStopped(this.board, t.owner)
   }
 
-  /** Release the tasks of cards that end and do not come back; cancel when the card returns (a restart). */
+  /** Release the tasks of cards that end and do not come back. */
   attach(board: Board): void {
+    this.board = board
     board.on('status', (p: AgentStatusPayload) => {
       if (p.status === 'ended') this.cardStopped(board, p.nodeId)
-      else this.cancelRelease(p.nodeId)
     })
   }
 
   /**
-   * A card's process ended (its status, or an explicit kill, which emits no exit): its doing tasks go back to
-   * todo after a grace period unless the card is alive again by then (a restart) or was removed meanwhile.
+   * A card's process ended (its status, an explicit kill, which emits no exit, or a claim for a card that is not
+   * running): its doing tasks go back to todo after a grace period unless the card is alive by then. "Alive" is a
+   * running process whose status is not ended: a relaunch counts, Claude exiting inside a shell that stays open
+   * does not, and a killed card's stale status does not keep its tasks either.
    */
   cardStopped(board: Board, nodeId: string): void {
     if (this.releaseTimers.has(nodeId) || !this.data.tasks.some((t) => t.owner === nodeId && t.state === 'doing')) return
@@ -50,8 +58,8 @@ export class Ledger extends EventEmitter {
       nodeId,
       setTimeout(() => {
         this.releaseTimers.delete(nodeId)
-        // a card whose process is alive again (a restart) keeps its tasks; a killed card's stale status does not count
-        if (board.ptyAlive.has(nodeId)) return
+        const n = board.nodes.get(nodeId)
+        if (n && board.ptyAlive.has(nodeId) && n.data.status !== 'ended') return
         this.release(nodeId, title)
       }, RELEASE_GRACE_MS)
     )

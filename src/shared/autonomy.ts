@@ -268,7 +268,7 @@ const firstLine = (s: string | undefined): string => (s ?? '').split('\n').find(
 // titles, reasons and branch names come from cards (a Conductor names cards and can rename them): no card gets to add
 // its own rows, sections or list items to the report
 const oneLine = (s: string | undefined): string => (s ?? '').replace(/[\r\n]+/g, ' ').trim()
-const cell = (s: string | undefined): string => oneLine(s).replace(/\|/g, '\\|')
+const cell = (s: string | undefined): string => oneLine(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 /** The last events kept in the report; the JSONL log has every one. */
 const TIMELINE_MAX = 300
 
@@ -282,7 +282,7 @@ export interface CardEvidence {
 /**
  * The morning report: what waits on the owner first, then every card's outcome with its evidence
  * (branch, diff size, last reply line), the denials and stalls, the caps, and the timeline. Built from
- * the event log and the board, never from a card's own claims.
+ * the event log and the board; the Tasks table is what the cards recorded in the ledger and is marked as such.
  */
 export function reportMarkdown(state: RunState, events: RunEvent[], agents: AgentSnapshot[], evidence: Record<string, CardEvidence> = {}, tasks: Task[] = []): string {
   const titleOf = (id: string | undefined): string => (id ? (agents.find((a) => a.id === id)?.title ?? id) : '—')
@@ -302,11 +302,12 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   if (tasks.length) {
     const c = summarizeTasks(tasks)
     lines.push(`## Tasks · ${c.done} done · ${c.doing} doing · ${c.blocked} blocked · ${c.todo} to do${c.dropped ? ` · ${c.dropped} dropped` : ''}`)
+    lines.push('As the Conductor and its cards recorded it; rows the owner changed say *by owner*.', '')
     lines.push('| Task | State | Owner | Result / reason |')
     lines.push('|---|---|---|---|')
     for (const t of tasks) {
       if (t.state === 'dropped') continue
-      lines.push(`| ${t.id} ${cell(t.title)} | ${t.state} | ${cell(titleOf(t.owner))} | ${cell(firstLine(t.state === 'done' ? t.result : t.reason)) || '—'} |`)
+      lines.push(`| ${t.id} ${cell(t.title)} | ${t.state}${t.updatedBy === 'owner' ? ' *by owner*' : ''} | ${cell(titleOf(t.owner))} | ${cell(firstLine(t.state === 'done' ? t.result : t.reason)) || '—'} |`)
     }
     lines.push('')
   }

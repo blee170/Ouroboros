@@ -36,6 +36,7 @@ import { log, logPath } from './diagnostics'
 import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
 import { loadWorkspace, saveLedger, saveWorkspace, UserStore } from './workspace-store'
 import { Ledger } from './ledger'
+import { DEFAULT_STALL_MINUTES, newWatchdogState, watchdogReports } from '@shared/watchdog'
 import type { UsageMonitor } from './usage'
 import { OWNER, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
 
@@ -766,6 +767,63 @@ async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Pr
   sendToRenderer(s, IPC.boardUpdateNode, { nodeId: existing.id, data: { url }, restart: false })
 }
 
+/**
+ * Stall watchdog (roadmap D), once a minute outside an autonomous run (which nudges and parks on its own): a card
+ * Working with no hook event, or waiting on a person, for stallMinutes is reported to the Conductor it reports to
+ * (its parent, or a Conductor its auto line feeds); the third report since the card last finished a turn, or a
+ * card with no Conductor, also gets a desktop notification.
+ */
+function installWatchdog(ctx: MainContext, s: WindowSession): void {
+  const state = newWatchdogState()
+  const line = (t: string | undefined, max: number): string => (t ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, max)
+  const timer = setInterval(() => {
+    if (s.win.isDestroyed()) return clearInterval(timer)
+    const minutes = ctx.store.getSettings().stallMinutes ?? DEFAULT_STALL_MINUTES
+    if (s.autonomy.on) {
+      watchdogReports([], state, Date.now(), minutes) // a run starts the count over
+      return
+    }
+    const agents = s.board.snapshot()
+    for (const r of watchdogReports(agents, state, Date.now(), minutes)) {
+      const a = agents.find((x) => x.id === r.id)
+      if (!a) continue
+      const title = line(a.title, 80) || a.id
+      const detail = line(a.statusDetail, 160)
+      const owns = s.ledger.list({ owner: a.id, state: 'doing' }).map((t) => t.id)
+      const ownsText = owns.length ? ` It owns ${owns.join(', ')}.` : ''
+      const detailText = detail ? ` (${detail})` : ''
+      const msg =
+        r.reason === 'silent'
+          ? `[card stalled] ${title}: Working with no activity for ${r.minutes} min${detailText}.${ownsText} Check it with read_output; nudge it with send_prompt, or kill it and dispatch the work again.`
+          : `[card waiting] ${title}: waiting for input for ${r.minutes} min${detailText}.${ownsText} Read the question with read_output, then answer it with send_prompt or ask the owner.`
+      const targets = new Set<string>()
+      const parent = a.parentId ? s.board.nodes.get(a.parentId) : undefined
+      if (parent && parent.data.kind !== 'terminal' && parent.data.kind !== 'command') targets.add(parent.id)
+      for (const e of s.board.edges) {
+        if (e.source !== a.id || e.data.mode !== 'auto') continue
+        if (s.board.nodes.get(e.target)?.data.kind === 'conductor') targets.add(e.target)
+      }
+      let told = false
+      for (const t of targets) if (sendPrompt(ctx, s, t, msg)) told = true
+      log(`[watchdog] ${a.id} ${r.reason} ${r.minutes} min, ${told ? `reported to ${[...targets].join(',')}` : targets.size ? `not delivered to ${[...targets].join(',')}` : 'no conductor'}${r.escalate ? ', escalated' : ''}`)
+      if ((r.escalate || !told) && ctx.store.getSettings().notifications && !viewing(s, a.id) && Notification.isSupported()) {
+        const note = new Notification({
+          title: r.reason === 'silent' ? `${title} looks stuck` : `${title} is still waiting`,
+          body: `${r.reason === 'silent' ? 'Working with no activity' : 'Waiting for input'} for ${r.minutes} min${detail ? ` · ${detail}` : ''}`
+        })
+        note.on('click', () => {
+          if (!s.win.isDestroyed()) {
+            s.win.show()
+            s.win.focus()
+          }
+        })
+        note.show()
+      }
+    }
+  }, 60_000)
+  timer.unref?.()
+}
+
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
 function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession['fireHandoff'] {
   const board = s.board
@@ -885,6 +943,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
+  installWatchdog(ctx, s)
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   board.on('status', (p: AgentStatusPayload) => {

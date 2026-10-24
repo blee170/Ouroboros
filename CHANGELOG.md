@@ -4,7 +4,9 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.7.0] — 2026-10-24
+
+The Orca release: the shell was redrawn after dissecting stablyai/orca (RESEARCH §10). Quiet and monochrome, colour only for state, a sidebar that puts what needs you first.
 
 ### Added
 - **Orca-style shell** (see `docs/RESEARCH.md` §10 for the study of [Orca](https://github.com/stablyai/orca) it comes from). A 36 px **title bar**: sidebar toggle, wordmark, project, *New card* (the button adds the default agent, its arrow lists every kind with the default marked), Build board, Tidy, Arrange, Autonomous mode, Help, Settings and the Inspector toggle as 24 px ghost icons. A 24 px **status bar**: the state counts (*working / need you / ready / idle*, click to jump), the autonomous-run pill, the update badge and the save state. The Roster became a left **sidebar** (280 px, drag the edge to resize): a search row, the project with its counts, one 28 px section per state, card rows with the state glyph, the kind icon, the title, a hover hotkey chip, the state detail, how long ago it last moved and the last reply; workers sit under their Conductor when both are in the same section; the composer stays at the bottom. The Inspector is a 350 px right panel with a 36 px header.
@@ -232,6 +234,7 @@ Merged to `main` as PR #1.
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
 [Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.6.0...HEAD
+[0.7.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.0
 [0.6.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.6.0
 [0.5.1]: https://github.com/blee170/Ouroboros/compare/v0.4.1...v0.6.0
 [0.5.0]: https://github.com/blee170/Ouroboros/compare/v0.4.1...v0.6.0

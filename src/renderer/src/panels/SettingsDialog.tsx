@@ -164,6 +164,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={settings.claudeLinksExternal === true} onChange={(e) => void setSettings({ claudeLinksExternal: e.target.checked })} /> Open claude.ai briefs in the system browser instead of a browser card
           </label>
           <div className="hint">Only if claude.ai refuses to sign in inside the card; the card's open-in-browser button does the same per page.</div>
+          <label className="check">
+            <input type="checkbox" checked={settings.keepEnvApiKey === true} onChange={(e) => void setSettings({ keepEnvApiKey: e.target.checked })} /> Let an ANTHROPIC_API_KEY in the environment override my Claude sign-in
+          </label>
+          <div className="hint">Off: while <code>claude</code> is signed in, Claude cards do not inherit ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (a stale key there makes every turn fail with "Invalid API key"). A key for a gateway (ANTHROPIC_BASE_URL set) and a key set in Claude's own settings or your shell profile are left alone. Takes effect for cards launched after the change.</div>
           <label className="field">
             <span>Browser home</span>
             <div className="ctl">

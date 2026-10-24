@@ -30,8 +30,8 @@ const DEFAULT_MAX_WORKERS = 6
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
 import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
-import { logPath } from './diagnostics'
-import { detectEngines } from './engines'
+import { log, logPath } from './diagnostics'
+import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
 import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
@@ -913,7 +913,12 @@ export function registerIpc(ctx: MainContext): void {
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
       launchFailed.delete(opts.nodeId)
-      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env }))
+      // a stale ANTHROPIC_API_KEY in the owner's environment would beat the sign-in inside every Claude card
+      const login = engine === 'claude' ? claudeLoginFromFiles(claudeConfigDirOf(process.env, homedir()), existsSync, (p) => readFileSync(p, 'utf8')) : false
+      const omitEnv = claudeEnvKeysToStrip(process.env, login, store.getSettings().keepEnvApiKey === true)
+      if (omitEnv.length) log(`claude launch ${opts.nodeId}: ${omitEnv.join(', ')} not passed to the card (signed in; Settings → keep the environment key to change this)`)
+      else if (login === undefined && claudeEnvKeysToStrip(process.env, true, false).length) log(`claude launch ${opts.nodeId}: sign-in files unreadable, environment key kept`)
+      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
       if (prepared.initialPrompt) {

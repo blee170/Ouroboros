@@ -20,6 +20,9 @@ The attention model (RESEARCH §10.2, after Orca): the sidebar tells you what yo
 ### Changed
 - **Quieter toasts**: no toast or voice for the card you are looking at (selected, window focused); one card gets at most one toast per 5 s (a question right after a finish, a run of permission prompts); the Conductor's "needs input" prompt and Autonomous-mode parking are unaffected.
 
+### Fixed
+- **Environment API key no longer beats the sign-in**: Claude Code prefers an `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` from the environment over its own sign-in, so a stale key set system-wide made every Claude card fail each turn with "Invalid API key · Fix external API key" even after `/login`. While `claude` is signed in, Claude cards now launch without those variables (a line in `main.log` says so); the new setting *Let an ANTHROPIC_API_KEY in the environment override my Claude sign-in* passes them through; a key for a gateway (`ANTHROPIC_BASE_URL` not api.anthropic.com) is never dropped, and `CLAUDE_CONFIG_DIR` is honoured when looking for the sign-in. An environment key alone no longer counts as "signed in" on the Welcome screen and in Settings → Engines (Codex and Gemini are unchanged).
+
 ## [0.7.0] — 2026-10-24
 
 The Orca release: the shell was redrawn after dissecting stablyai/orca (RESEARCH §10). Quiet and monochrome, colour only for state, a sidebar that puts what needs you first.

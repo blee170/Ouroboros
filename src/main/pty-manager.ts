@@ -53,7 +53,7 @@ export interface PtyEvents {
 export class PtyManager extends EventEmitter {
   private entries = new Map<string, Entry>()
 
-  spawn(opts: PtySpawnOptions & { env?: Record<string, string> }): void {
+  spawn(opts: PtySpawnOptions & { env?: Record<string, string>; omitEnv?: string[] }): void {
     this.kill(opts.nodeId)
     const shell = opts.shell || defaultShell()
     const kind = shellKind(shell)
@@ -65,6 +65,7 @@ export class PtyManager extends EventEmitter {
       OUROBOROS_NODE_ID: opts.nodeId,
       ...(opts.env ?? {})
     }
+    for (const k of opts.omitEnv ?? []) delete env[k]
     const cols = Math.max(10, opts.cols | 0)
     const rows = Math.max(3, opts.rows | 0)
     log(`pty spawn ${opts.nodeId} shell=${shell} ${cols}x${rows} cwd=${cwd}`)

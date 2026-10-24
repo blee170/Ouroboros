@@ -204,6 +204,8 @@ export interface AppSettings {
   claudeLinksExternal?: boolean
   /** Engine new agent/conductor cards use when none is chosen (claude by default). */
   defaultEngine?: AgentEngine
+  /** Pass an ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the environment into Claude cards even when `claude` is signed in (default false: a signed-in owner's cards use the sign-in). */
+  keepEnvApiKey?: boolean
   /** The first-run guide (? in the toolbar) was shown once; it opens by itself only while this is unset. */
   tourSeen?: boolean
   /** Whose finished turns are announced: off | conductor (default) | all agent cards. */

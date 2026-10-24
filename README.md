@@ -182,7 +182,7 @@ You do not need Claude. Ouroboros runs whichever CLI you are signed in to:
 | **Google / Gemini** | `npm install -g @google/gemini-cli` (needs Node.js) | `gemini` (browser sign-in on first run) | pick **Gemini** |
 | **Claude** (Pro/Max) | `irm https://claude.ai/install.ps1 \| iex` | `claude` | pick **Claude** |
 
-The Welcome screen and ⚙ Settings → *Engines* show what is installed and signed in, with copyable commands and an *Open sign-in terminal* button. The default engine is used for new agent and Conductor cards; any card can switch engine in the Inspector, and a board can mix engines (a Codex Conductor driving Gemini and Claude workers, for example).
+The Welcome screen and ⚙ Settings → *Engines* show what is installed and signed in, with copyable commands and an *Open sign-in terminal* button. While `claude` is signed in, Claude cards do not inherit an `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` from your environment (Claude Code would prefer that key over the sign-in, and a stale one fails every turn with "Invalid API key"); a key meant for a gateway (`ANTHROPIC_BASE_URL` set) stays, and so does one set in Claude's own settings `env` or your shell profile. ⚙ Settings → *Let an ANTHROPIC_API_KEY in the environment override my Claude sign-in* passes it through. The default engine is used for new agent and Conductor cards; any card can switch engine in the Inspector, and a board can mix engines (a Codex Conductor driving Gemini and Claude workers, for example).
 
 ## Install
 

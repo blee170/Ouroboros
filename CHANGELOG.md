@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **One Briefs card, not two**: the same claude.ai artifact no longer opens a second (or third) "📄 Briefs" browser card. Brief opens are now one at a time per window; an existing Briefs card whose page is not ready yet (still loading, stuck on claude.ai sign-in, crashed, restored at app start) is waited for up to 10 s and then navigated, and if it never comes up its URL is changed in place and the card loads it. `/code/artifact/<id>` and `/artifact/<id>` (with any query string) count as the same page for the "already on the canvas" check, the `browser_open` dedupe and the 60 s repeat guard. A page that never finishes loading holds the window's briefs queue for at most 15 s; the URL key no longer runs a quadratic regex over agent output.
+
+### Verified
+- Unit tests for the URL key; a built-app probe (Playwright): a Briefs card on a slow page and two concurrent opens of the same artifact in both URL forms leave one card and navigate it once ready; a card that never loads is pointed at the brief in place; the pre-fix build made three cards from the same run.
+
 ## [0.7.2] — 2026-10-24
 
 ### Added

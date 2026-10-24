@@ -4,10 +4,13 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.7.2] — 2026-10-24
 
 ### Added
 - **Specialist roles** (after [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents), MIT): cards can carry a persona from an agent file. The library reads your `~/.claude/agents`, the project's `.claude/agents`, and the Agency catalog once *Get the Agency roster* in Build board has cloned it (shallow, into the app's data folder; nothing is written to `~/.claude`, so Claude Code does not load 270 subagents). Build board lists them with search, a *runbook* select (Startup MVP, Enterprise feature, Marketing campaign, Incident response; always-on groups ticked, optional groups a checkbox each) and makes one Claude card per role, in rows of four under the role cards, each with a report line to the Conductor. The Inspector gets a *Specialist* select on agent cards. A Conductor gets `list_roles` and `create_agent role=<id>` (an unknown id fails with the reason; `role_prompt` is appended after the persona). Every role prompt ends with a short board footer: how work arrives, the `RESULT:` marker, what goes under `APPROVAL NEEDED:`.
+
+### Verified
+- 208 tests (roles: parsing, bounds, runbooks, the library on disk with nested folders, size cap and a half-clone); two Playwright probes of the built app with a real clone of the catalog (282 roles, 18 divisions, 4 runbooks with complete rosters; runbook ticking, group toggles, search; `GET /api/roles?q=`; an unknown role and a role on a terminal card refused; update on an existing clone; prompt header and footer; nothing under `~/.claude/agents`). Not verified: a Claude card running with a specialist persona on a real board.
 
 ## [0.7.1] — 2026-10-24
 
@@ -260,7 +263,8 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
-[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.2
 [0.7.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.1
 [0.7.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.0
 [0.6.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.6.0

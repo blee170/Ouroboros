@@ -59,8 +59,18 @@ textarea { resize: vertical; font-family: Consolas, monospace; font-size: 12px; 
 .node-header .status-text { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title-input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--accent); color: var(--text); border-radius: 4px; padding: 2px 6px; font: inherit; }
 .scale-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
-.terminal-host { position: absolute; top: 0; left: 0; transform-origin: 0 0; background: #0b0d13; padding: 4px 0 0 6px; box-sizing: border-box; }
-.terminal-host .xterm { height: 100%; }
+.terminal-host { position: absolute; top: 0; left: 0; transform-origin: 0 0; background: #0b0d13; box-sizing: border-box; }
+/* the padding sits on .xterm, where the fit addon subtracts it: on the host it was counted as rows and the last row overflowed */
+.terminal-host .xterm { height: 100%; padding: 4px 0 0 6px; box-sizing: border-box; }
+/* zoomed far out (contextual zoom): a summary in large type replaces the unreadable terminal */
+/* the header keeps its size in far mode: a taller header would shrink the terminal area and resize the PTY */
+.agent-node.far .terminal-host { visibility: hidden; }
+.card-summary .summary-title { font-size: 28px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-summary { position: absolute; inset: 0; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; background: #0b0d13; overflow: hidden; }
+.card-summary .summary-status { color: var(--muted); font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-summary .summary-text { font-size: 22px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; flex: 1; min-height: 0; -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); mask-image: linear-gradient(to bottom, #000 80%, transparent); }
+.jump-bottom { position: absolute; right: 14px; bottom: 10px; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; opacity: 0.85; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+.jump-bottom:hover { opacity: 1; border-color: var(--accent); }
 .note-node { border-color: #5b5520; }
 .note-node.selected { border-color: #facc15; }
 .note-body { flex: 1; resize: none; border: none; border-radius: 0; background: #16160f; color: #f3e9b0; padding: 10px; }

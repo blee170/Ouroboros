@@ -4,25 +4,39 @@ import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow
 import { STATUS_COLOR, STATUS_LABEL } from '@shared/status'
 import type { BoardNode } from '@/store/board'
 import { useBoard } from '@/store/board'
-import { useTerminal } from '@/lib/useTerminal'
+import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
+import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
 import { useCardChanges, useSessionUsage } from '@/lib/useCardInfo'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
-  const handle = useTerminal(id, ref)
+  const zoom = useStore((s) => s.transform[2])
+  const handle = useTerminal(id, ref, zoom)
   const restartNode = useBoard((s) => s.restartNode)
   const removeNode = useBoard((s) => s.removeNode)
   const updateNodeData = useBoard((s) => s.updateNodeData)
   const [editing, setEditing] = useState(false)
   const launchedSeq = useRef<number>(-1)
-  const zoom = useStore((s) => s.transform[2])
-  // Keep the terminal DOM at screen scale (undo the canvas transform) and scale the font instead.
+  // Redraw sharp at the new zoom once the gesture settles (until then the canvas just scales the old frame).
   useEffect(() => {
     if (!handle) return
     const t = setTimeout(() => handle.setZoom(zoom), 80)
     return () => clearTimeout(t)
   }, [zoom, handle])
+  // Zoomed far out the terminal is too small to read: the card shows a summary in large type instead.
+  const far = zoom < FAR_ZOOM
+  // an agent card without a reply yet would show its input box and footer as the "last lines": status only then
+  const summary = useFarSummary(handle, far && data.kind !== 'claude' && data.kind !== 'conductor', data.lastAssistantMessage)
+  // Jump-to-latest: a card scrolled up (by hand, or by a CLI redraw) offers a way back to the bottom.
+  const [scrolledUp, setScrolledUp] = useState(false)
+  useEffect(() => {
+    if (!handle) return
+    const { term } = handle
+    const update = (): void => setScrolledUp(!isAtBottom(term))
+    const subs = [term.onScroll(update), term.onWriteParsed(update), term.onResize(update)]
+    return () => subs.forEach((d) => d.dispose())
+  }, [handle])
   const status = data.status ?? 'starting'
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
@@ -40,7 +54,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     const cwd = data.worktree?.path || data.cwd
     // a launch that fails (shell typo, missing node for Codex) must not leave the card blank on "Starting"
     const report = (r: { ok: boolean; error?: string }): void => {
-      if (r.ok) return
+      // spawns are throttled: a resize sent while this one waited was dropped, so send the current size once more
+      if (r.ok) {
+        api.pty.resize(id, term.cols, term.rows)
+        return
+      }
       term.write(`\r\n\x1b[31m[launch failed]\x1b[0m ${r.error ?? 'unknown error'}\r\n`)
       useBoard.getState().applyStatus({ nodeId: id, status: 'ended', statusDetail: 'launch failed', at: Date.now() })
     }
@@ -62,7 +80,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
 
   const color = STATUS_COLOR[status]
   return (
-    <div className={`agent-node kind-${kind} status-${status}`} style={{ borderColor: selected ? '#38bdf8' : color }}>
+    <div className={`agent-node kind-${kind} status-${status}${far ? ' far' : ''}`} style={{ borderColor: selected ? '#38bdf8' : color }}>
       <NodeResizer minWidth={320} minHeight={200} isVisible={selected} lineStyle={{ borderColor: '#38bdf8' }} handleStyle={{ background: '#38bdf8', width: 14, height: 14, borderRadius: 3 }} onResizeStart={() => setDragShield(true)} onResizeEnd={() => setDragShield(false)} />
       <Handle type="target" position={Position.Left} className="port port-in" />
       <Handle type="source" position={Position.Right} className="port port-out" />
@@ -120,15 +138,59 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         </button>
       </div>
       <div className="scale-wrap">
-        <div
-          className="terminal-host nodrag nowheel"
-          ref={ref}
-          style={{ transform: `scale(${1 / zoom})`, width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
-          onMouseDown={() => handle?.term.focus()}
-        />
+        {/* sized and scaled by useTerminal (render scale), not by React: a re-render must not undo it */}
+        <div className="terminal-host nodrag nowheel" ref={ref} onMouseDown={() => handle?.term.focus()} />
+        {far && (
+          <div className="card-summary">
+            <div className="summary-title">{data.title}</div>
+            <div className="summary-status">
+              {STATUS_LABEL[status]}
+              {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+            </div>
+            {summary && <div className="summary-text">{summary}</div>}
+          </div>
+        )}
+        {!far && scrolledUp && (
+          <button
+            className="jump-bottom nodrag"
+            title="Scroll to the latest output"
+            onClick={() => {
+              handle?.term.scrollToBottom()
+              handle?.term.focus()
+            }}
+          >
+            ↓
+          </button>
+        )}
       </div>
     </div>
   )
+}
+
+/**
+ * What a card says when zoomed far out: the last reply of an agent, else the last lines of its terminal.
+ * Read only while far, at most twice a second.
+ */
+function useFarSummary(handle: TerminalHandle | null, far: boolean, lastReply: string | undefined): string {
+  const [tail, setTail] = useState('')
+  useEffect(() => {
+    if (!far || !handle || lastReply) return
+    const { term } = handle
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const read = (): void => {
+      timer = null
+      setTail(tailText(term, 12))
+    }
+    read()
+    const sub = term.onWriteParsed(() => {
+      if (!timer) timer = setTimeout(read, 500)
+    })
+    return () => {
+      sub.dispose()
+      if (timer) clearTimeout(timer)
+    }
+  }, [far, handle, lastReply])
+  return lastReply || tail
 }
 
 export const AgentNode = memo(AgentNodeImpl)

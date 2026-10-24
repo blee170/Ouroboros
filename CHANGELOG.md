@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A finished card stuck on "Working"**: a tool or subagent hook that arrived after the turn ended (a background agent or shell finishing, Claude Code's post-turn recap) moved a Done or Idle card back to *Working · working*, and since no Stop follows such an event it stayed there for hours ("no update for 177m"). `PostToolUse`, `PostToolUseFailure`, `SubagentStart` and `SubagentStop` now keep a working card working and end the wait on an answered permission prompt, but never revive a card that is done, idle, ended, or stopped on an error (a `failed:` needs-you, so Autonomous mode's usage-limit retry is not cancelled by a late event). A new turn still starts with `UserPromptSubmit` or `PreToolUse`. The same rule covers external sessions.
+
+### Verified
+- 209 tests (the reducer across all four events × done / idle / ended / failed, mid-turn, an answered permission prompt, first events after a relaunch). Not verified: the exact hook Claude Code sends at recap time (the transcript does not record it; the fix covers all four events that produce the stuck detail). Known gap, not fixed: if a background agent keeps calling tools after the Stop and Claude Code sends those `PreToolUse` events to the parent's hooks (undocumented), the card would still show *Working · tool: …* until its next turn.
+
 ## [0.7.2] — 2026-10-24
 
 ### Added

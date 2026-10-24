@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.7.1] — 2026-10-24
 
 The attention model (RESEARCH §10.2, after Orca): the sidebar tells you what you have not looked at yet, and the app stops telling you about the card you are looking at.
 
@@ -22,6 +22,9 @@ The attention model (RESEARCH §10.2, after Orca): the sidebar tells you what yo
 
 ### Fixed
 - **Environment API key no longer beats the sign-in**: Claude Code prefers an `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` from the environment over its own sign-in, so a stale key set system-wide made every Claude card fail each turn with "Invalid API key · Fix external API key" even after `/login`. While `claude` is signed in, Claude cards now launch without those variables (a line in `main.log` says so); the new setting *Let an ANTHROPIC_API_KEY in the environment override my Claude sign-in* passes them through; a key for a gateway (`ANTHROPIC_BASE_URL` not api.anthropic.com) is never dropped, and `CLAUDE_CONFIG_DIR` is honoured when looking for the sign-in. An environment key alone no longer counts as "signed in" on the Welcome screen and in Settings → Engines (Codex and Gemini are unchanged).
+
+### Verified
+- 197 tests (attention model, roster settling, missing-command detection in PowerShell 5.1 / 7 / cmd / bash / zsh with Korean messages, announce bursts, env-key guard); built-app probe of the attention model (settle timing, viewed → idle, the idle echo, the palette, `Ctrl+Shift+N`, the context chip, a Gemini card on a machine without `gemini` turning *failed* in about a second, the first-run setup section). Not verified: the env-key guard on a machine that has the stale key; the browser-card focus edge (main and the renderer can disagree on "looking at" while a browser card's native view has focus, left as a known limit).
 
 ## [0.7.0] — 2026-10-24
 
@@ -252,7 +255,8 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
-[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.1
 [0.7.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.0
 [0.6.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.6.0
 [0.5.1]: https://github.com/blee170/Ouroboros/compare/v0.4.1...v0.6.0

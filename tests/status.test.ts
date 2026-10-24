@@ -31,7 +31,8 @@ describe('reduceHook', () => {
         expect(reduceHook(prev, { hook_event_name: name, tool_name: 'Bash' }), `${name} after ${prev}`).toBeNull()
       }
       // mid-turn they keep the card working, and they end the wait on a permission prompt the owner answered
-      expect(reduceHook('working', { hook_event_name: name })).toMatchObject({ status: 'working', statusDetail: undefined })
+      // (a finished tool call resets the detail to "working"; subagent events leave it as it was)
+      expect(reduceHook('working', { hook_event_name: name })).toMatchObject({ status: 'working', statusDetail: name.startsWith('PostToolUse') ? 'working' : undefined })
       expect(reduceHook('needs-you', { hook_event_name: name })).toMatchObject({ status: 'working', statusDetail: 'working' })
       expect(reduceHook('needs-you', { hook_event_name: name }, 'permission: Allow Bash?')?.status).toBe('working')
       // a turn that ended on an error (StopFailure) is finished too: a late event must not wipe the usage-limit park
@@ -43,6 +44,10 @@ describe('reduceHook', () => {
     // a real new turn after a finished one still starts with UserPromptSubmit or PreToolUse
     expect(reduceHook('done', { hook_event_name: 'UserPromptSubmit' })?.status).toBe('working')
     expect(reduceHook('done', { hook_event_name: 'PreToolUse', tool_name: 'Read' })).toMatchObject({ status: 'working', statusDetail: 'tool: Read' })
+  })
+  it('clears the tool detail once the tool call finishes, so a stall after it is not taken for a long tool', () => {
+    expect(reduceHook('working', { hook_event_name: 'PostToolUse', tool_name: 'Read' })).toMatchObject({ status: 'working', statusDetail: 'working' })
+    expect(reduceHook('working', { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' })).toMatchObject({ status: 'working', statusDetail: 'working' })
   })
   it('does not let a tool call from a background subagent revive a finished card', () => {
     const sub = { hook_event_name: 'PreToolUse', tool_name: 'Bash', agent_id: 'agent-7' }

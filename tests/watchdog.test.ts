@@ -54,6 +54,11 @@ describe('watchdogReports', () => {
     const r = watchdogReports([card({ lastEventAt: t, lastStopAt: t - MIN })], st, t + 10 * MIN, 10)
     expect(r).toMatchObject([{ escalate: false }])
   })
+  it('reports a Codex card only while it waits (Codex sends no hook during a turn)', () => {
+    const t0 = 1_000_000
+    expect(watchdogReports([card({ engine: 'codex', lastEventAt: t0 })], newWatchdogState(), t0 + 60 * MIN, 15)).toEqual([])
+    expect(watchdogReports([card({ engine: 'codex', status: 'needs-you', statusDetail: 'permission: shell', lastEventAt: t0 })], newWatchdogState(), t0 + 20 * MIN, 15)[0]?.reason).toBe('waiting')
+  })
   it('is off at 0 minutes and forgets cards that are gone', () => {
     const st = newWatchdogState()
     expect(watchdogReports([card({ lastEventAt: 1 })], st, 100 * MIN, 0)).toEqual([])

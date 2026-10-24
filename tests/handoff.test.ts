@@ -38,4 +38,9 @@ describe('toPastePayload', () => {
   it('wraps in bracketed paste and normalises newlines', () => {
     expect(toPastePayload('a\r\nb\n\n')).toBe('\x1b[200~a\nb\x1b[201~')
   })
+  it('drops control characters so the text cannot end the paste early', () => {
+    // a hook message carrying the end-of-paste sequence would otherwise type the rest as keys
+    expect(toPastePayload('ok\x1b[201~rm -rf .\r\x07\x9b201~')).toBe('\x1b[200~ok[201~rm -rf .\n201~\x1b[201~')
+    expect(toPastePayload('a\tb\nc')).toBe('\x1b[200~a\tb\nc\x1b[201~')
+  })
 })

@@ -38,7 +38,7 @@ import { loadWorkspace, saveLedger, saveWorkspace, UserStore } from './workspace
 import { Ledger } from './ledger'
 import { DEFAULT_STALL_MINUTES, newWatchdogState, watchdogReports } from '@shared/watchdog'
 import type { UsageMonitor } from './usage'
-import { OWNER, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
+import { OWNER, cleanLine, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
 
 /** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
 const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
@@ -775,7 +775,6 @@ async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Pr
  */
 function installWatchdog(ctx: MainContext, s: WindowSession): void {
   const state = newWatchdogState()
-  const line = (t: string | undefined, max: number): string => (t ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, max)
   const timer = setInterval(() => {
     if (s.win.isDestroyed()) return clearInterval(timer)
     const minutes = ctx.store.getSettings().stallMinutes ?? DEFAULT_STALL_MINUTES
@@ -787,11 +786,12 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
     for (const r of watchdogReports(agents, state, Date.now(), minutes)) {
       const a = agents.find((x) => x.id === r.id)
       if (!a) continue
-      const title = line(a.title, 80) || a.id
-      const detail = line(a.statusDetail, 160)
+      const title = cleanLine(a.title, 80) || a.id
+      const detail = cleanLine(a.statusDetail, 160)
       const owns = s.ledger.list({ owner: a.id, state: 'doing' }).map((t) => t.id)
       const ownsText = owns.length ? ` It owns ${owns.join(', ')}.` : ''
-      const detailText = detail ? ` (${detail})` : ''
+      // the card's own words, quoted: they come from hooks and may be anyone's text
+      const detailText = detail ? ` (card says: "${detail.replace(/"/g, "'")}")` : ''
       const msg =
         r.reason === 'silent'
           ? `[card stalled] ${title}: Working with no activity for ${r.minutes} min${detailText}.${ownsText} Check it with read_output; nudge it with send_prompt, or kill it and dispatch the work again.`
@@ -804,7 +804,8 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
         if (s.board.nodes.get(e.target)?.data.kind === 'conductor') targets.add(e.target)
       }
       let told = false
-      for (const t of targets) if (sendPrompt(ctx, s, t, msg)) told = true
+      // a Conductor on a prompt of its own would take the pasted line and Enter as its answer
+      for (const t of targets) if (s.board.nodes.get(t)?.data.status !== 'needs-you' && sendPrompt(ctx, s, t, msg)) told = true
       log(`[watchdog] ${a.id} ${r.reason} ${r.minutes} min, ${told ? `reported to ${[...targets].join(',')}` : targets.size ? `not delivered to ${[...targets].join(',')}` : 'no conductor'}${r.escalate ? ', escalated' : ''}`)
       if ((r.escalate || !told) && ctx.store.getSettings().notifications && !viewing(s, a.id) && Notification.isSupported()) {
         const note = new Notification({
@@ -889,8 +890,11 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
       if (edge.source !== p.nodeId || edge.data.mode !== 'auto') continue
       const dst = board.nodes.get(edge.target)
       if (!dst || dst.data.kind !== 'conductor') continue
+      // a Conductor on a prompt of its own would take the pasted line and Enter as its answer
+      if (dst.data.status === 'needs-you') continue
       noticed.set(p.nodeId, now)
-      sendPrompt(ctx, s, edge.target, `[${src?.data.title ?? p.nodeId} needs input] ${p.statusDetail ?? 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
+      const what = cleanLine(p.statusDetail, 200)
+      sendPrompt(ctx, s, edge.target, `[${cleanLine(src?.data.title, 80) || p.nodeId} needs input] ${what ? `card says: "${what.replace(/"/g, "'")}"` : 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
     }
   })
   return (edgeId, manual) => {

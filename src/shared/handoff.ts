@@ -53,7 +53,10 @@ export function selectHandoffs(
 
 /** Normalise text so it can be pasted into an interactive CLI (bracketed paste) and submitted. */
 export function toPastePayload(text: string): string {
-  const normalised = text.replace(/\r\n?/g, '\n').replace(/\n+$/g, '')
+  // control characters go (ESC above all: "ESC[201~" in the text would end the paste and the rest would be typed
+  // as keys); tabs and line breaks stay
+  // eslint-disable-next-line no-control-regex
+  const normalised = text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').replace(/\n+$/g, '')
   return `\x1b[200~${normalised}\x1b[201~`
 }
 

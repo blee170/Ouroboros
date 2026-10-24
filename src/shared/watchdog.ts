@@ -31,7 +31,8 @@ export const newWatchdogState = (): WatchdogState => ({ cards: {} })
 
 /**
  * Cards to report now, updating `state`. A tool call in progress ("tool: …", a long build or test) gets three
- * periods; terminal and command cards have no hooks and are never reported; a "failed:" needs-you is an ended
+ * periods; terminal and command cards have no hooks and are never reported, Codex cards only while they wait
+ * (Codex sends nothing during a turn); a "failed:" needs-you is an ended
  * turn, not a wait. A quiet card is reported again every period until the escalation, then not again until a
  * new hook event starts a new quiet stretch.
  */
@@ -46,7 +47,8 @@ export function watchdogReports(agents: AgentSnapshot[], state: WatchdogState, n
     const last = a.lastEventAt
     if (!last) continue
     let reason: StallReason
-    if (a.status === 'working') reason = 'silent'
+    // Codex reports only the end of a turn (no hook while it works), so silence says nothing about it
+    if (a.status === 'working' && a.engine !== 'codex') reason = 'silent'
     else if (a.status === 'needs-you' && !failureOf(a.statusDetail)) reason = 'waiting'
     else continue
     const period = reason === 'silent' && /^tool\b/.test(a.statusDetail ?? '') ? 3 * base : base

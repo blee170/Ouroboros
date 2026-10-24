@@ -47,6 +47,8 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent, prev
       // working card working and resume one that was waiting on a permission prompt the owner just answered; a
       // needs-you marked "failed:" is a turn that ended on an error (StopFailure), not a prompt.
       if (isFinished(prev, prevDetail)) return null
+      // a finished tool call is no longer in progress: "tool: …" (which earns the stall rules their longer grace) goes
+      if (event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') return { status: 'working', statusDetail: 'working', sessionId }
       return { status: 'working', statusDetail: prev === 'working' ? undefined : 'working', sessionId }
     // Compaction is not a turn: Claude Code also compacts while idle ("Compacted while idle, before the prompt
     // cache expired"), and no Stop follows that, so a card that was not working must stay idle/done.

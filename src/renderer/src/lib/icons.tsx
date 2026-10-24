@@ -18,6 +18,7 @@ import {
   History,
   Image,
   LayoutGrid,
+  ListChecks,
   Maximize2,
   Moon,
   PanelLeft,
@@ -57,6 +58,7 @@ export type IconName =
   | 'save'
   | 'broom'
   | 'grid'
+  | 'tasks'
   | 'gauge'
   | 'undo'
   | 'settings'
@@ -97,6 +99,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   save: Save,
   broom: Brush,
   grid: LayoutGrid,
+  tasks: ListChecks,
   gauge: Gauge,
   undo: Undo2,
   settings: Settings,

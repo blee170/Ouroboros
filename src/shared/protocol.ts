@@ -2,6 +2,7 @@ import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeD
 import type { AnnouncePayload } from './announce'
 import type { AutonomyConfig, AutonomyPublic } from './autonomy'
 import type { RolesListing } from './roles'
+import type { LedgerApiResult, Task, TaskInput, TaskPatch } from './ledger'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -29,6 +30,10 @@ export const IPC = {
   rolesList: 'roles:list',
   rolesFetch: 'roles:fetch',
   rolesRead: 'roles:read',
+  tasksList: 'tasks:list',
+  tasksCreate: 'tasks:create',
+  tasksUpdate: 'tasks:update',
+  tasksChanged: 'tasks:changed',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -393,6 +398,14 @@ export interface OuroborosApi {
     fetch(): Promise<{ ok: true; version: string } | { ok: false; error: string }>
     /** The extra system prompt a role gives a card, or undefined for an unknown id. */
     read(cwd: string, id: string): Promise<string | undefined>
+  }
+  tasks: {
+    /** The project's task ledger, every task (done and dropped included). */
+    list(): Promise<Task[]>
+    create(input: TaskInput): Promise<LedgerApiResult>
+    update(id: string, patch: TaskPatch): Promise<LedgerApiResult>
+    /** Main pushes the full list after every change (tools, the owner, a card that ended). */
+    onChange(cb: (tasks: Task[]) => void): () => void
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

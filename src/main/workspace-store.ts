@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFil
 import { dirname, join } from 'node:path'
 import type { AppSettings, Workspace } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import type { LedgerData } from '@shared/ledger'
 
 export const WORKSPACE_FILE = '.ouroboros.json'
 
@@ -22,8 +23,28 @@ export function sanitizeWorkspace(ws: Workspace): Workspace {
       const { status: _s, statusDetail: _d, lastAssistantMessage: _m, lastEventAt: _t, lastStopAt: _st, endedAt: _e, ptyAlive: _p, ...data } = n.data
       return { id: n.id, position: n.position, width: n.width, height: n.height, data }
     }),
-    edges: ws.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { ...e.data } }))
+    edges: ws.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { ...e.data } })),
+    ...(ws.tasks ? { tasks: ws.tasks, nextTaskId: ws.nextTaskId } : {})
   }
+}
+
+/**
+ * Write the task ledger into the board file, keeping everything else in it. The renderer's own save goes
+ * through saveWorkspace with the ledger injected by main, so the two writers never disagree about tasks.
+ * A board file that cannot be parsed is left alone (loadWorkspace copies it aside on the next open).
+ */
+export function saveLedger(projectRoot: string, ledger: LedgerData): void {
+  const file = join(projectRoot, WORKSPACE_FILE)
+  let ws: Workspace = { version: 1, projectRoot, nodes: [], edges: [] }
+  if (existsSync(file)) {
+    try {
+      ws = JSON.parse(readFileSync(file, 'utf8')) as Workspace
+    } catch (err) {
+      console.error(`[workspace] ${file} could not be read, ledger not written (${err instanceof Error ? err.message : String(err)})`)
+      return
+    }
+  }
+  writeAtomic(file, JSON.stringify({ ...ws, tasks: ledger.tasks, nextTaskId: ledger.nextTaskId }, null, 2))
 }
 
 export function loadWorkspace(projectRoot: string): Workspace | null {

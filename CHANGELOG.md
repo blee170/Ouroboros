@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Task ledger**: the Conductor's plan as a per-project list of tasks kept by the app, not in a note. Four tools — `task_create` (title, detail, parent, deps), `task_claim` (for itself or a worker), `task_update` (state, result, reason, owner…), `task_list` (compact text: one line per open task, `all=true` for done and dropped) — with the rules in code: *done* needs a `result`, *blocked* needs a `reason`, a claim is refused while a dependency is not done or another live card owns the task, cycles and unknown ids are refused, 500 tasks per project. A card that ends (or is closed) and does not come back within 20 s gives its *doing* tasks back to *todo* with `card <title> ended before it finished`; an explicit kill counts too. Ids are `T1, T2…` and keep counting across restarts. The ledger lives in `.ouroboros.json` (`tasks`, `nextTaskId`), so checkpoints and Autonomous mode's deny rules already cover it; the renderer never writes it. The right panel gets a **Tasks** tab (add, state select, detail / reason / result, *Mark done*, owner link that jumps to the card; blocked tasks first under *Needs you*, done and dropped collapsed), the status bar a *n doing · m need you* chip, a card that owns a task shows it under its sidebar row, the morning report puts blocked tasks under *Waiting on you* and adds a *Tasks* table. The Conductor prompt, the resume prompt and the autonomous brief are rewritten around the ledger (`task_create` at intake, `task_claim` on dispatch, `task_update` on reports; the Pipeline note is optional). HTTP: `GET/POST /api/tasks`, `POST /api/tasks/:id/claim`, `PATCH /api/tasks/:id`.
+
+### Verified
+- 222 tests (the pure ledger: ids, bounds, unsafe characters, parent / deps / cycles, claims, gates, release, filters, text; the main-process ledger with a real board: debounce, load, release after the grace period, a restart within it, an explicit kill; the board-file round trip; the MCP bundle's four tools; the report). A Playwright probe of the built app: tasks created and claimed through the API as a card, refused claims (unmet dependency, unknown card) and a 404, the chip, the sidebar line, the Tasks tab, a task added and blocked from the UI (blocked without a reason refused and shown), *Mark done*, `task_list` text, a killed worker's task released, the board file, a restart with ids continuing. Not verified: a Conductor on a real board calling the tools over a whole run.
+
 ## [0.7.2] — 2026-10-24
 
 ### Added

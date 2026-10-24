@@ -4,6 +4,7 @@ import { useBoard } from './store/board'
 import { Canvas } from './canvas/Canvas'
 import { Toolbar } from './panels/Toolbar'
 import { Inspector } from './panels/Inspector'
+import { TasksPanel } from './panels/TasksPanel'
 import { Sidebar } from './panels/Sidebar'
 import { StatusBar } from './panels/StatusBar'
 import { Welcome } from './panels/Welcome'
@@ -15,6 +16,9 @@ export default function App() {
   const rosterOpen = useBoard((s) => s.rosterOpen)
   const inspectorOpen = useBoard((s) => s.inspectorOpen)
   const toggleInspector = useBoard((s) => s.toggleInspector)
+  const rpanelTab = useBoard((s) => s.rpanelTab)
+  const showRpanel = useBoard((s) => s.showRpanel)
+  const openTasks = useBoard((s) => s.tasks.filter((t) => t.state === 'blocked' || t.state === 'doing' || t.state === 'todo').length)
 
   useEffect(() => {
     const name = projectRoot.replace(/[\\/]+$/, '').split(/[\\/]/).pop()
@@ -33,6 +37,7 @@ export default function App() {
     const offs = [
       api.update.onStatus((p) => useBoard.getState().setUpdateStatus(p)),
       api.autonomy.onChange((p) => useBoard.getState().setAutonomy(p)),
+      api.tasks.onChange((t) => useBoard.getState().setTasks(t)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),
@@ -89,14 +94,19 @@ export default function App() {
           {projectRoot && inspectorOpen && (
             <aside className="rpanel">
               <div className="rpanel-header">
-                <h2>Inspector</h2>
-                <button className="ghost" onClick={toggleInspector} title="Close the Inspector" aria-label="Close inspector">
+                <h2>
+                  <button className={`rtab${rpanelTab === 'inspector' ? ' on' : ''}`} onClick={() => showRpanel('inspector')} aria-pressed={rpanelTab === 'inspector'}>
+                    Inspector
+                  </button>
+                  <button className={`rtab${rpanelTab === 'tasks' ? ' on' : ''}`} onClick={() => showRpanel('tasks')} aria-pressed={rpanelTab === 'tasks'} title="The task ledger: what the Conductor planned, who is on it, what is blocked">
+                    Tasks{openTasks > 0 && <span className="rtab-n">{openTasks}</span>}
+                  </button>
+                </h2>
+                <button className="ghost" onClick={toggleInspector} title="Close the panel" aria-label="Close panel">
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <div className="rpanel-body">
-                <Inspector />
-              </div>
+              <div className="rpanel-body">{rpanelTab === 'tasks' ? <TasksPanel /> : <Inspector />}</div>
             </aside>
           )}
         </div>

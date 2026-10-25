@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A card could not write its memory after an autonomous run**: the run's deny rules carried `Edit(~/.claude/**)`, which also covers Claude Code's auto memory (`~/.claude/projects/<project>/memory/`), so a Conductor got *File is in a directory that is denied by your permission settings* on every memory write — and since stopping a run never relaunched the cards, they kept the rules (and auto mode) until restarted by hand. The rule is now a list of what Claude Code, its hooks or Chrome run and what later sessions load or resume (`~/.claude` files by extension, `hooks/`, `plugins/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `rules/`, `scripts/`, `bin/`, `tools/`, `chrome/`, `scheduled-tasks/`, `ck/`, `daemon/`, `jobs/`, `shell-snapshots/`, `session-env/`, `ide/`, `.claude.json`, `.credentials.json`, `projects/*/*.jsonl`); the memory folder is writable. A folder nobody listed is not covered (gitignore patterns have no "except": `[!x]` classes did nothing on Claude Code 2.1.310, and `~/.claude/*` matches the projects folder as a whole). When a run ends, every live Claude card is relaunched into the same conversation without the rules once its turn is over (idle, done, or a failed turn; not mid-turn, not on a permission prompt, not on the SessionStart an auto-compaction fires); a card with no session to resume is left as it is and a notification says so; a card the owner restarts or closes meanwhile is let go. Each relaunch is in the run log.
+
+### Verified
+- Live on Claude Code 2.1.310 with the generated settings file: writes to `~/.claude/tools/x.mjs`, `~/.claude/.x.json`, `~/.claude/chrome/x.bat`, `~/.claude/scheduled-tasks/x/SKILL.md` and `projects/<p>/x.jsonl` denied by the rules; writes into the session's own `projects/<p>/memory/` (and a subfolder) allowed; the old rule reproduced the Conductor's exact error. Unit tests for the rule list and for the relaunch (idle at once, working card waits, compaction ignored, no fresh conversation, owner restart, closing window). Not verified: the relaunch in the built app.
+
 ## [0.8.1] — 2026-10-25
 
 ### Added
@@ -297,6 +305,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.8.1...HEAD
 [0.8.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.1
 [0.8.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.0
 [0.7.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.2

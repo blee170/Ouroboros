@@ -159,10 +159,17 @@ export const WORKER_DENY_RULES: string[] = [
   'PowerShell(rm * -r*)',
   // Edit(...) rules cover every file-editing tool (Write included); a Write(...) rule only draws a warning at launch.
   // Relative patterns are matched from the card's own folder; ~/.claude is the owner's: a planted hook there outlives the night.
+  // In ~/.claude a card's auto memory (projects/<project>/memory) stays writable; denied is what Claude Code, its hooks
+  // (scripts in tools/ and elsewhere) or Chrome run, and what later sessions load or resume. Gitignore patterns have no
+  // "except" (a `~/.claude/*` would match the projects folder as a whole; `[!x]` classes did not work on 2.1.310), so this is
+  // a list: a folder nobody listed is not covered.
   'Edit(**/.ouroboros.json)',
   'Edit(**/.claude/settings.json)',
   'Edit(**/.claude/settings.local.json)',
-  'Edit(~/.claude/**)',
+  ...['*.json', '*.md', '*.sh', '*.ps1', '*.cmd', '*.bat', '*.js', '*.cjs', '*.mjs', '*.ts', '*.py', 'statusline*', '.claude.json', '.credentials.json'].map((f) => `Edit(~/.claude/${f})`),
+  ...['hooks', 'plugins', 'skills', 'agents', 'commands', 'output-styles', 'rules', 'scripts', 'bin', 'tools', 'chrome', 'scheduled-tasks', 'ck', 'daemon', 'jobs', 'shell-snapshots', 'session-env', 'ide'].map((d) => `Edit(~/.claude/${d}/**)`),
+  'Edit(~/.claude/projects/*/*.jsonl)',
+  'Edit(~/.claude.json)',
   // the board's browser is the owner's signed-in browser: reading is fine, clicking Merge or Redeploy is not
   'mcp__ouroboros__browser_click',
   'mcp__ouroboros__browser_type'

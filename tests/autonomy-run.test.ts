@@ -217,4 +217,61 @@ describe('Autonomy run', () => {
     expect(s.auto.on).toBe(false)
     expect(s.auto.public().ended?.reason).toMatch(/nothing left to do/)
   })
+
+  it('after a run, relaunches each Claude card without the rails once its turn is over', async () => {
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('chief', { status: 'idle' })
+    s.board.setStatus('w1', { status: 'working', statusDetail: 'thinking', sessionId: 'sess-2' })
+    s.calls.relaunched.length = 0
+    await s.auto.stop('owner stopped the run')
+    expect(s.auto.settingsFragment()).toBeUndefined()
+    // the idle Conductor at once, same conversation, its own permission mode; the working card is not cut
+    expect(s.calls.relaunched.map(([id]) => id)).toEqual(['chief'])
+    expect(s.calls.relaunched[0][1]).toMatchObject({ resume: 'sess-1', boardTools: true })
+    expect(s.calls.relaunched[0][1]).not.toHaveProperty('permissionMode')
+    s.board.setStatus('w1', { status: 'needs-you', statusDetail: 'permission: Bash' })
+    s.board.setStatus('w1', { status: 'idle', statusDetail: 'session compact' }) // an auto-compaction mid-turn, not the end of it
+    expect(s.calls.relaunched).toHaveLength(1)
+    s.board.setStatus('w1', { status: 'done' })
+    expect(s.calls.relaunched.map(([id]) => id)).toEqual(['chief', 'w1'])
+    expect(s.calls.relaunched[1][1]).toMatchObject({ permissionMode: 'plan', resume: 'sess-2' })
+    // once each: the relaunched cards' own idle/done events do nothing more
+    s.board.setStatus('chief', { status: 'idle' })
+    s.board.setStatus('w1', { status: 'done' })
+    expect(s.calls.relaunched).toHaveLength(2)
+    expect(s.calls.prompts).toEqual([]) // no brief, no "continue" after the run
+  })
+
+  it('after a run, leaves a card that ended, a failed turn waits for nothing, and a closing window relaunches nothing', async () => {
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('chief', { status: 'working' })
+    s.board.setStatus('w1', { status: 'needs-you', statusDetail: 'failed: usage limit reached', sessionId: 'sess-2' })
+    s.calls.relaunched.length = 0
+    await s.auto.stop('deadline reached')
+    expect(s.calls.relaunched.map(([id]) => id)).toEqual(['w1'])
+    s.board.setStatus('chief', { status: 'ended' })
+    s.board.setStatus('chief', { status: 'idle' })
+    expect(s.calls.relaunched.map(([id]) => id)).toEqual(['w1'])
+    // a new run takes over; a window closing mid-run does not restart cards on the way out
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('chief', { status: 'idle' })
+    s.calls.relaunched.length = 0
+    s.auto.dispose()
+    expect(s.calls.relaunched).toEqual([])
+  })
+
+  it('after a run, never restarts a card into a fresh conversation, and lets go of a card the owner restarted', async () => {
+    s.auto.start({ until: T0 + 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.board.setStatus('chief', { status: 'working' })
+    s.board.setStatus('w1', { status: 'idle' }) // no session id, no --continue
+    s.calls.relaunched.length = 0
+    s.calls.toasts.length = 0
+    await s.auto.stop('owner stopped the run')
+    expect(s.calls.relaunched).toEqual([])
+    expect(s.calls.toasts.some((m) => /still on the autonomous rails/.test(m) && /w1/.test(m))).toBe(true)
+    // the owner restarts the Conductor by hand: that launch is already a plain one
+    s.board.setStatus('chief', { status: 'starting' })
+    s.board.setStatus('chief', { status: 'idle' })
+    expect(s.calls.relaunched).toEqual([])
+  })
 })

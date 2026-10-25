@@ -23,7 +23,9 @@ describe('deny rules', () => {
   it('keep pushes, merges, deploys, migrations and the board file out of reach', () => {
     const deny = autonomySettingsFragment().permissions.deny
     expect(deny).toEqual(WORKER_DENY_RULES)
-    for (const must of ['Bash(git push*)', 'Bash(git * push*)', 'PowerShell(git push*)', 'PowerShell(git * push*)', 'Bash(gh pr merge*)', 'Bash(gh * pr merge*)', 'Bash(supabase db push*)', 'PowerShell(Remove-Item * -Recurse*)', 'Edit(**/.ouroboros.json)', 'Edit(**/.claude/settings.json)', 'Edit(~/.claude/**)', 'mcp__ouroboros__browser_click', 'mcp__ouroboros__browser_type']) expect(deny).toContain(must)
+    // a card's auto memory (~/.claude/projects/<project>/memory) stays writable: no rule over all of ~/.claude or its projects folder
+    for (const wide of ['Edit(~/.claude/**)', 'Edit(~/.claude/*)', 'Edit(~/.claude/projects/**)']) expect(deny).not.toContain(wide)
+    for (const must of ['Bash(git push*)', 'Bash(git * push*)', 'PowerShell(git push*)', 'PowerShell(git * push*)', 'Bash(gh pr merge*)', 'Bash(gh * pr merge*)', 'Bash(supabase db push*)', 'PowerShell(Remove-Item * -Recurse*)', 'Edit(**/.ouroboros.json)', 'Edit(**/.claude/settings.json)', 'Edit(~/.claude/*.json)', 'Edit(~/.claude/*.md)', 'Edit(~/.claude/hooks/**)', 'Edit(~/.claude/plugins/**)', 'Edit(~/.claude/skills/**)', 'Edit(~/.claude/tools/**)', 'Edit(~/.claude/chrome/**)', 'Edit(~/.claude/scheduled-tasks/**)', 'Edit(~/.claude/projects/*/*.jsonl)', 'Edit(~/.claude/.claude.json)', 'Edit(~/.claude.json)', 'mcp__ouroboros__browser_click', 'mcp__ouroboros__browser_type']) expect(deny).toContain(must)
     expect(deny.some((r) => /bypass|dangerously/.test(r))).toBe(false)
     expect(deny.some((r) => r.startsWith('Write('))).toBe(false) // Claude Code 2.1.309: Write(...) rules are not matched, Edit(...) covers all editing tools
     expect(deny).not.toContain('Bash(* push*)') // a commit message mentioning a push is not a push

@@ -80,7 +80,7 @@ export interface ApiHandlers {
   bookmarks(query?: string): unknown
   browser: {
     list(): unknown
-    create(input: { url?: string; title?: string }): Promise<{ id: string }>
+    create(input: { url?: string; title?: string; near?: string }): Promise<{ id: string }>
     navigate(id: string, url: string): Promise<unknown>
     read(id: string, maxChars?: number): Promise<unknown>
     links(id: string, limit?: number): Promise<unknown>

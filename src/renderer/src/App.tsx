@@ -65,7 +65,7 @@ export default function App() {
         // engine (Codex / Gemini) to a card the Conductor asked for as Claude. Main-initiated cards do not
         // steal the selection from whatever the owner is editing.
         const agent = n.data.kind === 'claude' || n.data.kind === 'conductor'
-        useBoard.getState().addNode(n.data.kind, { ...n.data, id: n.id, position: n.position, engine: agent ? (n.data.engine ?? 'claude') : undefined, select: false })
+        useBoard.getState().addNode(n.data.kind, { ...n.data, id: n.id, position: n.position, near: n.near, engine: agent ? (n.data.engine ?? 'claude') : undefined, select: false })
       }),
       api.pty.onExit((id) => {
         const s = useBoard.getState()

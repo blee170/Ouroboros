@@ -8,9 +8,11 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ### Changed
 - **Model is a dropdown.** A card's Inspector → Model offers the engine's presets (Claude: Opus, Sonnet, Haiku as the latest of each, Fable 5.1, and pinned 5.5 ids), the CLI's default, or *Custom…* for any name; Codex and Gemini get default or custom (their own `/model` lists the names). Switching a card's engine resets a model name that belonged to the old one.
+- **A new Briefs card opens beside the card whose reply had the link**, top edges aligned (the next free spot below in that column if something is there), instead of the first free grid cell, often far down-left. A Briefs card that already exists stays where you put it.
 
 ### Verified
 - Unit tests for the preset mapping; built-app probe: the options per engine, picking a preset, a custom name, back to default, and the reset on an engine switch.
+- Briefs placement: unit tests (beside, below a card in the way, the next column); built-app probe: a brief opened from a card lands right of it (and below its neighbour when the right is taken).
 
 ## [0.9.0] — 2026-10-25
 

@@ -356,7 +356,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
           id,
           width: 640,
           height: 480,
-          data: { kind: 'browser', title: input.title || 'Browser', cwd: board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' }
+          data: { kind: 'browser', title: input.title || 'Browser', cwd: board.projectRoot, url: input.url || ctx.store.getSettings().browserHome || 'https://www.google.com' },
+          ...(input.near && board.nodes.has(input.near) ? { near: input.near } : {})
         }
         ctx.windows.bindNode(id, s.id)
         sendToRenderer(s, IPC.boardAddNode, node)
@@ -953,15 +954,15 @@ const briefOpens = new WeakMap<WindowSession, Promise<void>>()
 const BRIEF_STEP_MS = 15_000
 
 /** Show a brief (claude.ai artifact, report URL) in the window's "📄 Briefs" browser card, created on first use. */
-function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+function openBrief(ctx: MainContext, s: WindowSession, url: string, near?: string): Promise<void> {
   const run = (briefOpens.get(s) ?? Promise.resolve())
-    .then(() => Promise.race([openBriefNow(ctx, s, url), new Promise<void>((r) => setTimeout(r, BRIEF_STEP_MS))]))
+    .then(() => Promise.race([openBriefNow(ctx, s, url, near), new Promise<void>((r) => setTimeout(r, BRIEF_STEP_MS))]))
     .catch((e) => console.warn('[briefs] open failed', url, e))
   briefOpens.set(s, run)
   return run
 }
 
-async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+async function openBriefNow(ctx: MainContext, s: WindowSession, url: string, near?: string): Promise<void> {
   // Briefs stay on the canvas. Only when the owner turned the setting on (claude.ai refusing to sign in
   // inside the card, which its ↗ button also works around per page) do claude.ai links go to the system browser.
   if (/^https:\/\/claude\.ai\//.test(url) && ctx.store.getSettings().claudeLinksExternal === true) {
@@ -972,7 +973,8 @@ async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Pr
   if (browserShowing(ctx, s.board, url)) return
   const existing = briefsCard(s.board)
   if (!existing) {
-    const { id } = await s.api.browser.create({ url, title: BRIEFS_TITLE })
+    // a new Briefs card goes right of the card whose reply had the link; one that exists stays where the owner put it
+    const { id } = await s.api.browser.create({ url, title: BRIEFS_TITLE, near })
     // create returns at dom-ready; the card reaches main's board on the renderer's next (debounced) sync,
     // and the next queued brief must find it there
     for (let i = 0; i < 20 && !s.board.nodes.has(id); i++) await new Promise((r) => setTimeout(r, 100))
@@ -982,7 +984,7 @@ async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Pr
   // restored from the board file a moment ago): wait for it rather than open a second Briefs card.
   for (let i = 0; i < 40 && !ctx.browsers.has(existing.id) && s.board.nodes.has(existing.id); i++) await new Promise((r) => setTimeout(r, 250))
   if (!s.board.nodes.has(existing.id)) {
-    await s.api.browser.create({ url, title: BRIEFS_TITLE })
+    await s.api.browser.create({ url, title: BRIEFS_TITLE, near })
     return
   }
   if (ctx.browsers.has(existing.id)) {
@@ -1104,7 +1106,7 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
       n.data.lastBriefUrl = url
       sendToRenderer(s, IPC.boardUpdateNode, { nodeId: n.id, data: { lastBriefUrl: url }, restart: false })
     }
-    void openBrief(ctx, s, url)
+    void openBrief(ctx, s, url, nodeId)
   })
 
   // A card that needs a human (permission prompt, question) tells every conductor it reports to.
@@ -1666,9 +1668,9 @@ export function registerIpc(ctx: MainContext): void {
     }
     return {}
   })
-  ipcMain.handle(IPC.briefOpen, async (e, url: string) => {
+  ipcMain.handle(IPC.briefOpen, async (e, url: string, near?: string) => {
     const s = sessionOf(e)
-    if (s && /^https?:\/\//.test(url)) await openBrief(ctx, s, url)
+    if (s && /^https?:\/\//.test(url)) await openBrief(ctx, s, url, typeof near === 'string' ? near : undefined)
   })
   ipcMain.handle(IPC.shellOpenExternal, (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url)

@@ -278,8 +278,8 @@ export class Autonomy {
   }
 
   /** Settings fragment for every card launched while the run is on. */
-  settingsFragment(): Record<string, unknown> | undefined {
-    return this.on ? autonomySettingsFragment() : undefined
+  settingsFragment(gateCommand?: string): Record<string, unknown> | undefined {
+    return this.on ? autonomySettingsFragment(gateCommand) : undefined
   }
 
   /** New cards never ask during a run: auto mode (plan stays plan). */
@@ -322,6 +322,11 @@ export class Autonomy {
       this.record({ kind: 'retry', title, detail: `re-made (${s.retries[key]}/${s.config.maxRetriesPerTitle})` })
     } else this.record({ kind: 'dispatch', title, detail: `${s.dispatches}/${s.config.maxDispatches}` })
     this.host.changed(this.public())
+  }
+
+  /** An action-gate decision or approval, for the run log and the report's Gates section (ignored outside a run). */
+  noteGate(card: string, title: string, detail: string): void {
+    if (this.on) this.record({ kind: 'gate', card, title, detail })
   }
 
   private record(e: Omit<RunEvent, 'at'>): void {

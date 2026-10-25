@@ -16,7 +16,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeHook, type MainContext, type WindowSession } from './ipc'
+import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -175,6 +175,7 @@ async function main(): Promise<void> {
     onHook: (nodeId, event) => routeHook(ctx, nodeId, event),
     onExternalHook: (event) => routeExternalHook(ctx, event),
     onStatusLine: (nodeId, body) => ctx.usage.onStatusLine(nodeId, body),
+    onGate: (nodeId, input) => routeGate(ctx, nodeId, input),
     // A caller identifies its window by its own card id; unscoped calls go to the current window.
     // a named card must still be on a board: a closed card's token keeps working until relaunch, but reaches no window
     resolveApi: (selfId) => (selfId ? ctx.windows.forNode(selfId)?.api : ctx.windows.current()?.api),

@@ -90,12 +90,25 @@ export interface ApiHandlers {
   }
 }
 
+export interface GateInput {
+  command: string
+  cwd?: string
+  tool?: string
+}
+/** allow / deny decides the tool call; none leaves it to the normal permission flow */
+export interface GateReply {
+  decision: 'allow' | 'deny' | 'none'
+  reason: string
+}
+
 export interface HookServerDeps {
   /** A card's hook event; for Stop / UserPromptSubmit / PostToolUse the return value is the reply (mail for the card). */
   onHook(nodeId: string, event: HookEvent): HookReply | void
   onExternalHook(event: HookEvent): void
   /** A Claude card's status-line JSON (its `statusLine` command POSTs it on every API response). */
   onStatusLine?(nodeId: string, body: unknown): void
+  /** Autonomous run: a card's shell command that may push, open or merge a PR (its PreToolUse gate helper asks). */
+  onGate?(nodeId: string, input: GateInput): Promise<GateReply>
   /** API scoped to the window that owns `selfId` (the caller's own card id); unscoped = current window. */
   resolveApi(selfId?: string): ApiHandlers | undefined
   /** The token the global hook in the owner's Claude Code settings sends with `/hook/external` (persisted across launches). */
@@ -262,6 +275,24 @@ export class HookServer {
       res.writeHead(204).end()
       // no token here (it would sit in the shell command, in the settings file): the worst a forged one does is a wrong usage chip
       if (body && typeof body === 'object') this.deps.onStatusLine?.(decodeURIComponent(sl[1]), body)
+      return
+    }
+
+    // --- Action gate (PreToolUse command hook during an Autonomous run) -------
+    const gate = path.startsWith('/hook/') && path.endsWith('/gate') ? [path, path.slice('/hook/'.length, -'/gate'.length)] : null
+    if (method === 'POST' && gate) {
+      const target = decodeURIComponent(gate[1])
+      const token = headerOf(req, TOKEN_HEADER)
+      if (target === 'external' || !same(token, this.hookToken(target))) return this.refuse(res, 401, token ? 'wrong token' : 'no token', `/hook/${target.slice(0, 64)}/gate`)
+      const body = (await readJson(req)) as Partial<GateInput> | undefined
+      if (!body || typeof body.command !== 'string') return send(res, 400, { decision: 'deny', reason: 'no command' })
+      // no handler (or it throws): the helper gets an error and blocks the call, it never fails open
+      if (!this.deps.onGate) return send(res, 503, { decision: 'deny', reason: 'gate not available' })
+      try {
+        send(res, 200, await this.deps.onGate(target, { command: body.command, cwd: typeof body.cwd === 'string' ? body.cwd : undefined, tool: typeof body.tool === 'string' ? body.tool : undefined }))
+      } catch (e) {
+        send(res, 500, { decision: 'deny', reason: `gate error: ${(e as Error).message}` })
+      }
       return
     }
 

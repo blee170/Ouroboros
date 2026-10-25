@@ -30,7 +30,7 @@ export const LIMIT_RETRY_MINUTES = 15
 /** A relaunched or new card that shows no session after this long never came up (stale --resume id, trust prompt, crash). */
 export const START_GRACE_MINUTES = 3
 
-export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion'
+export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion' | 'gate'
 
 export interface RunEvent {
   at: number
@@ -117,6 +117,8 @@ const SHELL_DENY_PREFIXES = [
   'gh release',
   'gh api',
   'gh repo delete',
+  'gh alias set',
+  'gh alias import',
   'gh secret',
   'gh variable',
   'npm publish',
@@ -176,9 +178,28 @@ export const WORKER_DENY_RULES: string[] = [
   'mcp__ouroboros__browser_type'
 ]
 
-/** The settings fragment merged into a card's `--settings` file during a run. */
-export function autonomySettingsFragment(): { permissions: { deny: string[] } } {
-  return { permissions: { deny: [...WORKER_DENY_RULES] } }
+/** Decided by the action gate instead of denied outright, when the gate hook is installed (src/shared/gate.ts). */
+export const GATED_PREFIXES = ['git push', 'git send-pack', 'gh pr merge']
+
+/**
+ * Kept denied even with the gate: if the hook cannot run at all (node gone, the script missing, a timeout), Claude
+ * Code lets the command through, so the forms the gate always refuses stay on the deny list as a second rail. None of
+ * them can be an allowed push (those name a claude/* or card/* branch).
+ */
+const GATE_BACKSTOP = ['git push -f', 'git push --force', 'git push --delete', 'git push -d', 'git push --mirror', 'git push --all', 'git push --tags', 'git push --prune', 'git push origin main', 'git push origin master', 'git push origin HEAD:main', 'git push origin HEAD:master', 'git push origin +', 'git push origin :', 'git send-pack']
+
+/**
+ * The settings fragment merged into a card's `--settings` file during a run. With a gate command (the PreToolUse
+ * helper that asks the app), pushes and PR merges come off the deny list: a hook's allow cannot override a deny rule.
+ * Without one (no node binary to run it), they stay denied.
+ */
+export function autonomySettingsFragment(gateCommand?: string): { permissions: { deny: string[] }; hooks?: Record<string, unknown[]> } {
+  if (!gateCommand) return { permissions: { deny: [...WORKER_DENY_RULES] } }
+  const gated = new Set(GATED_PREFIXES.flatMap(withOptionsBefore).flatMap((p) => [`Bash(${p}*)`, `PowerShell(${p}*)`]))
+  return {
+    permissions: { deny: [...WORKER_DENY_RULES.filter((r) => !gated.has(r)), ...GATE_BACKSTOP.flatMap((p) => [`Bash(${p}*)`, `PowerShell(${p}*)`])] },
+    hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: gateCommand, timeout: 15 }] }] }
+  }
 }
 
 /** Why a create_agent call is refused during the run, or null. */
@@ -303,12 +324,32 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   const parked = Object.entries(state.parked)
   lines.push('## Waiting on you')
   const blocked = tasks.filter((t) => t.state === 'blocked')
+  const gates = events.filter((e) => e.kind === 'gate')
+  const askedIds = new Map<string, RunEvent>()
+  for (const e of gates) {
+    const m = /^approval asked \((A\d+)\)/.exec(e.detail ?? '')
+    if (m) askedIds.set(m[1], e)
+    const d = /^(?:approved|denied) by owner \((A\d+)\)/.exec(e.detail ?? '')
+    if (d) askedIds.delete(d[1])
+  }
   const escalations = mail.filter((m) => m.kind === 'escalation' && !m.ackedAt && m.createdAt >= state.startedAt)
-  if (parked.length === 0 && blocked.length === 0 && escalations.length === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
+  if (parked.length === 0 && blocked.length === 0 && escalations.length === 0 && askedIds.size === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
   for (const t of blocked) lines.push(`- Task **${t.id} ${oneLine(t.title)}**${t.owner ? ` (${oneLine(titleOf(t.owner))})` : ''}: ${oneLine(t.reason)}`)
   for (const [id, p] of parked) lines.push(`- **${oneLine(p.title)}** (${id}) since ${hhmm(p.at)}: ${oneLine(p.reason)}`)
+  for (const e of askedIds.values()) lines.push(`- Approval for **${oneLine(e.title ?? e.card)}** since ${hhmm(e.at)}: ${oneLine((e.detail ?? '').replace(/^approval asked /, ''))} (Approve or Deny in the Autonomy panel)`)
   for (const m of escalations) lines.push(`- Escalation ${m.id} from **${oneLine(titleOf(m.from))}** to ${oneLine(titleOf(m.to))} at ${hhmm(m.createdAt)}, not handled: ${oneLine(m.body)}`)
   lines.push('')
+  if (gates.length) {
+    const count = (re: RegExp): RunEvent[] => gates.filter((e) => re.test(e.detail ?? ''))
+    const auto = count(/^auto:/)
+    const never = count(/^never:/)
+    const approved = count(/^approved/)
+    const denied = count(/^denied by owner/)
+    lines.push(`## Gates · ${auto.length} allowed by policy · ${askedIds.size} waiting on you · ${never.length} refused${approved.length ? ` · ${approved.length} approved by you` : ''}${denied.length ? ` · ${denied.length} denied by you` : ''}`)
+    for (const e of never.slice(0, 10)) lines.push(`- Refused: **${oneLine(e.title ?? e.card)}** tried ${cell(oneLine((e.detail ?? '').replace(/^never: /, '')).slice(0, 160))} at ${hhmm(e.at)}`)
+    for (const e of auto.filter((x) => !/left to the permission flow/.test(x.detail ?? '')).slice(0, 10)) lines.push(`- Allowed: ${oneLine(e.title ?? e.card)}: ${oneLine((e.detail ?? '').replace(/^auto: /, '')).slice(0, 160)}`)
+    lines.push('')
+  }
   if (tasks.length) {
     const c = summarizeTasks(tasks)
     lines.push(`## Tasks · ${c.done} done · ${c.doing} doing · ${c.blocked} blocked · ${c.todo} to do${c.dropped ? ` · ${c.dropped} dropped` : ''}`)

@@ -67,6 +67,30 @@ export function buildHookSettings(baseUrl: string, target: string, events: strin
   return { hooks, statusLine: { type: 'command', command: buildStatusLineCommand(baseUrl, target) } }
 }
 
+/**
+ * The action gate's PreToolUse command (Autonomous runs): a system node runs the helper; forward slashes and double
+ * quotes read the same in Git Bash, cmd.exe and PowerShell. Undefined without a node binary or a script (the run then
+ * keeps pushes and merges on its deny list), or for an id a shell could misread.
+ */
+export function buildGateCommand(nodeBin: string | undefined, hookScriptPath: string | undefined, baseUrl: string, nodeId: string): string | undefined {
+  if (!nodeBin || !hookScriptPath || !SHELL_SAFE_ID.test(nodeId) || /["%$`]/.test(nodeBin + hookScriptPath)) return undefined
+  const fwd = (p: string): string => p.split(String.fromCharCode(92)).join('/')
+  return `"${fwd(nodeBin)}" "${fwd(hookScriptPath)}" gate --url ${baseUrl} --node ${nodeId}`
+}
+
+/** Settings on top of the card's hook settings: `hooks` are added per event (the run's gate next to the card's own hooks), the rest replaced. */
+export function mergeSettings(base: Record<string, unknown>, extra: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base, ...extra }
+  const a = (base.hooks ?? {}) as Record<string, unknown[]>
+  const b = (extra.hooks ?? {}) as Record<string, unknown[]>
+  if (extra.hooks) {
+    const hooks: Record<string, unknown[]> = { ...a }
+    for (const [ev, list] of Object.entries(b)) hooks[ev] = [...(a[ev] ?? []), ...list]
+    out.hooks = hooks
+  }
+  return out
+}
+
 export function buildMcpConfig(opts: { execPath: string; nodeBin?: string; scriptPath: string; baseUrl: string; nodeId: string; mailOnly?: boolean }): Record<string, unknown> {
   const env: Record<string, string> = {
     OUROBOROS_URL: opts.baseUrl,
@@ -207,7 +231,7 @@ export function prepareLaunch(params: {
   const engine = params.engine ?? 'claude'
   if (engine === 'codex' || engine === 'gemini') return prepareEngineLaunch(engine, params)
   const settingsPath = join(params.tmpDir, `${params.nodeId}.settings.json`)
-  writeFileSync(settingsPath, JSON.stringify({ ...buildHookSettings(params.baseUrl, params.nodeId), ...(params.settingsExtra ?? {}) }, null, 2))
+  writeFileSync(settingsPath, JSON.stringify(mergeSettings(buildHookSettings(params.baseUrl, params.nodeId), params.settingsExtra ?? {}), null, 2))
   let mcpConfigPath: string | undefined
   const claude: ClaudeOptions = { ...params.claude }
   const mcpServers: Record<string, unknown> = { ...(claude.mcpServers ?? {}) }

@@ -6,6 +6,7 @@ import type { LedgerApiResult, Task, TaskInput, TaskPatch } from './ledger'
 import type { UsageSnapshot } from './usage'
 import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
+import type { Approval } from './gate'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -41,6 +42,9 @@ export const IPC = {
   mailList: 'mail:list',
   mailSend: 'mail:send',
   mailChanged: 'mail:changed',
+  gateList: 'gate:list',
+  gateResolve: 'gate:resolve',
+  gateChanged: 'gate:changed',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -439,6 +443,12 @@ export interface OuroborosApi {
     /** The owner messages a card (the Inspector). */
     send(to: string, body: string): Promise<{ ok: boolean; error?: string }>
     onChange(cb: (messages: Mail[]) => void): () => void
+  }
+  gate: {
+    /** Autonomous runs: what cards asked the owner to allow (gh pr merge), and what was decided. */
+    list(): Promise<Approval[]>
+    resolve(id: string, approve: boolean): Promise<{ ok: boolean; error?: string; warning?: string }>
+    onChange(cb: (approvals: Approval[]) => void): () => void
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

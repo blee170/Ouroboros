@@ -11,6 +11,7 @@
  */
 import http from 'node:http'
 import { readFileSync } from 'node:fs'
+import { mayBeGated } from '../shared/gate'
 
 export interface OuroHook {
   hook_event_name: string
@@ -98,8 +99,87 @@ function readStdin(): Promise<string> {
   })
 }
 
+/** POST and read the JSON answer; rejects on a network error, a timeout or a non-200 status. */
+function ask(url: string, body: unknown, token: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body)
+    const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data), 'x-ouroboros-token': token }, timeout: timeoutMs }, (res) => {
+      let raw = ''
+      res.setEncoding('utf8')
+      res.on('data', (c) => (raw += c))
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(raw) as Record<string, unknown>
+          if (res.statusCode !== 200) reject(new Error(String(json.reason ?? `status ${res.statusCode}`)))
+          else resolve(json)
+        } catch {
+          reject(new Error(`status ${res.statusCode}, not JSON`))
+        }
+      })
+    })
+    req.on('error', reject)
+    req.on('timeout', () => req.destroy(new Error('timed out')))
+    req.end(data)
+  })
+}
+
+export interface GateOutcome {
+  /** what the hook prints on stdout */
+  stdout: string
+  /** 2 blocks the tool call (Claude Code shows stderr to the model) */
+  exitCode: 0 | 2
+  stderr?: string
+}
+
+/**
+ * Claude Code PreToolUse (Bash / PowerShell) during an Autonomous run: a command that may push, open or merge a PR
+ * is decided by the app. Fails closed: no app, no token, an error or a malformed answer blocks the call (exit 2).
+ */
+export async function runGate(input: Record<string, unknown>, opts: { url: string; node: string; token: string; timeoutMs?: number }): Promise<GateOutcome> {
+  const toolInput = (input.tool_input ?? {}) as Record<string, unknown>
+  const block = (why: string): GateOutcome => ({ stdout: '', exitCode: 2, stderr: `Ouroboros action gate: ${why}. The command was not run.` })
+  // a shell tool call whose command we cannot read is not let through (another field name, an empty or late stdin)
+  if (typeof toolInput.command !== 'string') return block('no command in the hook input')
+  const command = toolInput.command
+  if (!mayBeGated(command)) return { stdout: '{}', exitCode: 0 }
+  if (!opts.url || !opts.node || !opts.token) return block('the gate is not configured for this card')
+  try {
+    const r = await ask(`${opts.url.replace(/\/$/, '')}/hook/${encodeURIComponent(opts.node)}/gate`, { command, cwd: typeof input.cwd === 'string' ? input.cwd : undefined, tool: input.tool_name }, opts.token, opts.timeoutMs ?? 8000)
+    const reason = typeof r.reason === 'string' ? r.reason : ''
+    if (r.decision === 'none') return { stdout: '{}', exitCode: 0 }
+    if (r.decision !== 'allow' && r.decision !== 'deny') return block('the app gave no decision')
+    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: r.decision, permissionDecisionReason: reason } }), exitCode: 0 }
+  } catch (e) {
+    return block(`could not reach Ouroboros (${(e as Error).message})`)
+  }
+}
+
 export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<void> {
   const [adapter, ...rest] = argv
+  if (adapter === 'gate') {
+    // an exception anywhere (a closed pipe included) must block, never exit 1, which Claude Code treats as a pass
+    process.on('uncaughtException', () => process.exit(2))
+    let url = ''
+    let node = ''
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '--url') url = rest[++i] ?? ''
+      else if (rest[i] === '--node') node = rest[++i] ?? ''
+    }
+    let input: Record<string, unknown> = {}
+    try {
+      input = JSON.parse((await readStdin()) || '{}') as Record<string, unknown>
+    } catch {
+      process.stderr.write('Ouroboros action gate: unreadable hook input. The command was not run.')
+      process.exitCode = 2
+      return
+    }
+    const out = await runGate(input, { url, node, token: env.OUROBOROS_HOOK_TOKEN ?? '' })
+    // pipes are asynchronous on Windows: wait for the write before the process exits
+    if (out.stdout) await new Promise<void>((r) => process.stdout.write(out.stdout, () => r()))
+    if (out.stderr) await new Promise<void>((r) => process.stderr.write(out.stderr!, () => r()))
+    process.exitCode = out.exitCode
+    return
+  }
   let url = env.OUROBOROS_URL ?? ''
   let node = env.OUROBOROS_NODE_ID ?? ''
   let tokenFile = env.OUROBOROS_TOKEN_FILE ?? ''
@@ -127,5 +207,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<void
 }
 
 if (require.main === module) {
-  void main(process.argv.slice(2), process.env).then(() => process.exit(0))
+  const gate = process.argv[2] === 'gate'
+  // the gate fails closed: anything unexpected exits 2, which blocks the tool call
+  void main(process.argv.slice(2), process.env).then(
+    () => process.exit(gate ? (Number(process.exitCode) || 0) : 0),
+    () => process.exit(gate ? 2 : 0)
+  )
 }

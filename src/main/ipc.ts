@@ -16,10 +16,12 @@ import { findBriefUrl, urlKey } from './briefs'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
-import { prepareLaunch } from './claude-launcher'
+import { buildGateCommand, prepareLaunch } from './claude-launcher'
+import { GateKeeper, auditFile } from './gate'
+import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
-import type { ApiHandlers, HookReply, HookServer } from './hook-server'
+import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
 import { cleanTitle, envelope, type MailTopology } from '@shared/mail'
 import { PtyManager, defaultShell } from './pty-manager'
@@ -77,6 +79,8 @@ export interface WindowSession {
   ledger: Ledger
   /** Agent mail between this window's cards (send_message / check_inbox / ack, the Inspector's Mail section). */
   mail: Mailbox
+  /** Autonomous runs: the action gate's decisions, the owner's approvals and the audit log. */
+  gate: GateKeeper
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
   /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
@@ -583,6 +587,40 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
 }
 
 /** The toast for a card that needs a human: "needs you" with the question, or "failed" with the error; never for the card on screen. */
+/** A card asked for something only the owner may allow (the gate's "ask"): always a toast, the run log and the pill. */
+function notifyApproval(ctx: MainContext, s: WindowSession, a: Approval): void {
+  s.autonomy.noteGate(a.card, a.title, `approval asked (${a.id}): ${a.command}`)
+  if (Notification.isSupported()) {
+    const note = new Notification({ title: `${a.title} asks for approval`, body: a.command.slice(0, 200) })
+    note.on('click', () => {
+      if (!s.win.isDestroyed()) {
+        s.win.show()
+        s.win.focus()
+      }
+    })
+    note.show()
+  }
+  if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+}
+
+/** The gate hook command for a card, or undefined (the run then keeps pushes and merges denied) when node or the helper is missing. */
+function gateCommandFor(baseUrl: string, nodeId: string): string | undefined {
+  const node = findNodeBinary()
+  const script = resolveHookScriptPath()
+  if (!node || !existsSync(node) || !existsSync(script)) return undefined
+  return buildGateCommand(node, script, baseUrl, nodeId)
+}
+
+/** A card's shell command that may push or touch a PR, from its PreToolUse gate helper. */
+export async function routeGate(ctx: MainContext, nodeId: string, input: GateInput): Promise<GateReply> {
+  const s = ctx.windows.forNode(nodeId)
+  const n = s?.board.nodes.get(nodeId)
+  if (!s || !n) return { decision: 'deny', reason: 'Ouroboros action gate: this card is not on any open board' }
+  const r = await s.gate.decide({ id: nodeId, title: n.data.title, folder: folderOf(s.board, n) }, input)
+  if (r.audit && r.audit.decision !== 'ask') s.autonomy.noteGate(nodeId, n.data.title, `${r.audit.decision === 'approved' ? 'used approval' : r.audit.decision}: ${r.audit.command}${r.decision === 'none' ? ' (left to the permission flow)' : ''}`)
+  return { decision: r.decision, reason: r.reason }
+}
+
 function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayload): void {
   const settings = ctx.store.getSettings()
   if (!settings.notifications) return
@@ -960,6 +998,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
       }
     }),
     mail: new Mailbox(log),
+    gate: new GateKeeper(log),
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
     selectedNodeId: null,
@@ -987,6 +1026,8 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   s.mail.on('change', (messages) => sendToRenderer(s, IPC.mailChanged, messages))
+  s.gate.on('change', (approvals) => sendToRenderer(s, IPC.gateChanged, approvals))
+  s.gate.on('asked', (a: Approval) => notifyApproval(ctx, s, a))
   s.mail.on('mail', (m: { to: string }) => scheduleMailNudge(ctx, s, m.to))
   board.on('status', (p: AgentStatusPayload) => {
     if (p.status === 'idle' || p.status === 'done') scheduleMailNudge(ctx, s, p.nodeId)
@@ -1277,7 +1318,7 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: s.autonomy.settingsFragment()
+        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId))
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
@@ -1332,6 +1373,7 @@ export function registerIpc(ctx: MainContext): void {
     const workspace = read?.workspace ?? null
     s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
     s?.mail.load(mailFile(app.getPath('userData'), projectRoot))
+    s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
     // check() never throws: anything unexpected holds every card
     const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
     return { workspace, projectRoot, ...(held.length ? { held } : {}) }
@@ -1409,6 +1451,22 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.rolesRead, (_e, cwd: string, id: string) => (typeof id === 'string' ? ctx.roles.prompt(typeof cwd === 'string' ? cwd : '', id) : undefined))
   // the owner's Tasks tab: the same ledger the task_* tools use, with the owner as the actor
   ipcMain.handle(IPC.tasksList, (e) => sessionOf(e)?.ledger.list({ all: true }) ?? [])
+  ipcMain.handle(IPC.gateList, (e) => sessionOf(e)?.gate.approvals ?? [])
+  ipcMain.handle(IPC.gateResolve, (e, id: string, approve: boolean) => {
+    const s = sessionOf(e)
+    if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
+    const r = s.gate.resolve(id, approve === true)
+    if (!r.ok) return r
+    const a = r.approval
+    s.autonomy.noteGate(a.card, a.title, `${approve ? 'approved' : 'denied'} by owner (${a.id}): ${a.command}`)
+    const body = approve
+      ? `Approved by the owner (${a.id}): run this exact command again, on its own, within 30 minutes; it is allowed once:
+${a.command}`
+      : `The owner denied ${a.id}. Do not run it again; carry on without it, or ask the owner with a reason:
+${a.command}`
+    const m = s.mail.send({ from: OWNER, to: a.card, body, kind: 'note' }, mailTopology(s.board))
+    return m.ok ? { ok: true } : { ok: true, warning: `decided, but the card was not told: ${m.error}` }
+  })
   ipcMain.handle(IPC.mailList, (e) => sessionOf(e)?.mail.data.messages ?? [])
   ipcMain.handle(IPC.mailSend, (e, to: string, body: string) => {
     const s = sessionOf(e)

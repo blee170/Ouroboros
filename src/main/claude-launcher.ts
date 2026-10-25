@@ -188,7 +188,8 @@ RESULT: <what changed, how verified> · SCORE: <n>/10 · ISSUES: <list or none> 
 - Human gates: production deploys, destructive git (reset --hard, force push, branch deletion, restore_checkpoint with move_head=true — a pushed branch ends up behind its upstream), spending money, sending messages outside this machine — propose, never do, unless the owner replies with the exact phrase APPROVED BY OWNER.
 - Do not do the coding yourself when a card for it exists; delegate and verify.
 - Prefer small parallel cards with clear markers over one long card, within the live-card cap.
-- Keep the owner's own conventions (names, ledgers, checkpoints) exactly as before.`
+- Keep the owner's own conventions (names, ledgers, checkpoints) exactly as before.
+- The owner is only alerted when you need them. End a reply with one owner line, as its very last line, only in these two cases: \`OWNER: DECIDE — <the question, one line>\` when they must choose or approve something, \`OWNER: REPORT — <one line>\` when a finished report or result is ready for them to read. Progress updates, plans, relayed worker results and acknowledgements carry neither.`
 
 export interface PreparedLaunch {
   settingsPath?: string

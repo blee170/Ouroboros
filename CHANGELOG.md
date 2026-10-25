@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.8.3] — 2026-10-25
 
 ### Added
 - **Morning report → Notion** (step 1 of the Notion workflow): Settings → *Notion* takes an internal integration token (stored encrypted, like the GitHub and voice keys) and the URL or id of a Reports database, with a *Test* button that fetches the database by title. With *Publish the morning report* on, every autonomous run ends with a page in that database — properties Name (`<project> · <date> <start → end>`), Date, Project, Ended, Waiting on you (parked cards + blocked tasks), Dispatches, Report file, Status (*New*) — whose body is the report: headings, bullets, the Tasks and Cards tables (separator rows dropped, ragged rows padded, a table over 100 rows split), the timeline, the closing note. Rich-text runs are cut at Notion's 2000 characters and children go up 100 per request (the first 100 with the page, the rest appended; a failed append keeps the page and says how much is there). Publishing is fire-and-forget after the note, the file and the run-ended toast; a 401 / 404 / 429 / network failure, a missing token or database id, a host that throws or rejects, each becomes a *Morning report not published to Notion* toast and a `notion` line in the run log, never a lost report or a throw out of `stop()`. Error text is scrubbed of anything shaped like a token. The Notion side (an **Ouroboros** page holding the **Reports** database with those properties) was created in the owner's workspace through the Notion MCP.
@@ -313,7 +313,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
-[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.8.2...HEAD
+[0.8.3]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.3
 [0.8.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.2
 [0.8.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.1
 [0.8.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.0

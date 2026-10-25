@@ -162,7 +162,7 @@ export function Inspector() {
   }
   const isAgent = d.kind === 'claude' || d.kind === 'conductor'
   const isProcess = d.kind !== 'note' && d.kind !== 'browser' && d.kind !== 'external'
-  const heading = d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? (d.engine === 'codex' ? 'Codex agent' : d.engine === 'gemini' ? 'Gemini agent' : 'Claude agent') : d.kind === 'browser' ? 'Browser' : d.kind === 'command' ? 'Command card' : 'Terminal'
+  const heading = d.kind === 'note' ? 'Note' : d.kind === 'external' ? 'External session' : d.kind === 'conductor' ? 'Conductor' : d.kind === 'claude' ? (d.engine === 'codex' ? 'Codex agent' : d.engine === 'gemini' ? 'Gemini agent' : d.engine === 'grok' ? 'Grok agent' : 'Claude agent') : d.kind === 'browser' ? 'Browser' : d.kind === 'command' ? 'Command card' : 'Terminal'
 
   return (
     <div className="panel inspector" ref={root}>
@@ -271,10 +271,12 @@ export function Inspector() {
                 <option value="claude">Claude Code</option>
                 <option value="codex">OpenAI Codex CLI</option>
                 <option value="gemini">Gemini CLI</option>
+                <option value="grok">Grok Build (xAI)</option>
               </select>
             </div>
             {d.engine === 'codex' && <div className="hint">Codex: turn-complete notify → status; board tools and role prompt via -c overrides; resume uses the thread id. Needs Node.js on PATH.</div>}
             {d.engine === 'gemini' && <div className="hint">Gemini: hooks + MCP from a per-card settings file (your ~/.gemini settings stay); the role prompt is typed as the first message.</div>}
+            {d.engine === 'grok' && <div className="hint">Grok: hooks + MCP from a per-card plugin folder (--plugin-dir; your ~/.grok settings stay); Plan and Accept edits use Grok's own default (switch with Shift+Tab in the card). Needs Node.js on PATH.</div>}
           </label>
           <label className="check">
             <input type="checkbox" checked={Boolean(claude.continue)} onChange={(e) => setClaude({ continue: e.target.checked })} /> Continue the last conversation on launch (--continue)

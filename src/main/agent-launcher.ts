@@ -6,6 +6,8 @@
  * Gemini CLI:  lifecycle via `hooks` and the board MCP via `mcpServers`, both written to a per-card
  *              settings file pointed at by GEMINI_CLI_SYSTEM_SETTINGS_PATH (merged with the user's own:
  *              hook arrays concat, mcpServers shallow-merge); role prompt via `-i` (first message).
+ * Grok Build:  lifecycle hooks and the board MCP from a per-card plugin folder passed with `--plugin-dir`;
+ *              role prompt via `--rules` (posix) or as the first message.
  */
 import type { ClaudeOptions } from '@shared/types'
 import type { ShellKind } from './pty-manager'
@@ -205,4 +207,73 @@ export function buildGeminiLaunch(input: EngineLaunchInput, settingsPath: string
     initialPrompt,
     files: { [settingsPath]: JSON.stringify(buildGeminiSettings(input), null, 2) }
   }
+}
+
+/** Per-card plugin folder for Grok Build: name → contents (relative paths). */
+export function buildGrokPlugin(input: EngineLaunchInput): Record<string, string> {
+  // Which shell Grok runs a hook command in is not documented. A line whose first word is unquoted reads the same in
+  // sh, cmd.exe and PowerShell (a leading quote is a string in PowerShell, and cmd /c strips the outer quotes of a line
+  // that starts with one); later words are double-quoted only when they need it, with forward slashes.
+  const fwd = (p: string): string => p.split(String.fromCharCode(92)).join('/')
+  const plain = (p: string): boolean => /^[A-Za-z0-9_./:-]+$/.test(fwd(p))
+  const arg = (p: string): string => (plain(p) ? fwd(p) : `"${fwd(p)}"`)
+  // a node path with a space (C:/Program Files/nodejs) goes by name: the card's PATH is the app's, where node is found
+  const node = plain(input.nodeBin) ? fwd(input.nodeBin) : 'node'
+  const hookCommand = `${node} ${arg(input.hookScriptPath)} grok --url ${input.baseUrl} --node ${input.nodeId} --token-file ${arg(input.tokenFile)}`
+  // seconds: node start-up + reading stdin + the POST (3 s timeout) can pass Grok's 5 s default
+  const handler = { type: 'command', command: hookCommand, timeout: 10 }
+  const hooks: Record<string, unknown[]> = {}
+  for (const ev of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop', 'StopFailure', 'Notification', 'SessionEnd']) hooks[ev] = [{ hooks: [handler] }]
+  const mcpServers: Record<string, unknown> = {
+    ouroboros: {
+      command: input.nodeBin,
+      args: [input.mcpScriptPath],
+      env: { OUROBOROS_URL: input.baseUrl, OUROBOROS_TOKEN_FILE: input.mcpTokenFile, OUROBOROS_SELF_ID: input.nodeId, ...(input.boardTools ? {} : { OUROBOROS_TOOLS: 'mail' }) }
+    }
+  }
+  for (const [name, spec] of Object.entries(input.claude.mcpServers ?? {})) mcpServers[name] = spec
+  const manifest = JSON.stringify({ name: 'ouroboros-card', version: '1.0.0', description: 'Ouroboros card lifecycle hooks and board tools' }, null, 2)
+  // Grok reads both its own and Claude Code's plugin layout; both manifests point at the same hooks and MCP files
+  return {
+    '.grok-plugin/plugin.json': manifest,
+    '.claude-plugin/plugin.json': manifest,
+    'hooks/hooks.json': JSON.stringify({ hooks }, null, 2),
+    '.mcp.json': JSON.stringify({ mcpServers }, null, 2)
+  }
+}
+
+/**
+ * Grok Build: lifecycle hooks and the board MCP from a per-card plugin folder (`--plugin-dir`), so ~/.grok stays
+ * untouched; the role prompt goes in with `--rules` where the shell can carry it, else as the first message.
+ */
+export function buildGrokLaunch(input: EngineLaunchInput, pluginDir: string): EngineLaunch {
+  const { claude, shell } = input
+  const args: string[] = ['--plugin-dir', pluginDir]
+  if (claude.model) args.push('-m', claude.model)
+  switch (claude.permissionMode) {
+    case 'auto':
+    case 'bypassPermissions':
+    case 'dontAsk':
+      args.push('--always-approve')
+      break
+    default:
+      break
+  }
+  if (claude.resume) args.push('-r', claude.resume)
+  else if (claude.continue) args.push('-c')
+  if (claude.extraArgs?.length) args.push(...claude.extraArgs)
+  const role = input.rolePrompt?.trim()
+  // same rule as Codex: only posix single quotes carry a long multi-line role exactly
+  const inlineRole = Boolean(role) && shell === 'posix'
+  const prefix = shell === 'powershell' ? '& grok ' : 'grok '
+  const line = (a: string[]): string => (prefix + a.map((x) => quoteFor(x, shell, false)).join(' ')).trim()
+  let command = line(inlineRole && role ? [...args, '--rules', role] : args)
+  let roleInline = inlineRole
+  if (roleInline && command.length > MAX_COMMAND_LINE[shell]) {
+    roleInline = false
+    command = line(args)
+  }
+  const files: Record<string, string> = {}
+  for (const [rel, text] of Object.entries(buildGrokPlugin(input))) files[`${pluginDir}/${rel}`] = text
+  return { command, initialPrompt: role && !roleInline ? roleAsMessage(role) : undefined, files }
 }

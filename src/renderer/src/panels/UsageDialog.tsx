@@ -6,7 +6,7 @@ import { Icon } from '@/lib/icons'
 import { useEscape } from '@/lib/useDialog'
 import { ENGINE_ICON } from '@/lib/cardKinds'
 
-const ENGINE_NAME: Record<AgentEngine, string> = { claude: 'Claude Code', codex: 'Codex CLI', gemini: 'Gemini CLI' }
+const ENGINE_NAME: Record<AgentEngine, string> = { claude: 'Claude Code', codex: 'Codex CLI', gemini: 'Gemini CLI', grok: 'Grok Build' }
 
 const hhmm = (t: number): string => {
   const d = new Date(t)

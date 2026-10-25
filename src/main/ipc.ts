@@ -1408,15 +1408,16 @@ export function registerIpc(ctx: MainContext): void {
         launchFailed.add(nodeId)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
       } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
-      else if (n.data.engine === 'codex' && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
-        // Codex sends no session-start event: once it has printed more than the echoed launch line,
-        // treat 4s of quiet as "ready"
+      else if ((n.data.engine === 'codex' || n.data.engine === 'grok') && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
+        // Codex sends no session-start event (and a Grok card whose plugin hooks did not load sends none either):
+        // once it has printed more than the echoed launch line, treat 4s of quiet as "ready"
         clearTimeout(readyTimers.get(nodeId))
         readyTimers.set(
           nodeId,
           setTimeout(() => {
             const cur = board.nodes.get(nodeId)
-            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+            // a Grok card sends SessionStart from its plugin hooks: ready without one means the hooks did not load
+            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: cur.data.engine === 'grok' ? 'ready (no hooks yet: status and lines may not work)' : 'ready' })
           }, 4000)
         )
       }

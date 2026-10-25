@@ -6,6 +6,8 @@
  *           (Codex `notify` passes its JSON payload as the last argv and no environment)
  *   gemini: `node agent-hook.js gemini` with the hook JSON on stdin and
  *           OUROBOROS_URL / OUROBOROS_NODE_ID in the environment (set per hook in settings)
+ *   grok:   `node agent-hook.js grok --url <base> --node <id> --token-file <f>` with the hook JSON on stdin
+ *           (Grok Build plugin hooks take no environment of ours)
  *
  * The pure mapping functions are exported for tests; `main` only runs when executed directly.
  */
@@ -57,6 +59,39 @@ export function mapGeminiHook(input: Record<string, unknown>): OuroHook | null {
     }
     case 'SessionEnd':
       return { ...base, hook_event_name: 'SessionEnd' }
+    default:
+      return null
+  }
+}
+
+/** First string among the given keys (Grok sends camelCase; snake_case is accepted for Claude-style payloads). */
+function pick(input: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const k of keys) if (typeof input[k] === 'string') return input[k] as string
+  return undefined
+}
+
+/** Grok Build hook input (stdin JSON) → Ouroboros hook event. Grok uses Claude Code's event names. */
+export function mapGrokHook(input: Record<string, unknown>, envEvent?: string): OuroHook | null {
+  const name = pick(input, 'hookEventName', 'hook_event_name') ?? envEvent ?? ''
+  const base = { session_id: pick(input, 'sessionId', 'session_id'), cwd: pick(input, 'cwd', 'workspaceRoot') }
+  switch (name) {
+    case 'SessionStart':
+    case 'UserPromptSubmit':
+    case 'SessionEnd':
+      return { ...base, hook_event_name: name }
+    case 'PreToolUse':
+      return { ...base, hook_event_name: 'PreToolUse', tool_name: pick(input, 'toolName', 'tool_name') }
+    case 'Stop':
+      // the reply's field is not documented; `message` is left out (a stop reason could sit there and pass as the reply)
+      return { ...base, hook_event_name: 'Stop', last_assistant_message: pick(input, 'lastAssistantMessage', 'last_assistant_message', 'response') ?? '' }
+    case 'StopFailure':
+      // a turn that ended on an API error: the card shows "failed:" (not a reply, so no line fires on it)
+      return { ...base, hook_event_name: 'StopFailure', message: pick(input, 'error', 'message', 'reason') }
+    case 'Notification': {
+      const t = pick(input, 'notificationType', 'notification_type') ?? ''
+      const message = pick(input, 'message', 'title')
+      return { ...base, hook_event_name: 'Notification', notification_type: /permission|approv/i.test(`${t} ${message ?? ''}`) ? 'permission_prompt' : t, message }
+    }
     default:
       return null
   }
@@ -198,6 +233,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<void
   try {
     if (adapter === 'codex') event = mapCodexNotify(JSON.parse(positional[positional.length - 1] ?? '{}'))
     else if (adapter === 'gemini') event = mapGeminiHook(JSON.parse((await readStdin()) || '{}'))
+    else if (adapter === 'grok') event = mapGrokHook(JSON.parse((await readStdin()) || '{}'), env.GROK_HOOK_EVENT)
   } catch {
     event = null
   }

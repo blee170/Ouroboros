@@ -148,6 +148,11 @@ const api: OuroborosApi = {
     synthesize: (text) => ipcRenderer.invoke(IPC.ttsSynthesize, text),
     setKey: (engine, key) => ipcRenderer.invoke(IPC.ttsSetKey, engine, key),
     keys: () => ipcRenderer.invoke(IPC.ttsKeys)
+  },
+  notion: {
+    setToken: (token) => ipcRenderer.invoke(IPC.notionSetToken, token),
+    status: () => ipcRenderer.invoke(IPC.notionStatus),
+    test: () => ipcRenderer.invoke(IPC.notionTest)
   }
 }
 

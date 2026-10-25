@@ -65,6 +65,9 @@ export const IPC = {
   ttsSynthesize: 'tts:synthesize',
   ttsSetKey: 'tts:setKey',
   ttsKeys: 'tts:keys',
+  notionSetToken: 'notion:setToken',
+  notionStatus: 'notion:status',
+  notionTest: 'notion:test',
   tidyCandidates: 'tidy:candidates',
   bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
@@ -456,6 +459,14 @@ export interface OuroborosApi {
     setKey(engine: TtsKeyEngine, key: string): Promise<{ ok: boolean; hasKey: boolean }>
     /** Which engines have a key saved. */
     keys(): Promise<Record<TtsKeyEngine, boolean>>
+  }
+  notion: {
+    /** Store (encrypted) the Notion integration token; empty string clears it. */
+    setToken(token: string): Promise<{ ok: boolean; hasToken: boolean }>
+    /** Whether a token is saved, and the database id as stored. */
+    status(): Promise<{ hasToken: boolean; databaseId?: string }>
+    /** Fetch the Reports database with the saved token: its title, or why not. */
+    test(): Promise<{ ok: true; title: string } | { ok: false; error: string }>
   }
 }
 

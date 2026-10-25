@@ -6,6 +6,8 @@ import { LIMIT_PROMPT, LIMIT_RETRY_MINUTES, NUDGE_PROMPT, RESUME_PROMPT, START_G
 import { failureOf } from '@shared/status'
 import type { Board } from './board'
 import type { Task } from '@shared/ledger'
+import type { ReportMeta } from '@shared/notion'
+import type { NotionResult } from './notion'
 
 export type { AutonomyPublic }
 
@@ -30,6 +32,12 @@ export interface AutonomyHost {
   evidence(cwd: string): Promise<CardEvidence | undefined>
   /** The task ledger, for the report's Tasks section and the blocked tasks under "Waiting on you". */
   tasks?(): Task[]
+  /**
+   * The report publisher (Notion) for a run, resolved from Settings when the run *starts*: a card that rewrites the
+   * settings file during the night cannot redirect the morning report. Undefined when publishing is off; the
+   * publisher itself is never awaited before the note is on the canvas.
+   */
+  publisher?(): ((markdown: string, run: Omit<ReportMeta, 'project'>) => Promise<NotionResult>) | undefined
   now?: () => number
 }
 
@@ -57,6 +65,7 @@ export class Autonomy {
   /** cards still on the run's deny rules and auto mode after it stopped: relaunched (same conversation) once their turn is over */
   private unrail = new Set<string>()
   private ended: AutonomyPublic['ended']
+  private publishTo: ((markdown: string, run: Omit<ReportMeta, 'project'>) => Promise<NotionResult>) | undefined
   private readonly onStatus = (p: AgentStatusPayload): void => this.handleStatus(p)
   private readonly onHook = (p: { nodeId: string; event: HookEvent }): void => this.handleHook(p)
   private readonly onStop = (nodeId: string, message: string): void => this.handleStop(nodeId, message)
@@ -90,6 +99,7 @@ export class Autonomy {
     this.logPath = join(this.host.dir, `run-${stamp}.jsonl`)
     this.reportPath = join(this.host.dir, `run-${stamp}.md`)
     this.release = this.host.keepAwake()
+    this.publishTo = this.host.publisher?.()
     this.state = newRunState(config, now)
     this.events = []
     this.ended = undefined
@@ -143,12 +153,18 @@ export class Autonomy {
     this.briefPending.clear()
     this.resumePending.clear()
     this.record({ kind: 'stop', detail: reason })
+    const reportPath = this.reportPath
+    const logPath = this.logPath
     const agents = this.host.agents()
     const tasks = this.host.tasks?.() ?? []
     let saveError = this.writeReport(reportMarkdown(s, this.events, agents, {}, tasks))
     this.ended = { at: s.stopped.at, reason, reportPath: this.reportPath }
     this.host.changed(this.public())
-    if (opts.quick) return this.public()
+    if (opts.quick) {
+      // the window is closing and the process may quit under a request: say so instead of publishing into the void
+      if (this.publishTo) this.record({ kind: 'notion', detail: 'not published: window closed before the run ended; the report file is complete' })
+      return this.public()
+    }
     this.dropRails()
     const evidence: Record<string, CardEvidence> = {}
     for (const a of agents) {
@@ -162,7 +178,40 @@ export class Autonomy {
     saveError = this.writeReport(md)
     this.host.addNote('Morning report', `${md}\n\n_${saveError ? `Could not save the report file (${saveError}); this note is the only copy` : `Saved at ${this.reportPath}`}_`)
     this.host.toast('Autonomous run ended', `${reason}. ${Object.keys(s.parked).length} waiting on you; the report is on the canvas${saveError ? ' (file not saved)' : ''}. Cards restart without the run's rules once their turn is over.`)
+    this.publish(md, s, tasks, reportPath, logPath)
     return this.public()
+  }
+
+  /** Fire-and-forget: the note, the file and the toast never wait for Notion; the outcome goes to the run log, a failure also to a toast. */
+  private publish(md: string, s: RunState, tasks: Task[], reportPath: string, logPath: string): void {
+    const endedAt = s.stopped?.at ?? this.now()
+    let p: Promise<NotionResult> | undefined
+    try {
+      p = this.publishTo?.(md, { startedAt: s.startedAt, endedAt, reason: s.stopped?.reason ?? '', waiting: Object.keys(s.parked).length + tasks.filter((t) => t.state === 'blocked').length, dispatches: s.dispatches, reportPath })
+    } catch (err) {
+      p = Promise.resolve({ ok: false, error: err instanceof Error ? err.message : String(err) })
+    }
+    if (!p) return
+    // the outcome lands in *this* run's log: by then a new run may own this.logPath and this.events
+    const note = (detail: string): void => {
+      const full: RunEvent = { at: this.now(), kind: 'notion', detail }
+      if (this.state === s) this.events.push(full)
+      try {
+        appendFileSync(logPath, JSON.stringify(full) + '\n')
+      } catch {
+        /* the toast still says it */
+      }
+    }
+    const failed = (error: string): void => {
+      note(`not published: ${error}`)
+      this.host.toast('Morning report not published to Notion', `${error}. The note on the canvas and the report file are complete.`)
+    }
+    p.then(
+      (r) => (r.ok ? note(`published ${r.url}${r.partial ? ` · ${r.partial}` : ''}`) : failed(r.error)),
+      (err: unknown) => failed(err instanceof Error ? err.message : String(err))
+    ).catch(() => {
+      /* a toast or a log line that itself failed: nothing left to say it with */
+    })
   }
 
   private writeReport(md: string): string | null {

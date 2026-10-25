@@ -219,6 +219,8 @@ export interface AppSettings {
   keepEnvApiKey?: boolean
   /** Pass deploy / database / cloud tokens (GITHUB_TOKEN, SUPABASE_ACCESS_TOKEN, …) and the other engines' keys from the environment into agent cards (default false: dropped). */
   passCredentialEnv?: boolean
+  /** Phone companion server (Settings → Phone): off by default, one interface, Tailscale unless the home LAN is allowed. */
+  phone?: { enabled: boolean; host?: string; port: number; allowLan: boolean }
   /** The first-run guide (? in the toolbar) was shown once; it opens by itself only while this is unset. */
   tourSeen?: boolean
   /** Whose finished turns are announced: off | conductor (default) | all agent cards. */

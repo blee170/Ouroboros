@@ -329,6 +329,11 @@ export class Autonomy {
     if (this.on) this.record({ kind: 'gate', card, title, detail })
   }
 
+  /** Something done from the phone (a prompt, an answer, an approval), for the run log and the report. */
+  notePhone(detail: string): void {
+    if (this.on) this.record({ kind: 'phone', detail })
+  }
+
   private record(e: Omit<RunEvent, 'at'>): void {
     const full: RunEvent = { at: this.now(), ...e }
     this.events.push(full)

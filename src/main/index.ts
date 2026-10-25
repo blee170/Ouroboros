@@ -1,10 +1,11 @@
-import { BrowserWindow, Menu, Tray, app, crashReporter, nativeImage, shell } from 'electron'
+import { BrowserWindow, Menu, Notification, Tray, app, crashReporter, nativeImage, shell } from 'electron'
 import { initDiagnostics, log } from './diagnostics'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer, PREFERRED_HOOK_PORT } from './hook-server'
+import type { PhoneServer } from './phone-server'
 import { globalExternalHooksInstalled, loadExternalToken, setGlobalExternalHooks } from './external'
 
 /** The external-hook token; an unwritable data folder must not stop the app (outside sessions just go unseen). */
@@ -16,7 +17,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -166,6 +167,7 @@ async function main(): Promise<void> {
     mcpScriptPath: resolveMcpScriptPath(),
     roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
     hookServer: null as unknown as HookServer,
+    phone: null as unknown as PhoneServer,
     boardTrust: new BoardTrust(join(app.getPath('userData'), 'board-trust.json'), log),
     usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines })
   }
@@ -192,7 +194,16 @@ async function main(): Promise<void> {
       log(`external hooks not updated: ${(err as Error).message}`)
     }
   }
+  ctx.phone = createPhone(ctx)
   registerIpc(ctx)
+  const phoneView = store.getSettings().phone
+  if (phoneView?.enabled) {
+    void ctx.phone.apply(phoneView).then((err) => {
+      if (err) log(`[phone] not started: ${err}`)
+      // the owner sees that the phone server came up, and with how many phones: a settings file changed behind their back shows here
+      if (Notification.isSupported()) new Notification({ title: 'Phone companion is on', body: err ? `Not listening: ${err}` : `${ctx.phone.url} · ${ctx.phone.devices.list.length} phone(s) paired. Turn it off in Settings → Phone.` }).show()
+    })
+  }
 
   createWindow(ctx, initialProjectArg())
   createTray(ctx)
@@ -213,6 +224,7 @@ async function main(): Promise<void> {
     log('will-quit')
     ptys.killAll()
     ctx.hookServer.stop()
+    ctx.phone?.stop()
   })
   app.on('window-all-closed', () => {
     if (!ctx.store.getSettings().minimizeToTray || !tray) app.quit()

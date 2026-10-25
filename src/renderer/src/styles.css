@@ -153,6 +153,11 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 .auto-pill .icon-btn { width: 18px; height: 18px; color: inherit; }
 .auto-pill .icon-btn:hover { color: var(--danger); background: transparent; }
 .approvals { position: relative; display: inline-flex; }
+.warn-text { color: var(--warn); }
+.phone-qr { width: 168px; height: 168px; background: #fff; border-radius: var(--r-sm); image-rendering: pixelated; }
+.phone-pair { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+.phone-devices { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.ctl .port { width: 90px; flex: none; }
 .approvals-chip, .approvals-chip:hover:not(:disabled) { color: var(--needs); }
 .approvals-pop { position: absolute; bottom: 24px; right: 0; width: 420px; max-height: 60vh; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-sm); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); padding: 8px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
 .approval { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }

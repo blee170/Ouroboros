@@ -1,7 +1,7 @@
 import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
 import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
@@ -18,6 +18,8 @@ import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
 import { buildGateCommand, prepareLaunch } from './claude-launcher'
 import { GateKeeper, auditFile } from './gate'
+import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
+import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -98,6 +100,8 @@ export interface MainContext {
   openProjectWindow(projectRoot?: string): WindowSession
   ptys: PtyManager
   hookServer: HookServer
+  /** The phone companion's server (off unless the owner turns it on in Settings → Phone). */
+  phone: PhoneServer
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
   usage: UsageMonitor
   store: UserStore
@@ -601,6 +605,105 @@ function notifyApproval(ctx: MainContext, s: WindowSession, a: Approval): void {
     note.show()
   }
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+}
+
+/** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
+export function createPhone(ctx: MainContext): PhoneServer {
+  const win = (): WindowSession | undefined => ctx.windows.current()
+  const handlers: PhoneHandlers = {
+    board: () => {
+      const s = win()
+      if (!s) return { project: '', autonomous: false, cards: [], approvals: [] }
+      const rank = (st: string | undefined): number => (st === 'needs-you' ? 0 : st === 'working' ? 1 : 2)
+      const cards = [...s.board.nodes.values()]
+        .filter((n) => n.data.kind === 'claude' || n.data.kind === 'conductor')
+        .map((n) => ({
+          id: n.id,
+          title: n.data.title,
+          conductor: n.data.kind === 'conductor',
+          status: n.data.status ?? 'starting',
+          detail: (n.data.statusDetail ?? '').slice(0, 300),
+          last: (n.data.lastAssistantMessage ?? '').slice(-PHONE_LIMITS.replyChars),
+          permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission'),
+          promptAt: n.data.lastEventAt,
+          promptable: n.data.status !== 'needs-you' && ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id)
+        }))
+        .sort((a, b) => rank(a.status) - rank(b.status) || Number(b.conductor) - Number(a.conductor))
+      // every window's requests, each id scoped to its window (each window counts A1, A2 … on its own)
+      const approvals = ctx.windows.all().flatMap((w) => w.gate.pending().map((a) => ({ id: `${w.id}-${a.id}`, title: a.title, command: a.command, createdAt: a.createdAt, project: basename(w.board.projectRoot || '') })))
+      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, approvals }
+    },
+    prompt: (id, text) => {
+      const s = ctx.windows.forNode(id)
+      const n = s?.board.nodes.get(id)
+      if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
+      if (n.data.status === 'needs-you') return { ok: false, error: 'the card is waiting on a prompt: answer it first' }
+      return sendPrompt(ctx, s, id, text) ? { ok: true } : { ok: false, error: 'not delivered (the card is not running, or the run does not allow it)' }
+    },
+    answer: (id, key, promptAt) => {
+      const s = ctx.windows.forNode(id)
+      const n = s?.board.nodes.get(id)
+      if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
+      if (n.data.status !== 'needs-you' || !(n.data.statusDetail ?? '').startsWith('permission')) return { ok: false, error: 'the card is not waiting on a permission prompt' }
+      if (!ctx.ptys.isAlive(id)) return { ok: false, error: 'the card is not running' }
+      if (n.data.lastEventAt !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
+      // a raw keystroke, not a bracketed paste: the permission dialog reads keys
+      ctx.ptys.write(id, ANSWER_KEYS[key])
+      return { ok: true }
+    },
+    resolveApproval: (scoped, approve) => {
+      const m = /^(\d+)-(A\d+)$/.exec(scoped)
+      const s = m ? ctx.windows.all().find((w) => String(w.id) === m[1]) : undefined
+      return s && m ? resolveApproval(s, m[2], approve) : { ok: false, error: 'that request is gone (its window was closed)' }
+    },
+    latestReport: () => {
+      const p = win()?.autonomy.public().ended?.reportPath
+      if (!p) return undefined
+      try {
+        return readFileSync(p, 'utf8')
+      } catch {
+        return undefined
+      }
+    },
+    note: (line) => {
+      log(`[phone] ${line}`)
+      win()?.autonomy.notePhone(line)
+    }
+  }
+  return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), handlers, log)
+}
+
+function phoneStatus(ctx: MainContext): PhoneStatus {
+  const v = ctx.store.getSettings().phone ?? { enabled: false, port: DEFAULT_PHONE_PORT, allowLan: false }
+  return { ...v, url: ctx.phone.url, error: ctx.phone.error, devices: ctx.phone.devices.list.map(({ tokenHash: _h, ...d }) => d) }
+}
+
+/** IPv4 addresses the phone server could listen on, Tailscale first. */
+function phoneInterfaces(): Array<{ name: string; address: string; kind: 'tailscale' | 'lan' | 'other' }> {
+  const out: Array<{ name: string; address: string; kind: 'tailscale' | 'lan' | 'other' }> = []
+  for (const [name, list] of Object.entries(networkInterfaces())) {
+    for (const a of list ?? []) {
+      if (a.family !== 'IPv4' || a.internal) continue
+      out.push({ name, address: a.address, kind: isTailscale(a.address) ? 'tailscale' : isPrivateLan(a.address) ? 'lan' : 'other' })
+    }
+  }
+  const order = { tailscale: 0, lan: 1, other: 2 }
+  return out.sort((a, b) => order[a.kind] - order[b.kind])
+}
+
+/** The owner's answer to a gate request (status bar or phone): decided, logged, and the card told by board mail. */
+function resolveApproval(s: WindowSession, id: string, approve: boolean): { ok: boolean; error?: string; warning?: string } {
+  const r = s.gate.resolve(id, approve === true)
+  if (!r.ok) return r
+  const a = r.approval
+  s.autonomy.noteGate(a.card, a.title, `${approve ? 'approved' : 'denied'} by owner (${a.id}): ${a.command}`)
+  const body = approve
+    ? `Approved by the owner (${a.id}): run this exact command again, on its own, within 30 minutes; it is allowed once:
+${a.command}`
+    : `The owner denied ${a.id}. Do not run it again; carry on without it, or ask the owner with a reason:
+${a.command}`
+  const m = s.mail.send({ from: OWNER, to: a.card, body, kind: 'note' }, mailTopology(s.board))
+  return m.ok ? { ok: true } : { ok: true, warning: `decided, but the card was not told: ${m.error}` }
 }
 
 /** The gate hook command for a card, or undefined (the run then keeps pushes and merges denied) when node or the helper is missing. */
@@ -1455,17 +1558,20 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.gateResolve, (e, id: string, approve: boolean) => {
     const s = sessionOf(e)
     if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
-    const r = s.gate.resolve(id, approve === true)
-    if (!r.ok) return r
-    const a = r.approval
-    s.autonomy.noteGate(a.card, a.title, `${approve ? 'approved' : 'denied'} by owner (${a.id}): ${a.command}`)
-    const body = approve
-      ? `Approved by the owner (${a.id}): run this exact command again, on its own, within 30 minutes; it is allowed once:
-${a.command}`
-      : `The owner denied ${a.id}. Do not run it again; carry on without it, or ask the owner with a reason:
-${a.command}`
-    const m = s.mail.send({ from: OWNER, to: a.card, body, kind: 'note' }, mailTopology(s.board))
-    return m.ok ? { ok: true } : { ok: true, warning: `decided, but the card was not told: ${m.error}` }
+    return resolveApproval(s, id, approve === true)
+  })
+  ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
+  ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())
+  ipcMain.handle(IPC.phoneConfigure, async (_e, view: PhoneSettingsView) => {
+    const v: PhoneSettingsView = { enabled: view?.enabled === true, host: typeof view?.host === 'string' ? view.host : undefined, port: Number.isInteger(view?.port) && view.port > 1023 && view.port < 65536 ? view.port : DEFAULT_PHONE_PORT, allowLan: view?.allowLan === true }
+    ctx.store.setSettings({ phone: v })
+    await ctx.phone.apply(v)
+    return phoneStatus(ctx)
+  })
+  ipcMain.handle(IPC.phonePair, () => ctx.phone.newPairing())
+  ipcMain.handle(IPC.phoneRevoke, (_e, id: string) => {
+    if (typeof id === 'string' && ctx.phone.devices.revoke(id)) log(`[phone] device ${id} revoked`)
+    return phoneStatus(ctx)
   })
   ipcMain.handle(IPC.mailList, (e) => sessionOf(e)?.mail.data.messages ?? [])
   ipcMain.handle(IPC.mailSend, (e, to: string, body: string) => {

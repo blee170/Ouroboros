@@ -7,6 +7,7 @@ import type { UsageSnapshot } from './usage'
 import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
 import type { Approval } from './gate'
+import type { PhoneSettingsView, PhoneStatus } from './phone'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -45,6 +46,11 @@ export const IPC = {
   gateList: 'gate:list',
   gateResolve: 'gate:resolve',
   gateChanged: 'gate:changed',
+  phoneStatus: 'phone:status',
+  phoneInterfaces: 'phone:interfaces',
+  phoneConfigure: 'phone:configure',
+  phonePair: 'phone:pair',
+  phoneRevoke: 'phone:revoke',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -443,6 +449,14 @@ export interface OuroborosApi {
     /** The owner messages a card (the Inspector). */
     send(to: string, body: string): Promise<{ ok: boolean; error?: string }>
     onChange(cb: (messages: Mail[]) => void): () => void
+  }
+  phone: {
+    status(): Promise<PhoneStatus>
+    interfaces(): Promise<Array<{ name: string; address: string; kind: 'tailscale' | 'lan' | 'other' }>>
+    configure(view: PhoneSettingsView): Promise<PhoneStatus>
+    /** a fresh one-use pairing link for the QR */
+    pair(): Promise<{ url: string; expiresAt: number } | { error: string }>
+    revoke(id: string): Promise<PhoneStatus>
   }
   gate: {
     /** Autonomous runs: what cards asked the owner to allow (gh pr merge), and what was decided. */

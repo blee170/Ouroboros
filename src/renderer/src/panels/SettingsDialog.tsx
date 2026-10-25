@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
 import type { AppInfo, UpdateStatus } from '@shared/protocol'
 import { EnginesPanel } from './EnginesPanel'
+import { PhoneSettings } from './PhoneSettings'
 import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
@@ -244,6 +245,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <div className="hint">Test fetches the database with the saved token (stored encrypted, sent only to api.notion.com).</div>
           </label>
         </section>
+
+        <PhoneSettings />
 
         <section className="settings-section">
           <h4>Updates · v{info?.version}</h4>

@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { nanoid } from 'nanoid'
 import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
+import type { HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
@@ -35,8 +36,9 @@ import { buildCommandLine, extractCompleted, type RunningCommand } from './comma
 import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
-import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
-import { loadWorkspace, saveLedger, saveWorkspace, UserStore } from './workspace-store'
+import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, detectEngines } from './engines'
+import { readWorkspace, saveLedger, saveWorkspace, UserStore, WORKSPACE_FILE } from './workspace-store'
+import type { BoardTrust } from './board-trust'
 import { Ledger } from './ledger'
 import { DEFAULT_STALL_MINUTES, newWatchdogState, watchdogReports } from '@shared/watchdog'
 import type { UsageMonitor } from './usage'
@@ -97,6 +99,8 @@ export interface MainContext {
   mcpScriptPath: string
   /** Specialist roles for cards (.claude/agents files and the agency catalog under userData/roles). */
   roles: RoleLibrary
+  /** What the app last wrote to each board file; cards changed outside it are held at open. */
+  boardTrust: BoardTrust
 }
 
 const EDGE_COOLDOWN_MS = 8_000
@@ -993,6 +997,8 @@ export function routeExternalHook(ctx: MainContext, event: HookEvent): void {
   target?.board.applyExternalHook(event)
 }
 
+const HELD_ERROR = 'held: the board file was changed outside Ouroboros. Review the change in the banner above the board.'
+
 /** Process-wide IPC handlers; each one resolves the calling window's session from the sender. */
 export function registerIpc(ctx: MainContext): void {
   const { ptys, hookServer, store } = ctx
@@ -1045,6 +1051,7 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.ptySpawn, async (e, opts: PtySpawnOptions) => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
+    if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
     try {
       ctx.windows.bindNode(opts.nodeId, s.id)
       await throttledSpawn(() => ptys.spawn(opts))
@@ -1074,6 +1081,7 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
+    if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const engine = opts.engine ?? 'claude'
@@ -1105,6 +1113,9 @@ export function registerIpc(ctx: MainContext): void {
       const omitEnv = claudeEnvKeysToStrip(process.env, login, store.getSettings().keepEnvApiKey === true)
       if (omitEnv.length) log(`claude launch ${opts.nodeId}: ${omitEnv.join(', ')} not passed to the card (signed in; Settings → keep the environment key to change this)`)
       else if (login === undefined && claudeEnvKeysToStrip(process.env, true, false).length) log(`claude launch ${opts.nodeId}: sign-in files unreadable, environment key kept`)
+      const credentials = credentialEnvKeys(process.env, engine, store.getSettings().passCredentialEnv === true)
+      if (credentials.length) log(`${engine} launch ${opts.nodeId}: ${credentials.join(', ')} not passed to the card (Settings → pass credential variables to change this)`)
+      omitEnv.push(...credentials)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
@@ -1140,10 +1151,26 @@ export function registerIpc(ctx: MainContext): void {
     }
     s?.ledger.flush() // the previous project's pending ledger write goes to its own file first
     if (s) s.board.projectRoot = projectRoot
+    // a folder opened before had its board written by an older version: that one is trusted as found
+    const known = store.getRecent().some((p) => samePath(p, projectRoot))
     store.pushRecent(projectRoot)
-    const workspace = loadWorkspace(projectRoot)
+    const read = readWorkspace(projectRoot)
+    const workspace = read?.workspace ?? null
     s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
-    return { workspace, projectRoot }
+    // check() never throws: anything unexpected holds every card
+    const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
+    return { workspace, projectRoot, ...(held.length ? { held } : {}) }
+  })
+  ipcMain.handle(IPC.workspaceTrust, (e, nodeIds: string[], revert: boolean) => {
+    const root = sessionOf(e)?.board.projectRoot
+    if (!root || !Array.isArray(nodeIds)) return {}
+    let text: string | undefined
+    try {
+      text = readFileSync(join(root, WORKSPACE_FILE), 'utf8')
+    } catch {
+      /* no board file yet */
+    }
+    return ctx.boardTrust.release(root, nodeIds.filter((id) => typeof id === 'string'), revert === true, text)
   })
   ipcMain.handle(IPC.workspaceSave, (e, ws: Workspace) => {
     // the renderer never carries the ledger: main's copy goes into every save. A save for a project this window has

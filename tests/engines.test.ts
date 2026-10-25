@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ENGINE_META, claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, parseVersion, signedInFromFiles } from '../src/main/engines'
+import { ENGINE_META, claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, parseVersion, signedInFromFiles } from '../src/main/engines'
 
 describe('engines', () => {
   it('parses a version out of --version output', () => {
@@ -67,5 +67,29 @@ describe('engines', () => {
       expect(ENGINE_META[e].install.length).toBeGreaterThan(5)
       expect(ENGINE_META[e].login.length).toBeGreaterThan(3)
     }
+  })
+})
+
+describe('credentialEnvKeys', () => {
+  const env = { PATH: 'x', GITHUB_TOKEN: 'g', gh_token: 'g2', SUPABASE_ACCESS_TOKEN: 's', GITHUB_PAT_CI: 'p', OPENAI_API_KEY: 'o', GEMINI_API_KEY: 'm', ANTHROPIC_API_KEY: 'a', AWS_SECRET_ACCESS_KEY: 'w', EMPTY_TOKEN: '', NPM_TOKEN: '' }
+  it('drops deploy tokens and the other engines keys, keeps the engine own key and plain vars', () => {
+    expect(credentialEnvKeys(env, 'claude', false).sort()).toEqual(['AWS_SECRET_ACCESS_KEY', 'GEMINI_API_KEY', 'GITHUB_PAT_CI', 'GITHUB_TOKEN', 'OPENAI_API_KEY', 'SUPABASE_ACCESS_TOKEN', 'gh_token'])
+    expect(credentialEnvKeys(env, 'codex', false)).toContain('ANTHROPIC_API_KEY')
+    expect(credentialEnvKeys(env, 'codex', false)).not.toContain('OPENAI_API_KEY')
+    expect(credentialEnvKeys(env, 'gemini', false)).not.toContain('GEMINI_API_KEY')
+    expect(credentialEnvKeys(env, 'gemini', false)).toContain('OPENAI_API_KEY')
+  })
+  it('drops other secret-looking names but keeps the app, Claude Code and cloud sign-in variables', () => {
+    const e = { HF_TOKEN: 'h', SENTRY_AUTH_TOKEN: 's', OUROBOROS_HOOK_TOKEN: 'o', CLAUDE_CODE_OAUTH_TOKEN: 'c', SSH_AUTH_SOCK: 'x', CODEX_API_KEY: 'k' }
+    expect(credentialEnvKeys(e, 'claude', false).sort()).toEqual(['CODEX_API_KEY', 'HF_TOKEN', 'SENTRY_AUTH_TOKEN'])
+    expect(credentialEnvKeys(e, 'codex', false)).not.toContain('CODEX_API_KEY')
+    const bedrock = { CLAUDE_CODE_USE_BEDROCK: '1', AWS_ACCESS_KEY_ID: 'a', AWS_SECRET_ACCESS_KEY: 'b', GITHUB_TOKEN: 'g' }
+    expect(credentialEnvKeys(bedrock, 'claude', false)).toEqual(['GITHUB_TOKEN'])
+    expect(credentialEnvKeys(bedrock, 'codex', false).sort()).toEqual(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN'])
+    expect(credentialEnvKeys({ GOOGLE_GENAI_USE_VERTEXAI: 'true', GOOGLE_APPLICATION_CREDENTIALS: 'f' }, 'gemini', false)).toEqual([])
+  })
+  it('leaves empty values and everything when the owner passes them', () => {
+    expect(credentialEnvKeys(env, 'claude', false)).not.toContain('NPM_TOKEN')
+    expect(credentialEnvKeys(env, 'claude', true)).toEqual([])
   })
 })

@@ -5,6 +5,7 @@ import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, S
 import type { UsageSnapshot } from '@shared/usage'
 import type { AutonomyPublic } from '@shared/autonomy'
 import type { Task } from '@shared/ledger'
+import { revertPrivileges, trustedIncoming, type HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
@@ -72,6 +73,8 @@ interface BoardState {
   autonomy: AutonomyPublic
   /** The project's task ledger, as main pushes it (the renderer never edits it directly). */
   tasks: Task[]
+  /** Cards not launched because the board file was changed outside Ouroboros (main refuses them until the owner decides). */
+  held: HeldCard[]
   /** What the right panel shows. */
   rpanelTab: 'inspector' | 'tasks'
   /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
@@ -92,6 +95,8 @@ interface BoardState {
   // actions
   setAutonomy(p: AutonomyPublic): void
   setTasks(t: Task[]): void
+  /** The owner's call on held cards: trust the change as it is, or put the values the app last wrote back. Either way they launch. */
+  resolveHeld(ids: string[], revert: boolean): Promise<void>
   /** Show a tab of the right panel (opening the panel when it is closed). */
   showRpanel(tab: 'inspector' | 'tasks'): void
   setUpdateStatus(p: UpdateStatus): void
@@ -166,7 +171,33 @@ export const useBoard = create<BoardState>((set, get) => ({
     set({ autonomy: p })
   },
   tasks: [],
+  held: [],
   rpanelTab: 'inspector',
+  async resolveHeld(ids, revert) {
+    const views = await api().workspace.trust(ids, revert)
+    const done = new Set(ids)
+    const added = new Set(get().held.filter((h) => done.has(h.nodeId) && h.added).map((h) => h.nodeId))
+    // Revert: a card the app never wrote has nothing to go back to and is removed; a known card gets its trusted
+    // fields back and loses incoming handoff lines that were not in the board the app saved
+    const removed = revert ? added : new Set<string>()
+    const keepLine = (e: BoardEdge): boolean => {
+      if (removed.has(e.source) || removed.has(e.target)) return false
+      if (!revert || !done.has(e.target) || !views[e.target]) return true
+      return trustedIncoming(views[e.target]).some((l) => l.from === e.source && l.mode === (e.data?.mode ?? 'auto') && l.template === (e.data?.template ?? ''))
+    }
+    set({
+      held: get().held.filter((h) => !done.has(h.nodeId)),
+      edges: get().edges.filter(keepLine),
+      nodes: get()
+        .nodes.filter((n) => !removed.has(n.id))
+        .map((n) => {
+          if (!done.has(n.id)) return n
+          const data = revert && views[n.id] ? revertPrivileges(n.data, views[n.id]) : n.data
+          return { ...n, data: { ...data, launchSeq: (Number(n.data.launchSeq) || 0) + 1, status: 'starting', statusDetail: 'starting' } }
+        })
+    })
+    scheduleSync(get)
+  },
   setTasks(t) {
     set({ tasks: t })
   },
@@ -207,11 +238,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   async openProject(root) {
-    const { workspace, alreadyOpen } = await api().workspace.load(root)
+    const { workspace, alreadyOpen, held } = await api().workspace.load(root)
     if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, tasks: [] })
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, tasks: [], held: held ?? [] })
     scheduleSync(get)
     // main loaded the ledger with the board file; a push follows every later change
     void api()

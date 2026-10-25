@@ -4,6 +4,7 @@ import { useBoard } from './store/board'
 import { Canvas } from './canvas/Canvas'
 import { Toolbar } from './panels/Toolbar'
 import { Inspector } from './panels/Inspector'
+import { HeldDialog } from './panels/HeldDialog'
 import { TasksPanel } from './panels/TasksPanel'
 import { Sidebar } from './panels/Sidebar'
 import { StatusBar } from './panels/StatusBar'
@@ -119,6 +120,7 @@ export default function App() {
           )}
         </div>
         {projectRoot && <StatusBar />}
+        {projectRoot && <HeldDialog />}
       </div>
     </ReactFlowProvider>
   )

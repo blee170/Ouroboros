@@ -198,6 +198,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={settings.keepEnvApiKey === true} onChange={(e) => void setSettings({ keepEnvApiKey: e.target.checked })} /> Let an ANTHROPIC_API_KEY in the environment override my Claude sign-in
           </label>
           <div className="hint">Off: while <code>claude</code> is signed in, Claude cards do not inherit ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (a stale key there makes every turn fail with "Invalid API key"). A key for a gateway (ANTHROPIC_BASE_URL set) and a key set in Claude's own settings or your shell profile are left alone. Takes effect for cards launched after the change.</div>
+          <label className="check">
+            <input type="checkbox" checked={settings.passCredentialEnv === true} onChange={(e) => void setSettings({ passCredentialEnv: e.target.checked })} /> Pass my credential variables (GITHUB_TOKEN, SUPABASE_ACCESS_TOKEN, …) to agent cards
+          </label>
+          <div className="hint">Off: agent cards do not inherit deploy, database and cloud tokens from the environment, nor the other engines' API keys, so a card that is talked into printing its environment has none to leak. gh, git and the Supabase CLI keep working through the Windows keyring. Terminal cards are your own shell and keep everything. Takes effect for cards launched after the change.</div>
           <label className="field">
             <span>Browser home</span>
             <div className="ctl">

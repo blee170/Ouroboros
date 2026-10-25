@@ -4,6 +4,15 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Security
+- **Agent cards no longer inherit credential variables** (RESEARCH §11 step 1, rest). Deploy, database and cloud tokens in the environment (`GITHUB_TOKEN`/`GH_TOKEN`, `SUPABASE_ACCESS_TOKEN`, `DATABASE_URL`/`POSTGRES_URL`, `CLOUDFLARE_API_TOKEN`, `VERCEL_TOKEN`, `AWS_*` keys, `NPM_TOKEN`, `STRIPE_SECRET_KEY`, and any other name ending in `_TOKEN`, `_SECRET`, `_PASSWORD`, `_API_KEY`, `_ACCESS_KEY`, `_PRIVATE_KEY`) and the other engines' API keys are dropped from Claude, Codex and Gemini cards, so a card talked into printing its environment has none to leak. The engine's own key stays, and so do the cloud credentials it signs in with (Claude on Bedrock or Vertex, Gemini on Vertex), `OUROBOROS_*` and `CLAUDE_CODE_*`. gh, git and the Supabase CLI keep working through the Windows keyring. Terminal cards are the owner's shell and keep everything. Settings → *Pass my credential variables to agent cards* turns it off; the names dropped are written to main.log at each launch.
+- **Board file trust.** `.ouroboros.json` lives in the project, where any card can write it. The app now records what it last wrote (a hash and every card's launch fields) in its data folder; at the next open a card whose launch fields changed outside the app (permission mode, extra arguments, board tools, MCP servers, model, session to resume, role, startup command or prompt, shell, folder, parent, Conductor kind, or a handoff line into it) is **held**: main refuses to start it and a dialog lists each change in full, with *Revert* (put back what the app saved; a card it never saved is removed, and so are handoff lines it never saved) or *Trust*. A new card is held only when it raises rights. Title, layout and task changes hold nothing. While a card is held, an app save keeps its trusted values and no matching hash, so an autosave cannot launder the change; the task ledger's writer, which re-reads the file, never makes its cards trusted. A board the app never recorded is trusted as found only in a folder opened before (an older version wrote it); a folder never opened (a cloned repo with a board in it) is checked as all-new. Anything unexpected while checking holds every card. The record sits in the app's data folder, which a card running as you can also write: this raises the bar, it is not a boundary, and a card already running keeps what it has.
+
+### Verified
+- Unit tests for the strip list per engine (suffix rule, kept names, Bedrock/Vertex, the switch), the privilege diff (known card, new card, role/resume, handoff lines, a card with no data), revert, and the record across app saves, a held autosave, a ledger write after an outside edit, an unrecorded board in a new folder, an unreadable board, Trust vs Revert before the renderer saved, and a fresh process. Built app (Playwright, temp data folder and home): first open trusted; an outside `initialCommand` edit plus a forged new card held both (not launched, dialog shown); *Revert all* removed the new card, dropped the command and started the card; the next open held nothing. Reviewed by two adversarial passes (silent failures, security); their findings are fixed above. Not verified live: the environment strip (unit tests only).
+
 ## [0.8.4] — 2026-10-25
 
 ### Security
@@ -321,6 +330,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.8.4...HEAD
 [0.8.4]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.4
 [0.8.3]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.3
 [0.8.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.2

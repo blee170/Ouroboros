@@ -217,6 +217,8 @@ export interface AppSettings {
   defaultEngine?: AgentEngine
   /** Pass an ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the environment into Claude cards even when `claude` is signed in (default false: a signed-in owner's cards use the sign-in). */
   keepEnvApiKey?: boolean
+  /** Pass deploy / database / cloud tokens (GITHUB_TOKEN, SUPABASE_ACCESS_TOKEN, …) and the other engines' keys from the environment into agent cards (default false: dropped). */
+  passCredentialEnv?: boolean
   /** The first-run guide (? in the toolbar) was shown once; it opens by itself only while this is unset. */
   tourSeen?: boolean
   /** Whose finished turns are announced: off | conductor (default) | all agent cards. */

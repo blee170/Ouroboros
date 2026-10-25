@@ -18,6 +18,8 @@ function externalTokenOrNull(): string | undefined {
 }
 import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
+import { BoardTrust } from './board-trust'
+import { onBoardWritten } from './workspace-store'
 import { PtyManager } from './pty-manager'
 import { UserStore } from './workspace-store'
 import { Updater, decryptToken } from './updater'
@@ -164,8 +166,10 @@ async function main(): Promise<void> {
     mcpScriptPath: resolveMcpScriptPath(),
     roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
     hookServer: null as unknown as HookServer,
+    boardTrust: new BoardTrust(join(app.getPath('userData'), 'board-trust.json'), log),
     usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines })
   }
+  onBoardWritten((root, text, fromDisk) => ctx.boardTrust.record(root, text, { fromDisk }))
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))
   ctx.hookServer = new HookServer({
     onHook: (nodeId, event) => routeHook(ctx, nodeId, event),

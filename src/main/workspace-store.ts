@@ -6,6 +6,18 @@ import type { LedgerData } from '@shared/ledger'
 
 export const WORKSPACE_FILE = '.ouroboros.json'
 
+type BoardWritten = (projectRoot: string, text: string, fromDisk: boolean) => void
+let boardWritten: BoardWritten | undefined
+/** Called with every board file the app writes (BoardTrust records it); `fromDisk` when its cards were re-read from the file. */
+export function onBoardWritten(fn: BoardWritten | undefined): void {
+  boardWritten = fn
+}
+
+function writeBoard(projectRoot: string, text: string, fromDisk: boolean): void {
+  writeAtomic(join(projectRoot, WORKSPACE_FILE), text)
+  boardWritten?.(projectRoot, text, fromDisk)
+}
+
 function writeAtomic(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true })
   const tmp = path + '.tmp'
@@ -44,18 +56,25 @@ export function saveLedger(projectRoot: string, ledger: LedgerData): void {
       return
     }
   }
-  writeAtomic(file, JSON.stringify({ ...ws, tasks: ledger.tasks, nextTaskId: ledger.nextTaskId }, null, 2))
+  // the cards come from the file as found: the trust record must not take them as the app's own
+  writeBoard(projectRoot, JSON.stringify({ ...ws, tasks: ledger.tasks, nextTaskId: ledger.nextTaskId }, null, 2), true)
 }
 
 export function loadWorkspace(projectRoot: string): Workspace | null {
+  return readWorkspace(projectRoot)?.workspace ?? null
+}
+
+/** The board and the exact text it was parsed from (the trust check hashes the same bytes it parsed). */
+export function readWorkspace(projectRoot: string): { workspace: Workspace; text: string } | null {
   const file = join(projectRoot, WORKSPACE_FILE)
   if (!existsSync(file)) return null
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Workspace
+    const text = readFileSync(file, 'utf8')
+    const parsed = JSON.parse(text) as Workspace
     if (parsed.version !== 1 || !Array.isArray(parsed.nodes)) throw new Error(`unsupported board file (version ${String(parsed.version)})`)
     parsed.projectRoot = projectRoot
     parsed.edges = Array.isArray(parsed.edges) ? parsed.edges : []
-    return parsed
+    return { workspace: parsed, text }
   } catch (err) {
     // an unreadable board (conflict markers, a hand edit, a newer format) would be overwritten by the empty
     // board the window starts with: keep a copy next to it first
@@ -71,7 +90,7 @@ export function loadWorkspace(projectRoot: string): Workspace | null {
 }
 
 export function saveWorkspace(ws: Workspace): void {
-  writeAtomic(join(ws.projectRoot, WORKSPACE_FILE), JSON.stringify(sanitizeWorkspace(ws), null, 2))
+  writeBoard(ws.projectRoot, JSON.stringify(sanitizeWorkspace(ws), null, 2), false)
 }
 
 export class UserStore {

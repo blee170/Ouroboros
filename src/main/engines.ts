@@ -93,6 +93,52 @@ export function claudeEnvKeysToStrip(env: NodeJS.ProcessEnv, signedIn: boolean |
   return Object.keys(env).filter((k) => wanted.has(k.toUpperCase()) && (env[k] ?? '') !== '')
 }
 
+/** Credential variables no agent card needs: the CLIs it runs use the Windows keyring (gh, git, supabase). */
+const CREDENTIAL_VARS = new Set([
+  'GITHUB_TOKEN', 'GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN',
+  'SUPABASE_ACCESS_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_DB_PASSWORD',
+  'DATABASE_URL', 'POSTGRES_PASSWORD', 'PGPASSWORD',
+  'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY', 'CF_API_TOKEN',
+  'VERCEL_TOKEN', 'NETLIFY_AUTH_TOKEN', 'FLY_API_TOKEN',
+  'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
+  'AZURE_CLIENT_SECRET', 'GOOGLE_APPLICATION_CREDENTIALS',
+  'NPM_TOKEN', 'NODE_AUTH_TOKEN',
+  'STRIPE_SECRET_KEY', 'STRIPE_API_KEY',
+  'POSTGRES_URL', 'POSTGRES_PRISMA_URL', 'SUPABASE_DB_URL', 'DIRECT_URL', 'MONGODB_URI', 'REDIS_URL'
+])
+const CREDENTIAL_PREFIXES = ['GITHUB_PAT']
+/** Any other name that says it is a secret (HF_TOKEN, SENTRY_AUTH_TOKEN, SLACK_BOT_TOKEN, …). */
+const CREDENTIAL_SUFFIXES = ['_TOKEN', '_SECRET', '_PASSWORD', '_API_KEY', '_ACCESS_KEY', '_SECRET_KEY', '_PRIVATE_KEY', '_CLIENT_SECRET']
+/** Never dropped by the suffix rule: the app's own variables and Claude Code's settings (its OAuth token among them). */
+const KEEP_PREFIXES = ['OUROBOROS_', 'CLAUDE_CODE_']
+/** Each engine's own sign-in keys; a card loses the other engines' keys. */
+const ENGINE_KEY_VARS: Record<AgentEngine, readonly string[]> = {
+  claude: CLAUDE_KEY_VARS,
+  codex: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+}
+
+/**
+ * Pure: credential variables an agent card must not inherit (§11.5 #3): a prompt-injected card can print its
+ * environment. Deploy, database and cloud tokens are dropped, and so are the other engines' keys; the card's own
+ * engine key is left to `claudeEnvKeysToStrip` (Claude) or kept (Codex, Gemini). The owner can pass them on purpose.
+ */
+export function credentialEnvKeys(env: NodeJS.ProcessEnv, engine: AgentEngine, passCredentials: boolean): string[] {
+  if (passCredentials) return []
+  const flag = (name: string): boolean => Object.keys(env).some((k) => k.toUpperCase() === name && /^(1|true|yes)$/i.test((env[k] ?? '').trim()))
+  const own = new Set<string>(ENGINE_KEY_VARS[engine])
+  // a cloud the engine signs in through keeps its credentials: Claude on Bedrock / Vertex, Gemini on Vertex
+  if (engine === 'claude' && flag('CLAUDE_CODE_USE_BEDROCK')) for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK']) own.add(k)
+  if ((engine === 'claude' && flag('CLAUDE_CODE_USE_VERTEX')) || (engine === 'gemini' && flag('GOOGLE_GENAI_USE_VERTEXAI'))) own.add('GOOGLE_APPLICATION_CREDENTIALS')
+  const foreign = new Set((Object.keys(ENGINE_KEY_VARS) as AgentEngine[]).filter((e) => e !== engine).flatMap((e) => ENGINE_KEY_VARS[e]))
+  return Object.keys(env).filter((k) => {
+    const u = k.toUpperCase()
+    if ((env[k] ?? '') === '' || own.has(u)) return false
+    if (CREDENTIAL_VARS.has(u) || foreign.has(u) || CREDENTIAL_PREFIXES.some((p) => u.startsWith(p))) return true
+    return !KEEP_PREFIXES.some((p) => u.startsWith(p)) && CREDENTIAL_SUFFIXES.some((s) => u.endsWith(s))
+  })
+}
+
 /**
  * Pure: sign-in state from the files each CLI keeps (undefined only when the files cannot be read). For Claude an
  * API key in the environment does not count: the app drops it from the cards of a signed-in owner (see

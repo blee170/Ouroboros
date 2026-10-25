@@ -4,6 +4,7 @@ import type { AutonomyConfig, AutonomyPublic } from './autonomy'
 import type { RolesListing } from './roles'
 import type { LedgerApiResult, Task, TaskInput, TaskPatch } from './ledger'
 import type { UsageSnapshot } from './usage'
+import type { HeldCard, PrivilegeView } from './board-trust'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -17,6 +18,7 @@ export const IPC = {
   boardSync: 'board:sync',
   boardSelected: 'board:selected',
   workspaceLoad: 'workspace:load',
+  workspaceTrust: 'workspace:trust',
   workspaceSave: 'workspace:save',
   projectOpen: 'project:open',
   projectRecent: 'project:recent',
@@ -278,6 +280,8 @@ export interface WorkspaceLoadResult {
   projectRoot: string
   /** The folder is already open in another window (which was focused instead). */
   alreadyOpen?: boolean
+  /** Cards whose launch fields were changed outside Ouroboros since the app last wrote the file: not launched until the owner decides. */
+  held?: HeldCard[]
 }
 
 /** The API exposed to the renderer through contextBridge. */
@@ -320,6 +324,8 @@ export interface OuroborosApi {
   }
   workspace: {
     load(projectRoot: string): Promise<WorkspaceLoadResult>
+    /** Release held cards (Trust keeps the change, Revert gets the trusted views back to put in place). */
+    trust(nodeIds: string[], revert: boolean): Promise<Record<string, PrivilegeView>>
     save(workspace: Workspace): Promise<void>
     openProject(): Promise<string | null>
     recent(): Promise<string[]>

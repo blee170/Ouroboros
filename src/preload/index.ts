@@ -39,6 +39,7 @@ const api: OuroborosApi = {
   },
   workspace: {
     load: (projectRoot) => ipcRenderer.invoke(IPC.workspaceLoad, projectRoot),
+    trust: (nodeIds, revert) => ipcRenderer.invoke(IPC.workspaceTrust, nodeIds, revert),
     save: (ws) => ipcRenderer.invoke(IPC.workspaceSave, ws),
     openProject: () => ipcRenderer.invoke(IPC.projectOpen),
     recent: () => ipcRenderer.invoke(IPC.projectRecent)

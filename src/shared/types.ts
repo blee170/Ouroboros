@@ -226,6 +226,8 @@ export interface AppSettings {
   tourSeen?: boolean
   /** Whose finished turns are announced: off | conductor (default) | all agent cards. */
   announce?: 'off' | 'conductor' | 'all'
+  /** Which finished turns: important (default: a decision or a report for the owner) | every (any turn of 10 s or more). */
+  announceMode?: 'important' | 'every'
   /** Desktop toast with the first line of the reply (default on). */
   announceToast?: boolean
   /** Speak the announcement with a Windows voice (default on). */

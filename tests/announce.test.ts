@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { BoardDone, Burst, MIN_TURN_MS, announceSettings, announcesStop, firstLine, langFor, phrase } from '@shared/announce'
+import { BoardDone, Burst, MIN_TURN_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement } from '@shared/announce'
 
 describe('announce settings', () => {
-  it('defaults to conductor replies, toast and voice on', () => {
-    expect(announceSettings({})).toEqual({ target: 'conductor', toast: true, voice: true })
-    expect(announceSettings({ announce: 'all', announceToast: false, announceVoice: false })).toEqual({ target: 'all', toast: false, voice: false })
+  it('defaults to conductor replies, decisions and reports only, toast and voice on', () => {
+    expect(announceSettings({})).toEqual({ target: 'conductor', toast: true, voice: true, mode: 'important' })
+    expect(announceSettings({ announce: 'all', announceToast: false, announceVoice: false, announceMode: 'every' })).toEqual({ target: 'all', toast: false, voice: false, mode: 'every' })
   })
 })
 
@@ -20,28 +20,62 @@ describe('phrase and language', () => {
     expect(phrase({ kind: 'finished', title: 'Conductor ', lang: 'en' })).toBe('Conductor finished. Please check the report.')
     expect(phrase({ kind: 'finished', title: '총괄', lang: 'ko' })).toBe('총괄 작업이 끝났습니다. 보고를 확인해 주세요.')
     expect(phrase({ kind: 'needs-you', title: 'Reviewer', lang: 'en' })).toBe('Reviewer needs you.')
+    expect(phrase({ kind: 'decision', title: '총괄', lang: 'ko' })).toBe('총괄: 결정이 필요합니다.')
+    expect(phrase({ kind: 'report', title: 'Conductor', lang: 'en' })).toBe('Conductor: a report is ready.')
     expect(phrase({ kind: 'all-done', title: '', lang: 'ko' })).toBe('모든 카드 작업이 끝났습니다.')
     // the renderer re-renders in English when no Korean voice is installed
     expect(phrase({ kind: 'all-done', title: '', lang: 'ko' }, 'en')).toBe('All cards have finished.')
   })
 })
 
-describe('announcesStop', () => {
-  const on = announceSettings({})
-  it('announces conductor turns of 10 s or more by default, not workers', () => {
-    expect(announcesStop('conductor', MIN_TURN_MS, on)).toBe(true)
-    expect(announcesStop('conductor', MIN_TURN_MS - 1, on)).toBe(false)
-    expect(announcesStop('conductor', undefined, on)).toBe(true)
-    expect(announcesStop('claude', 60_000, on)).toBe(false)
+describe('ownerMarker', () => {
+  it('reads the owner line at the end of a reply', () => {
+    expect(ownerMarker('Plan done.\n\nOWNER: DECIDE — ship 0.9.1 now or wait for #23?')).toEqual({ kind: 'decision', line: 'ship 0.9.1 now or wait for #23?' })
+    expect(ownerMarker('Summary…\r\n**OWNER: REPORT** - brief published\r\n')).toEqual({ kind: 'report', line: 'brief published' })
+    expect(ownerMarker('- OWNER: decision: pick a name')).toEqual({ kind: 'decision', line: 'pick a name' })
+    expect(ownerMarker('OWNER: DECIDE — x\n\n---\n\n이상입니다.')).toEqual({ kind: 'decision', line: 'x' })
+    for (const l of ['**OWNER:** DECIDE — x', '**OWNER**: DECIDE — x', '1. OWNER: DECIDE — x', '• OWNER: DECIDE — x', '## OWNER: DECIDE — x', 'OWNER：DECIDE — x'])
+      expect(ownerMarker(`done\n${l}`)).toEqual({ kind: 'decision', line: 'x' })
   })
-  it('target=all covers every agent card but never notes, browsers or external sessions', () => {
+  it('ignores an owner line buried in the middle of a reply, and look-alikes', () => {
+    expect(ownerMarker('Worker said:\nOWNER: DECIDE — x\na\nb\nc\nd')).toBeUndefined()
+    expect(ownerMarker('The OWNER: DECIDE line is for gates.')).toBeUndefined()
+    expect(ownerMarker('OWNER: REPORTED nothing')).toBeUndefined()
+    expect(ownerMarker('')).toBeUndefined()
+  })
+})
+
+describe('stopAnnouncement', () => {
+  const on = announceSettings({})
+  const plain = { reply: 'Working on it: 3 cards started.', reportLink: false, askedApproval: false }
+  it('stays silent on a progress reply, however long the turn', () => {
+    expect(stopAnnouncement('conductor', 600_000, on, plain)).toBeNull()
+    expect(stopAnnouncement('conductor', undefined, on, plain)).toBeNull()
+  })
+  it('announces a decision before a report, regardless of turn length', () => {
+    expect(stopAnnouncement('conductor', 1_000, on, { ...plain, reply: 'x\nOWNER: DECIDE — merge?' })).toBe('decision')
+    expect(stopAnnouncement('conductor', 1_000, on, { ...plain, askedApproval: true, reportLink: true })).toBe('decision')
+    expect(stopAnnouncement('conductor', 1_000, on, { ...plain, reply: 'x\nOWNER: REPORT — done' })).toBe('report')
+    expect(stopAnnouncement('conductor', 1_000, on, { ...plain, reportLink: true })).toBe('report')
+  })
+  it('only the conductor by default; target=all covers agent cards but never notes, browsers or external sessions', () => {
+    const ask = { ...plain, askedApproval: true }
+    expect(stopAnnouncement('claude', 60_000, on, ask)).toBeNull()
     const all = announceSettings({ announce: 'all' })
-    for (const k of ['claude', 'terminal', 'command', 'conductor'] as const) expect(announcesStop(k, 60_000, all)).toBe(true)
-    for (const k of ['note', 'browser', 'external'] as const) expect(announcesStop(k, 60_000, all)).toBe(false)
+    for (const k of ['claude', 'terminal', 'command', 'conductor'] as const) expect(stopAnnouncement(k, 60_000, all, ask)).toBe('decision')
+    for (const k of ['note', 'browser', 'external'] as const) expect(stopAnnouncement(k, 60_000, all, ask)).toBeNull()
   })
   it('is silent when off or when both channels are off', () => {
-    expect(announcesStop('conductor', 60_000, announceSettings({ announce: 'off' }))).toBe(false)
-    expect(announcesStop('conductor', 60_000, announceSettings({ announceToast: false, announceVoice: false }))).toBe(false)
+    const ask = { ...plain, askedApproval: true }
+    expect(stopAnnouncement('conductor', 60_000, announceSettings({ announce: 'off' }), ask)).toBeNull()
+    expect(stopAnnouncement('conductor', 60_000, announceSettings({ announceToast: false, announceVoice: false }), ask)).toBeNull()
+  })
+  it('every mode keeps the old rule: any turn of 10 s or more, named by its owner line when it has one', () => {
+    const every = announceSettings({ announceMode: 'every' })
+    expect(stopAnnouncement('conductor', MIN_TURN_MS, every, plain)).toBe('finished')
+    expect(stopAnnouncement('conductor', MIN_TURN_MS - 1, every, plain)).toBeNull()
+    expect(stopAnnouncement('conductor', undefined, every, plain)).toBe('finished')
+    expect(stopAnnouncement('conductor', MIN_TURN_MS, every, { ...plain, reply: 'OWNER: REPORT — r' })).toBe('report')
   })
 })
 

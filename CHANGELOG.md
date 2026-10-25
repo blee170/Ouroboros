@@ -6,6 +6,9 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Added
+- **Grok Build as a fourth engine.** A card can run xAI's `grok` CLI next to Claude Code, Codex and Gemini: *New card → Grok agent*, or Inspector → Engine → *Grok Build (xAI)*, or the Conductor's `create_agent engine=grok`. It gets the same status, lines, reports and board tools: a per-card plugin folder (passed with `--plugin-dir`, so `~/.grok` is never touched) carries its lifecycle hooks (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop`, `StopFailure`, `Notification`, `SessionEnd`, run through `agent-hook.js` with the card's token file) and the board MCP server (mail tools only unless board tools are on). Model: *Grok 4.7* or any name `grok models` lists; *auto* and *bypass* permission modes start it with `--always-approve`; Plan and Accept edits use Grok's own default. The role prompt goes in with `--rules` on posix shells and as the first message on Windows. Settings → Engines detects it (installed, signed in with `grok login` or `XAI_API_KEY`) and shows `irm https://x.ai/cli/install.ps1 | iex`. `XAI_API_KEY` stays with Grok cards only; Grok cards lose the other engines' keys. Grok cards need Node.js on `PATH` and, like Codex and Gemini, are closed when an autonomous run starts. Grok needs a SuperGrok / X Premium+ plan or an xAI API key.
+
 ### Changed
 - **Model is a dropdown.** A card's Inspector → Model offers the engine's presets (Claude: Opus, Sonnet, Haiku as the latest of each, Fable 5.1, and pinned 5.5 ids), the CLI's default, or *Custom…* for any name; Codex and Gemini get default or custom (their own `/model` lists the names). Switching a card's engine resets a model name that belonged to the old one.
 - **A new Briefs card opens beside the card whose reply had the link**, top edges aligned (the next free spot below in that column if something is there), instead of the first free grid cell, often far down-left. A Briefs card that already exists stays where you put it.
@@ -13,6 +16,8 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 ### Verified
 - Unit tests for the preset mapping; built-app probe: the options per engine, picking a preset, a custom name, back to default, and the reset on an engine switch.
 - Briefs placement: unit tests (beside, below a card in the way, the next column); built-app probe: a brief opened from a card lands right of it (and below its neighbour when the right is taken).
+- Grok: unit tests (plugin folder, launch line per shell, hook mapping, sign-in, key stripping, autonomy, presets) and the bundled hook helper; built-app probe with a stand-in `grok` on PATH that runs the plugin's hooks as documented: detection, the card reaching idle from its SessionStart hook, a prompt's reply arriving through its Stop hook, and the board MCP listing only the mail tools.
+- **Not verified with the real Grok CLI** (no plan on this machine yet): that `--plugin-dir` loads our hooks and MCP server without a trust prompt, the field Grok's Stop hook carries the reply in (read from `lastAssistantMessage` or `response`), the shell Grok runs hook commands in on Windows (the command's first word is never quoted, so cmd, PowerShell and sh read it alike), and where `grok login` keeps its sign-in (an unknown file shows as *unknown*, not signed out). A Grok card that reaches the prompt without its SessionStart hook shows *ready (no hooks yet: status and lines may not work)*; a turn that ends on an API error (`StopFailure`) shows *failed:* like a Claude card, and fires no lines.
 
 ## [0.9.0] — 2026-10-25
 

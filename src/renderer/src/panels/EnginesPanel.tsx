@@ -13,12 +13,13 @@ const FALLBACK: EngineInfo[] = (
   [
     ['claude', 'Claude Code', 'claude'],
     ['codex', 'OpenAI Codex CLI (ChatGPT)', 'codex login'],
-    ['gemini', 'Gemini CLI (Google)', 'gemini']
+    ['gemini', 'Gemini CLI (Google)', 'gemini'],
+    ['grok', 'Grok Build (xAI)', 'grok login']
   ] as Array<[AgentEngine, string, string]>
 ).map(([engine, label, loginCommand]) => ({ engine, label, installed: true, installCommand: '', loginCommand, signupUrl: '', needsNode: engine !== 'claude', nodeAvailable: true }))
 
 /**
- * "Which AI do you use?" setup: shows whether claude / codex / gemini are installed and signed in,
+ * "Which AI do you use?" setup: shows whether claude / codex / gemini / grok are installed and signed in,
  * the install and sign-in commands (copyable), and lets the user pick the default engine. A ChatGPT
  * or Gemini subscriber never needs Claude.
  */

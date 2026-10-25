@@ -1,12 +1,12 @@
 import type { VoiceSettings } from './voice'
 import type { Task } from './ledger'
 
-/** Which CLI a Claude/Conductor card runs. Codex and Gemini get the same hooks, lines and board tools. */
-export type AgentEngine = 'claude' | 'codex' | 'gemini'
+/** Which CLI a Claude/Conductor card runs. Codex, Gemini and Grok get the same hooks, lines and board tools. */
+export type AgentEngine = 'claude' | 'codex' | 'gemini' | 'grok'
 
 /** Stored engine value: claude is the implicit default and is kept as undefined. */
-export function normalizeEngine(e: string | undefined | null): 'codex' | 'gemini' | undefined {
-  return e === 'codex' || e === 'gemini' ? e : undefined
+export function normalizeEngine(e: string | undefined | null): 'codex' | 'gemini' | 'grok' | undefined {
+  return e === 'codex' || e === 'gemini' || e === 'grok' ? e : undefined
 }
 
 /** Node kinds shown on the canvas. */
@@ -69,7 +69,7 @@ export interface WorktreeInfo {
 /** Data carried by every canvas node (serialised into the workspace file). */
 export interface NodeData {
   kind: NodeKind
-  /** claude (default) | codex | gemini — for claude/conductor cards */
+  /** claude (default) | codex | gemini | grok — for claude/conductor cards */
   engine?: AgentEngine
   title: string
   /** Working directory the shell/claude is started in. */

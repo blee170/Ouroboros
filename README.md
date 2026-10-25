@@ -62,7 +62,7 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 | **Voice input** | Claude cards take Claude Code's own dictation: `/voice` (hold Space) or `/voice tap`, Korean included, free with a claude.ai sign-in. `/` in the sidebar composer lists it. |
 | **Lines** | Drag port to port. Auto (fires on the source's finished reply) or manual (▶). Template with `{{last_assistant_message}}`, `{{source_title}}`, … Condition as substring or `/regex/`. 8 s cooldown, max 6 fires / 5 min per line. A line flashes when it fires and glows while the card it feeds is working on that handoff. |
 | **Conductor** | A card with the board MCP server: `list_agents`, `read_output`, `send_prompt`, `create_agent`, `remove_agent`, `wait_for_agents`, `connect_agents` / `fire_handoff` / `remove_handoff`, `set_note`, `tidy_board`, `get_changes`, `create_checkpoint` / `restore_checkpoint`, `task_create` / `task_claim` / `task_update` / `task_list`, `set_board_tools`, `list_roles`, `browser_*`. Ships with an operating procedure (intake → setup → run → report), a default pipeline and human gates (`APPROVED BY OWNER`). |
-| **Engines** | Each agent card runs **Claude Code** (default), **OpenAI Codex CLI** or **Gemini CLI**. Same status, lines, reports and board tools for all three. |
+| **Engines** | Each agent card runs **Claude Code** (default), **OpenAI Codex CLI**, **Gemini CLI** or **Grok Build** (xAI). Same status, lines, reports and board tools for all four. |
 | **Team leads** | `create_agent board_tools=true` / `set_board_tools` give a worker the same tools so it runs its own sub-cards. |
 | **Reports** | Every card the Conductor creates gets an automatic report line back; "needs input" notices are relayed too. |
 | **One card per role** | `create_agent` with a title that already exists reuses that card when it is idle or done and replaces it when it has ended, so a Conductor that asks for its "Brief writer" every round does not pile up copies. |
@@ -161,18 +161,18 @@ A Conductor is a Claude (or Codex / Gemini) card launched with the board MCP ser
 
 Any plain Claude card can get the same tools with *Board & browser tools* in the Inspector; the Conductor can grant them with `set_board_tools` (team leads).
 
-### Engines: Claude Code, Codex, Gemini
+### Engines: Claude Code, Codex, Gemini, Grok
 
-| | Claude Code | OpenAI Codex CLI | Gemini CLI |
-|---|---|---|---|
-| Status | HTTP hooks via `--settings` | `notify` command (turn complete, JSON as last argv) → `agent-hook.js` | hooks (`SessionStart`, `BeforeAgent`, `BeforeTool`, `AfterAgent`, `Notification`, `SessionEnd`) → `agent-hook.js` |
-| Board tools | `--mcp-config` | `-c mcp_servers.ouroboros.*` | `mcpServers.ouroboros` |
-| Role prompt | `--append-system-prompt-file` | `-c developer_instructions` (posix) / typed first message (Windows) | typed first message |
-| Resume | `--continue` / `--resume <id>` | `resume --last` / `resume <thread-id>` | `-r latest` / `-r <uuid>` |
-| Permissions | `--permission-mode` | `-s read-only` / `--full-auto` / bypass | `--approval-mode plan\|auto_edit\|yolo` |
-| Config footprint | per-card temp files | command line only | per-card settings file via `GEMINI_CLI_SYSTEM_SETTINGS_PATH` (merged with yours) |
+| | Claude Code | OpenAI Codex CLI | Gemini CLI | Grok Build |
+|---|---|---|---|---|
+| Status | HTTP hooks via `--settings` | `notify` command (turn complete, JSON as last argv) → `agent-hook.js` | hooks (`SessionStart`, `BeforeAgent`, `BeforeTool`, `AfterAgent`, `Notification`, `SessionEnd`) → `agent-hook.js` | plugin hooks (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop`, `StopFailure`, `Notification`, `SessionEnd`) → `agent-hook.js` |
+| Board tools | `--mcp-config` | `-c mcp_servers.ouroboros.*` | `mcpServers.ouroboros` | plugin `.mcp.json` |
+| Role prompt | `--append-system-prompt-file` | `-c developer_instructions` (posix) / typed first message (Windows) | typed first message | `--rules` (posix) / typed first message (Windows) |
+| Resume | `--continue` / `--resume <id>` | `resume --last` / `resume <thread-id>` | `-r latest` / `-r <uuid>` | `-c` / `-r <id>` |
+| Permissions | `--permission-mode` | `-s read-only` / `--full-auto` / bypass | `--approval-mode plan\|auto_edit\|yolo` | `--always-approve` for auto/bypass; otherwise Grok's own default |
+| Config footprint | per-card temp files | command line only | per-card settings file via `GEMINI_CLI_SYSTEM_SETTINGS_PATH` (merged with yours) | per-card plugin folder via `--plugin-dir` (your `~/.grok` stays) |
 
-A role prompt typed as a message is treated as a *role turn*: the reply ends Idle and fires no lines, and a queued task prompt waits for it. Codex gives no "needs approval" event, so Codex cards show Working only from prompts Ouroboros sent. Codex cards need Node.js on `PATH`.
+A role prompt typed as a message is treated as a *role turn*: the reply ends Idle and fires no lines, and a queued task prompt waits for it. Codex gives no "needs approval" event, so Codex cards show Working only from prompts Ouroboros sent. Codex and Grok cards need Node.js on `PATH`. Grok also reads Claude Code's own project files (`CLAUDE.md`, `.claude/` hooks, `.mcp.json`), so a project set up for Claude works the same in a Grok card.
 
 ### Windows, workspaces and persistence
 

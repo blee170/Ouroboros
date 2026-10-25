@@ -236,8 +236,13 @@ const geminiNode = await page.evaluate(() => window.__board.getState().addNode('
 await sleep(2500)
 const geminiOut = (await api('GET', `/api/agents/${geminiNode}/output?lines=40`)).json.output ?? ''
 check(/gemini/.test(geminiOut) && (await import('node:fs')).existsSync(join(userData, 'claude-launch', `${geminiNode}.gemini.json`)), 'gemini card writes its per-card settings file and launches gemini')
+const grokNode = await page.evaluate(() => window.__board.getState().addNode('claude', { engine: 'grok', title: 'grokcard' }))
+await sleep(2500)
+const grokOut = (await api('GET', `/api/agents/${grokNode}/output?lines=40`)).json.output ?? ''
+check(/grok .*--plugin-dir/.test(grokOut.replace(/\r?\n/g, ' ')) && (await import('node:fs')).existsSync(join(userData, 'claude-launch', `${grokNode}.grok`, 'hooks', 'hooks.json')), 'grok card writes its per-card plugin folder and launches grok --plugin-dir')
 await api('DELETE', `/api/agents/${codexNode}`)
 await api('DELETE', `/api/agents/${geminiNode}`)
+await api('DELETE', `/api/agents/${grokNode}`)
 await sleep(500)
 
 // --- changes api (git diff of a card's folder) + set_board_tools (PATCH) ---
@@ -252,7 +257,7 @@ check(patched.status === 404 && bt !== true, `PATCH board_tools on a terminal ca
 
 // --- engines setup: detection runs and reports all three CLIs; default engine flows into new cards ---
 const engines = await page.evaluate(() => window.ouroboros.engines.detect())
-check(Array.isArray(engines) && engines.map((e) => e.engine).join(',') === 'claude,codex,gemini' && engines.every((e) => typeof e.installed === 'boolean' && e.installCommand), `engines.detect lists claude/codex/gemini (${engines.map((e) => `${e.engine}:${e.installed}`).join(' ')})`)
+check(Array.isArray(engines) && engines.map((e) => e.engine).join(',') === 'claude,codex,gemini,grok' && engines.every((e) => typeof e.installed === 'boolean' && e.installCommand), `engines.detect lists claude/codex/gemini/grok (${engines.map((e) => `${e.engine}:${e.installed}`).join(' ')})`)
 await page.evaluate(() => window.__board.getState().setSettings({ defaultEngine: 'gemini' }))
 const defId = await page.evaluate(() => window.__board.getState().addNode('claude', { title: 'defaultEngineCard' }))
 const defEngine = await page.evaluate((id) => window.__board.getState().nodes.find((n) => n.id === id)?.data.engine, defId)

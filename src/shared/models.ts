@@ -1,7 +1,7 @@
 /**
  * The Model choices a card's Inspector offers per engine. The value goes to the CLI as is (`--model` for Claude
- * Code, `-m` for Codex and Gemini); an empty value is the CLI's own default. Codex and Gemini rename their
- * models often, so they get no presets: the custom field takes whatever their own `/model` lists.
+ * Code, `-m` for Codex, Gemini and Grok); an empty value is the CLI's own default. Codex and Gemini rename their
+ * models often, so they get no presets: the custom field takes whatever their own `/model` lists (`grok models` for Grok).
  */
 import type { AgentEngine } from './types'
 
@@ -21,7 +21,8 @@ export const MODEL_PRESETS: Record<AgentEngine, ModelPreset[]> = {
     { value: 'claude-haiku-5-5', label: 'Haiku 5.5 (pinned)' }
   ],
   codex: [],
-  gemini: []
+  gemini: [],
+  grok: [{ value: 'grok-4.7', label: 'Grok 4.7 (latest)' }]
 }
 
 /** What the select shows for a stored model: '' (default), a preset's value, or 'custom'. */

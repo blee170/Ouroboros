@@ -6,6 +6,7 @@ import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { rosterOrder } from '@/lib/rosterOrder'
+import { ENGINE_LABEL } from '@/lib/cardKinds'
 import { hottestWindow, resetsIn } from '@shared/usage'
 import { ApprovalsChip } from './ApprovalsChip'
 
@@ -63,7 +64,7 @@ export function StatusBar() {
     const week = u.windows.find((w) => w.id === 'seven_day')
     const shown = [five && { short: '5h', w: five }, week && { short: '7d', w: week }].filter(Boolean) as Array<{ short: string; w: (typeof u.windows)[number] }>
     const lead = shown.length ? shown : [{ short: '', w: hottestWindow(u.windows)! }]
-    const name = u.engine === 'claude' ? 'Claude' : u.engine === 'codex' ? 'Codex' : 'Gemini'
+    const name = ENGINE_LABEL[u.engine]
     const now = Date.now()
     return {
       text: `${name} ${lead.map((x) => `${x.short ? x.short + ' ' : ''}${Math.round(x.w.usedPct)}%`).join(' · ')}`,

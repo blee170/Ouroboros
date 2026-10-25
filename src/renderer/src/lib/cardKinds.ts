@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { AppWindow, CircleDashed, Gem, Globe, Hexagon, Sparkles, SquareTerminal, StickyNote, Workflow, Zap } from 'lucide-react'
+import { AppWindow, CircleDashed, Gem, Globe, Hexagon, Orbit, Sparkles, SquareTerminal, StickyNote, Workflow, Zap } from 'lucide-react'
 import type { AgentEngine, NodeKind } from '@shared/types'
 
 /** One list of the cards a person can add, shared by the title bar's "New card" menu and the canvas context menu. */
@@ -13,13 +13,14 @@ export interface CardKindItem {
   hint?: string
 }
 
-export const ENGINE_ICON: Record<AgentEngine, LucideIcon> = { claude: Sparkles, codex: Hexagon, gemini: Gem }
-export const ENGINE_LABEL: Record<AgentEngine, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' }
+export const ENGINE_ICON: Record<AgentEngine, LucideIcon> = { claude: Sparkles, codex: Hexagon, gemini: Gem, grok: Orbit }
+export const ENGINE_LABEL: Record<AgentEngine, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', grok: 'Grok' }
 
 export const CARD_KINDS: CardKindItem[] = [
   { kind: 'claude', engine: 'claude', icon: ENGINE_ICON.claude, label: 'Claude agent' },
   { kind: 'claude', engine: 'codex', icon: ENGINE_ICON.codex, label: 'Codex agent' },
   { kind: 'claude', engine: 'gemini', icon: ENGINE_ICON.gemini, label: 'Gemini agent' },
+  { kind: 'claude', engine: 'grok', icon: ENGINE_ICON.grok, label: 'Grok agent' },
   { kind: 'conductor', icon: Workflow, label: 'Conductor' },
   { kind: 'terminal', icon: SquareTerminal, label: 'Terminal' },
   { kind: 'browser', icon: Globe, label: 'Browser' },

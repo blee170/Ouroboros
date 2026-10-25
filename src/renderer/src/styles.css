@@ -147,6 +147,7 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 .statusbar .n { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .statusbar .zero { opacity: 0.5; }
 .statusbar .zero .n { color: var(--muted); }
+.statusbar .zero .sg-working { animation: none; } /* a legend glyph: nothing is working, so nothing spins */
 .auto-pill { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 3px 0 8px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--working) 45%, transparent); background: color-mix(in srgb, var(--working) 10%, transparent); color: var(--working); font-size: 11px; white-space: nowrap; margin: 0 4px; }
 .auto-pill .parked { height: 16px; border: 1px solid var(--needs); background: transparent; color: var(--needs); border-radius: 8px; padding: 0 6px; font-size: 10px; cursor: pointer; }
 .auto-pill .icon-btn { width: 18px; height: 18px; color: inherit; }

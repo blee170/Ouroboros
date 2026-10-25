@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.8.2] — 2026-10-25
 
 ### Fixed
 - **No spinning ring at "0 working"**: the status bar drew the working glyph for the counter even when nothing was working, so an idle board still showed a spinning ring there.
@@ -306,7 +306,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
-[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.8.1...HEAD
+[0.8.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.2
 [0.8.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.1
 [0.8.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.0
 [0.7.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.2

@@ -252,6 +252,10 @@ export interface AppSettings {
   notionUpdatesDatabaseId?: string
   /** The version whose release notes were last published, so each goes up once. */
   notionLastUpdate?: string
+  /** Mirror the open project's tasks, morning reports and board into the Obsidian vault below (default off). */
+  obsidianExport?: boolean
+  /** The Obsidian vault folder; the export writes only under its `Ouroboros/<project>/` folder. */
+  obsidianVaultPath?: string
   /** Voice input for the left composer (see shared/voice.ts; read through voiceSettings()). */
   voice?: Partial<VoiceSettings>
 }

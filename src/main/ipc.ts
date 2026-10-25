@@ -36,6 +36,8 @@ import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
 import { publishReport, publishUpdate, testNotion, type NotionTarget } from './notion'
 import { notionDatabaseId, TASK_SCHEMA, UPDATE_SCHEMA } from '@shared/notion'
 import { NotionMap, TaskSync } from './notion-sync'
+import { VaultExport } from './obsidian-export'
+import type { CanvasCard } from '@shared/obsidian'
 import { changelogSection } from '@shared/changelog'
 import changelog from '../../CHANGELOG.md?raw'
 
@@ -84,6 +86,8 @@ export interface WindowSession {
   autonomy: Autonomy
   /** The ledger mirrored into the owner's Notion Tasks database (idle unless that is set up). */
   taskSync?: TaskSync
+  /** The project mirrored into the owner's Obsidian vault (idle unless Settings → Obsidian is on). */
+  vaultExport?: VaultExport
   /** The project's task ledger (task_* tools, the Tasks tab, the morning report). */
   ledger: Ledger
   /** Agent mail between this window's cards (send_message / check_inbox / ack, the Inspector's Mail section). */
@@ -879,7 +883,7 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
       }
     },
     get dir() {
-      return join(app.getPath('userData'), 'autonomy', basename(board.projectRoot || 'no-project').replace(/[^\w.-]+/g, '_'))
+      return autonomyDirOf(board.projectRoot)
     },
     evidence: async (cwd) => {
       const c = await getChanges(cwd)
@@ -901,11 +905,48 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
   }
 }
 
+/** Where a project's autonomous runs keep their logs and morning reports (run-*.md). */
+function autonomyDirOf(projectRoot: string): string {
+  return join(app.getPath('userData'), 'autonomy', basename(projectRoot || 'no-project').replace(/[^\w.-]+/g, '_'))
+}
+
+/** The board for the vault's canvas: cards and lines from main, positions and sizes from the saved board file. */
+function canvasBoard(board: Board): { cards: CanvasCard[]; edges: Array<{ id: string; source: string; target: string; label?: string }> } {
+  const geo = new Map<string, { x: number; y: number; width: number; height: number }>()
+  try {
+    const ws = JSON.parse(readFileSync(join(board.projectRoot, WORKSPACE_FILE), 'utf8')) as Workspace
+    for (const n of Array.isArray(ws.nodes) ? ws.nodes : []) {
+      const p = n?.position
+      if (typeof n?.id === 'string' && p && Number.isFinite(p.x) && Number.isFinite(p.y)) geo.set(n.id, { x: p.x, y: p.y, width: Number(n.width) || 420, height: Number(n.height) || 300 })
+    }
+  } catch {
+    // no saved board yet: cards go in a row
+  }
+  let i = 0
+  const cards: CanvasCard[] = []
+  for (const n of board.nodes.values()) {
+    if (n.data.kind === 'external') continue
+    const g = geo.get(n.id) ?? { x: (i % 4) * 460, y: Math.floor(i / 4) * 340, width: 420, height: 300 }
+    i++
+    cards.push({ id: n.id, kind: n.data.kind, title: n.data.title || n.data.kind, engine: n.data.kind === 'claude' || n.data.kind === 'conductor' ? n.data.engine ?? 'claude' : undefined, status: n.data.status, statusDetail: n.data.statusDetail, lastReply: n.data.lastAssistantMessage, url: n.data.url, ...g })
+  }
+  return { cards, edges: board.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.data?.mode })) }
+}
+
 let notionMapInstance: NotionMap | undefined
 /** One page map for the app: windows on different projects share the file, keyed by project. */
 function notionMap(): NotionMap {
   notionMapInstance ??= new NotionMap(join(app.getPath('userData'), 'notion-map.json'))
   return notionMapInstance
+}
+
+let obsidianWarned = false
+/** A failed vault export: a log line always, one toast per session. */
+function obsidianFailed(error: string): void {
+  log(`[obsidian] ${error}`)
+  if (obsidianWarned || !Notification.isSupported()) return
+  obsidianWarned = true
+  new Notification({ title: 'Obsidian export failed', body: `${error.slice(0, 180)}. Further failures go to the log only this session.` }).show()
 }
 
 let notionWarned = false
@@ -1182,6 +1223,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     dispose() {
       s.autonomy.dispose()
       s.taskSync?.dispose()
+      s.vaultExport?.dispose()
       s.ledger.dispose()
       s.mail.dispose()
       for (const id of board.nodes.keys()) {
@@ -1209,6 +1251,25 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   })
   s.ledger.on('change', (tasks) => {
     if (board.projectRoot) s.taskSync?.schedule(tasks)
+  })
+  s.vaultExport = new VaultExport({
+    vault: () => {
+      const st = ctx.store.getSettings()
+      return st.obsidianExport && board.projectRoot ? st.obsidianVaultPath : undefined
+    },
+    root: () => board.projectRoot,
+    project: () => basename(board.projectRoot || '') || 'no-project',
+    tasks: () => s.ledger.data.tasks,
+    ownerTitle: (id) => board.nodes.get(id)?.data.title,
+    board: () => canvasBoard(board),
+    reportsDir: () => autonomyDirOf(board.projectRoot),
+    log,
+    failed: obsidianFailed
+  })
+  s.ledger.on('change', () => s.vaultExport?.schedule())
+  // a card's state and reply go on the canvas; Stop / needs-you are the changes worth a re-export
+  board.on('status', (p: AgentStatusPayload) => {
+    if (p.status !== 'working') s.vaultExport?.schedule()
   })
   s.mail.on('change', (messages) => sendToRenderer(s, IPC.mailChanged, messages))
   s.gate.on('change', (approvals) => sendToRenderer(s, IPC.gateChanged, approvals))
@@ -1868,6 +1929,19 @@ export function registerIpc(ctx: MainContext): void {
     if (which === 'tasks') return testNotion({ token, databaseId }, TASK_SCHEMA, 'a task row')
     if (which === 'updates') return testNotion({ token, databaseId }, UPDATE_SCHEMA, 'a release-notes page')
     return testNotion({ token, databaseId })
+  })
+  ipcMain.handle(IPC.obsidianPick, async (e) => {
+    const win = sessionOf(e)?.win
+    const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Choose your Obsidian vault folder' }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return r.canceled ? null : (r.filePaths[0] ?? null)
+  })
+  ipcMain.handle(IPC.obsidianExport, async (e) => {
+    const s = sessionOf(e)
+    const none = { ok: false, written: 0, kept: 0, removed: 0 }
+    if (!s?.vaultExport || !s.board.projectRoot) return { ...none, error: 'no project open in this window' }
+    if (!store.getSettings().obsidianExport) return { ...none, error: 'turn on the Obsidian export first' }
+    return s.vaultExport.run()
   })
 }
 

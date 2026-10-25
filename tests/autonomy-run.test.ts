@@ -184,6 +184,7 @@ describe('Autonomy run', () => {
     const report = readdirSync(s.dir).find((f) => f.endsWith('.md'))!
     expect(readFileSync(join(s.dir, report), 'utf8')).toContain('Ended: **window closed**')
     expect(s.calls.notes).toEqual([])
+    expect(s.calls.toasts).toEqual([])
   })
 
   it('stops at the deadline: releases keep-awake, writes the report, puts it on the canvas as a note', async () => {
@@ -204,6 +205,72 @@ describe('Autonomy run', () => {
     expect(s.auto.public().ended?.reason).toBe('deadline reached')
     // a second start works after a stop
     expect(s.auto.start({ until: T0 + 10_000_000, maxDispatches: 1, maxRetriesPerTitle: 1, stallMinutes: 1 }).on).toBe(true)
+  })
+
+  it('publishes the report after the note and the toast, and a failure is a log line and a toast, never a throw', async () => {
+    const published: Array<{ md: string; run: Record<string, unknown> }> = []
+    let answer: Promise<{ ok: true; url: string } | { ok: false; error: string }> = Promise.resolve({ ok: true, url: 'https://www.notion.so/p1' })
+    let notesBefore = 0
+    let toastsBefore = 0
+    s.host.publisher = () => (md, run) => {
+      published.push({ md, run: run as unknown as Record<string, unknown> })
+      expect(s.calls.notes.length).toBeGreaterThan(notesBefore) // the canvas has the note before Notion is asked
+      expect(s.calls.toasts.length).toBeGreaterThan(toastsBefore)
+      return answer
+    }
+    s.auto.start({ until: T0 + 60_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.auto.countDispatch('Reviewer', false)
+    s.board.setStatus('w1', { status: 'needs-you', statusDetail: 'which branch?' })
+    s.tick(61_000)
+    await s.auto.tick()
+    await Promise.resolve()
+    expect(published).toHaveLength(1)
+    expect(published[0].md).toBe(s.calls.notes[0][1].split('\n\n_Saved at')[0])
+    expect(published[0].run).toMatchObject({ startedAt: T0, endedAt: T0 + 61_000, reason: 'deadline reached', waiting: 1, dispatches: 1, reportPath: expect.stringMatching(/run-.*\.md$/) })
+    const log = readFileSync(join(s.dir, readdirSync(s.dir).find((f) => f.endsWith('.jsonl'))!), 'utf8')
+    expect(log).toContain('"kind":"notion","detail":"published https://www.notion.so/p1"')
+    expect(s.calls.toasts).toHaveLength(1)
+
+    // a failed publish: said in the toast and the log; the run has still ended cleanly
+    answer = Promise.resolve({ ok: false, error: 'Notion rejected the token (401)' })
+    notesBefore = s.calls.notes.length
+    toastsBefore = s.calls.toasts.length
+    s.auto.start({ until: T0 + 10_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    await s.auto.stop('stopped by the owner')
+    await Promise.resolve()
+    expect(s.auto.on).toBe(false)
+    expect(s.calls.toasts[s.calls.toasts.length - 1]).toMatch(/^Morning report not published to Notion: Notion rejected the token \(401\)\./)
+    const logs = readdirSync(s.dir).filter((f) => f.endsWith('.jsonl'))
+    expect(logs.map((f) => readFileSync(join(s.dir, f), 'utf8')).join('')).toContain('not published: Notion rejected the token (401)')
+
+    // a host that throws synchronously, or a rejected promise: the same path
+    s.host.publisher = () => () => {
+      throw new Error('boom')
+    }
+    s.auto.start({ until: T0 + 10_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    await s.auto.stop('x')
+    await Promise.resolve()
+    expect(s.calls.toasts[s.calls.toasts.length - 1]).toMatch(/not published to Notion: boom/)
+    s.host.publisher = () => () => Promise.reject(new Error('net down'))
+    s.auto.start({ until: T0 + 10_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    await s.auto.stop('x')
+    await Promise.resolve()
+    expect(s.calls.toasts[s.calls.toasts.length - 1]).toMatch(/not published to Notion: net down/)
+    // the window closing: nothing is sent (the process may quit under it); the log says so
+    let asked = 0
+    s.host.publisher = () => () => (asked++, Promise.resolve({ ok: true, url: 'u' }))
+    s.auto.start({ until: T0 + 10_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    s.auto.dispose()
+    expect(asked).toBe(0)
+    const latest = readdirSync(s.dir).filter((f) => f.endsWith('.jsonl')).sort().pop()!
+    expect(readFileSync(join(s.dir, latest), 'utf8')).toContain('not published: window closed')
+    // publishing off: nothing asked, nothing said
+    s.host.publisher = () => undefined
+    s.auto.start({ until: T0 + 10_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 10 })
+    const before = s.calls.toasts.length
+    await s.auto.stop('x')
+    await Promise.resolve()
+    expect(s.calls.toasts).toHaveLength(before + 1) // only the run-ended toast
   })
 
   it('ends early once nothing has been busy for the idle window', async () => {

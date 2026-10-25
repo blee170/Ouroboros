@@ -5,6 +5,7 @@ import { EnginesPanel } from './EnginesPanel'
 import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
+import { notionDatabaseId } from '@shared/notion'
 import type { TtsKeyEngine } from '@shared/protocol'
 import { speak, voiceFor } from '@/lib/speak'
 import { Icon } from '@/lib/icons'
@@ -24,6 +25,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const tts = ttsSettings(settings)
   const [ttsKeys, setTtsKeys] = useState(NO_KEYS)
   const [ttsKey, setTtsKey] = useState('')
+  const [notion, setNotion] = useState<{ hasToken: boolean }>({ hasToken: false })
+  const [notionToken, setNotionToken] = useState('')
   useEscape(onClose)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
@@ -31,6 +34,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       setHasToken(Boolean(i.hasUpdateToken))
     })
     void window.ouroboros.tts.keys().then(setTtsKeys)
+    void window.ouroboros.notion.status().then((n) => setNotion({ hasToken: n.hasToken }))
     return window.ouroboros.update.onStatus(setUpd)
   }, [])
   const saveTtsKey = async (engine: TtsKeyEngine): Promise<void> => {
@@ -44,6 +48,23 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setMsg(tts.engine === 'windows' ? '' : 'Fetching the test sentence…')
     const err = await speak({ kind: 'finished', title: ko ? '총괄' : 'Conductor', lang: ko ? 'ko' : 'en' })
     setMsg(err ? `${err} — the Windows voice spoke instead.` : tts.engine === 'windows' ? '' : 'Spoken with the chosen engine.')
+  }
+  const saveNotionToken = async (): Promise<void> => {
+    const r = await window.ouroboros.notion.setToken(notionToken)
+    setNotion((n) => ({ ...n, hasToken: r.hasToken }))
+    setNotionToken('')
+    setMsg(r.hasToken ? 'Notion token saved (encrypted). Paste the Reports database URL and press Test.' : 'Notion token cleared.')
+  }
+  const saveNotionDb = (value: string): void => {
+    const id = notionDatabaseId(value)
+    const raw = value.trim()
+    void setSettings({ notionDatabaseId: id ?? (raw || undefined) })
+    if (raw && !id) setMsg('That does not look like a Notion database URL or id (32 hex characters expected).')
+  }
+  const testNotion = async (): Promise<void> => {
+    setMsg('Asking Notion…')
+    const r = await window.ouroboros.notion.test()
+    setMsg(r.ok ? `Notion: found database "${r.title}". Reports will be published there.` : `Notion: ${r.error}`)
   }
   const saveToken = async (): Promise<void> => {
     const r = await window.ouroboros.update.setToken(token)
@@ -188,6 +209,35 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <div className="ctl">
               <input className="text" placeholder={info?.platform === 'win32' ? 'powershell.exe' : '$SHELL'} defaultValue={settings.defaultShell ?? ''} onBlur={(e) => void setSettings({ defaultShell: e.target.value.trim() || undefined })} />
             </div>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h4>Notion</h4>
+          <label className="check">
+            <input type="checkbox" checked={settings.notionPublish === true} onChange={(e) => void setSettings({ notionPublish: e.target.checked })} /> Publish the morning report of every autonomous run to Notion
+          </label>
+          <div className="hint">
+            One row per run in your <em>Ouroboros → Reports</em> database, the report as the page. Needs an internal integration (notion.so/profile/integrations → New integration, read + insert content) and the Reports database shared with it (⋯ → Connections). The note on the canvas and the report file are written first; a failed publish is a toast and a line in the run log, never a lost report.
+          </div>
+          <label className="field">
+            <span>Integration token</span>
+            <div className="ctl">
+              <input className="text" type="password" placeholder={notion.hasToken ? '•••••• (saved)' : 'ntn_…'} value={notionToken} onChange={(e) => setNotionToken(e.target.value)} />
+              <button className="btn" onClick={() => void saveNotionToken()}>
+                {notionToken ? 'Save' : notion.hasToken ? 'Clear' : 'Save'}
+              </button>
+            </div>
+          </label>
+          <label className="field">
+            <span>Reports database</span>
+            <div className="ctl">
+              <input className="text" placeholder="paste the database URL or id" defaultValue={settings.notionDatabaseId ?? ''} onBlur={(e) => saveNotionDb(e.target.value)} />
+              <button className="btn" onClick={() => void testNotion()}>
+                Test
+              </button>
+            </div>
+            <div className="hint">Test fetches the database with the saved token (stored encrypted, sent only to api.notion.com).</div>
           </label>
         </section>
 

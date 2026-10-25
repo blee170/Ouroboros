@@ -233,6 +233,12 @@ export interface AppSettings {
   ttsStyle?: string
   /** Per-engine API keys, stored encrypted (same scheme as githubTokenEnc). */
   ttsKeysEnc?: Partial<Record<'gemini' | 'openai' | 'elevenlabs', string>>
+  /** Publish the morning report of every autonomous run to the Notion database below (default off). */
+  notionPublish?: boolean
+  /** Notion internal-integration token, stored encrypted (same scheme as githubTokenEnc). */
+  notionTokenEnc?: string
+  /** The Reports database (dashed id; the Settings field also takes its URL). */
+  notionDatabaseId?: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

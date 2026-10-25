@@ -29,7 +29,7 @@ export const LIMIT_RETRY_MINUTES = 15
 /** A relaunched or new card that shows no session after this long never came up (stale --resume id, trust prompt, crash). */
 export const START_GRACE_MINUTES = 3
 
-export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop'
+export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion'
 
 export interface RunEvent {
   at: number

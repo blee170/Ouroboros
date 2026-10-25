@@ -24,6 +24,8 @@ import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
 import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
+import { publishReport, testNotion } from './notion'
+import { notionDatabaseId } from '@shared/notion'
 
 /** Dispatched cards are retired this long after their report reached the card that made them. */
 const DEFAULT_RETIRE_MINUTES = 5
@@ -700,7 +702,18 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
       const c = await getChanges(cwd)
       return c.repo ? { branch: c.branch, added: c.added, removed: c.deleted, files: c.files.length } : undefined
     },
-    tasks: () => s.ledger.data.tasks
+    tasks: () => s.ledger.data.tasks,
+    publisher: () => {
+      // read once, at run start: the target cannot be changed by anything that happens during the run
+      const st = ctx.store.getSettings()
+      if (!st.notionPublish) return undefined
+      const token = decryptToken(st.notionTokenEnc)
+      const databaseId = notionDatabaseId(st.notionDatabaseId)
+      const project = basename(board.projectRoot || '') || 'no-project'
+      const error = !token ? (st.notionTokenEnc ? 'the saved Notion token could not be decrypted; paste it again in Settings → Notion' : 'no Notion token in Settings → Notion') : !databaseId ? (st.notionDatabaseId ? 'the Reports database field in Settings → Notion is not a Notion database URL or id' : 'no Reports database in Settings → Notion') : ''
+      if (!token || !databaseId) return () => Promise.resolve({ ok: false, error })
+      return (markdown, run) => publishReport({ token, databaseId, markdown, meta: { ...run, project } })
+    }
   }
 }
 
@@ -1355,6 +1368,24 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.ttsKeys, () => {
     const settings = store.getSettings()
     return Object.fromEntries(TTS_KEY_ENGINES.map((e) => [e, Boolean(ttsKeyFor(settings, e))])) as Record<TtsKeyEngine, boolean>
+  })
+
+  ipcMain.handle(IPC.notionSetToken, (_e, token: string) => {
+    const enc = encryptToken(String(token ?? '').replace(/\s+/g, ''))
+    store.setSettings({ notionTokenEnc: enc || undefined })
+    return { ok: true, hasToken: Boolean(enc) }
+  })
+  ipcMain.handle(IPC.notionStatus, () => {
+    const st = store.getSettings()
+    return { hasToken: Boolean(decryptToken(st.notionTokenEnc)), databaseId: st.notionDatabaseId }
+  })
+  ipcMain.handle(IPC.notionTest, () => {
+    const st = store.getSettings()
+    const token = decryptToken(st.notionTokenEnc)
+    const databaseId = notionDatabaseId(st.notionDatabaseId)
+    if (!token) return { ok: false, error: st.notionTokenEnc ? 'the saved token could not be decrypted; paste it again' : 'no token saved' }
+    if (!databaseId) return { ok: false, error: 'no database id (paste the Reports database URL)' }
+    return testNotion({ token, databaseId })
   })
 }
 

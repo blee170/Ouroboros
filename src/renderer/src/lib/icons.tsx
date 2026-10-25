@@ -1,5 +1,6 @@
 import type { LucideIcon, LucideProps } from 'lucide-react'
 import {
+  Activity,
   AppWindow,
   ArrowDown,
   ArrowUp,
@@ -18,6 +19,7 @@ import {
   History,
   Image,
   LayoutGrid,
+  ListChecks,
   Maximize2,
   Moon,
   PanelLeft,
@@ -57,6 +59,7 @@ export type IconName =
   | 'save'
   | 'broom'
   | 'grid'
+  | 'tasks'
   | 'gauge'
   | 'undo'
   | 'settings'
@@ -84,8 +87,10 @@ export type IconName =
   | 'moon'
   | 'stop'
   | 'play'
+  | 'usage'
 
 const ICONS: Record<IconName, LucideIcon> = {
+  usage: Activity,
   help: CircleHelp,
   folder: Folder,
   window: AppWindow,
@@ -97,6 +102,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   save: Save,
   broom: Brush,
   grid: LayoutGrid,
+  tasks: ListChecks,
   gauge: Gauge,
   undo: Undo2,
   settings: Settings,

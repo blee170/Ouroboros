@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
 import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, SessionUsage, UpdateStatus } from '@shared/protocol'
+import type { UsageSnapshot } from '@shared/usage'
 import type { AutonomyPublic } from '@shared/autonomy'
+import type { Task } from '@shared/ledger'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
@@ -68,6 +70,10 @@ interface BoardState {
   arrangeUndo?: Record<string, { x: number; y: number }>
   /** This window's Autonomous mode run, as main reports it. */
   autonomy: AutonomyPublic
+  /** The project's task ledger, as main pushes it (the renderer never edits it directly). */
+  tasks: Task[]
+  /** What the right panel shows. */
+  rpanelTab: 'inspector' | 'tasks'
   /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
   updateStatus: UpdateStatus | null
   /** Unread results and reviewed turns (shared/attention): runtime only. */
@@ -79,9 +85,18 @@ interface BoardState {
   settledRoster: RosterRow[]
   /** Context usage per Claude card (from its transcript), refreshed when the card's status changes. */
   usage: Record<string, SessionUsage>
+  /** Account usage per engine (plan windows, tokens), as main last reported it. */
+  accountUsage: UsageSnapshot | null
+  /** The Usage dialog (title bar button, status-bar chip). */
+  usageOpen: boolean
   // actions
   setAutonomy(p: AutonomyPublic): void
+  setTasks(t: Task[]): void
+  /** Show a tab of the right panel (opening the panel when it is closed). */
+  showRpanel(tab: 'inspector' | 'tasks'): void
   setUpdateStatus(p: UpdateStatus): void
+  setAccountUsage(s: UsageSnapshot): void
+  setUsageOpen(open: boolean): void
   /** The owner looked at a card (selected it while the window has focus): unread goes, a finished turn reads idle. */
   markViewed(id: string): void
   setUsage(id: string, u: SessionUsage): void
@@ -150,6 +165,14 @@ export const useBoard = create<BoardState>((set, get) => ({
   setAutonomy(p) {
     set({ autonomy: p })
   },
+  tasks: [],
+  rpanelTab: 'inspector',
+  setTasks(t) {
+    set({ tasks: t })
+  },
+  showRpanel(tab) {
+    set({ rpanelTab: tab, inspectorOpen: true })
+  },
   updateStatus: null,
   setUpdateStatus(p) {
     set({ updateStatus: p })
@@ -157,6 +180,14 @@ export const useBoard = create<BoardState>((set, get) => ({
   attention: EMPTY_ATTENTION,
   settledRoster: [],
   usage: {},
+  accountUsage: null,
+  usageOpen: false,
+  setAccountUsage(s) {
+    set({ accountUsage: s })
+  },
+  setUsageOpen(open) {
+    set({ usageOpen: open })
+  },
   markViewed(id) {
     const s = get()
     const n = s.nodes.find((x) => x.id === id)
@@ -180,8 +211,12 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {} })
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, tasks: [] })
     scheduleSync(get)
+    // main loaded the ledger with the board file; a push follows every later change
+    void api()
+      .tasks.list()
+      .then((t) => set({ tasks: t }))
   },
 
   onNodesChange(changes) {

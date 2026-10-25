@@ -43,6 +43,13 @@ export function Sidebar() {
   const allNodes = useBoard((s) => s.nodes)
   const settled = useBoard((s) => s.settledRoster)
   const unread = useBoard((s) => s.attention.unread)
+  const tasks = useBoard((s) => s.tasks)
+  // the task each card is on (doing or blocked), for the row's second line
+  const taskOf = useMemo(() => {
+    const m: Record<string, { id: string; title: string }> = {}
+    for (const t of tasks) if (t.owner && (t.state === 'doing' || t.state === 'blocked') && !m[t.owner]) m[t.owner] = { id: t.id, title: t.title }
+    return m
+  }, [tasks])
   // the settled rows, each with its live card (a closed card leaves the settled list at once, so none is missing)
   const rows = useMemo(() => {
     const live = new Map(allNodes.map((n) => [n.id, n]))
@@ -222,6 +229,11 @@ export function Sidebar() {
             {STATUS_LABEL[st]}
             {silent ? <span className="silent" title="Working, but no hook event for a while: a long tool call, or a stall"> · no update for {silent}m</span> : n.data.statusDetail ? ` · ${n.data.statusDetail}` : ''}
           </span>
+          {taskOf[n.id] && (
+            <span className="task" title={`On task ${taskOf[n.id].id}: ${taskOf[n.id].title}`}>
+              {taskOf[n.id].id} · {taskOf[n.id].title}
+            </span>
+          )}
           {n.data.lastAssistantMessage && <span className="last-reply clamp">{n.data.lastAssistantMessage}</span>}
         </button>
       </li>

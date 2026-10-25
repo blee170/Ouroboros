@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findBriefUrl } from '../src/main/briefs'
+import { findBriefUrl, urlKey } from '../src/main/briefs'
 
 const doc = 'https://claude.ai/artifact/0f4e1c2a-brief'
 
@@ -20,5 +20,28 @@ describe('findBriefUrl', () => {
 
   it('returns null when nothing was published', () => {
     expect(findBriefUrl({ message: 'all green', output: 'no links here', anyUrl: true })).toBeNull()
+  })
+})
+
+describe('urlKey', () => {
+  it('treats the /code/artifact and /artifact forms of a claude.ai artifact as one page, query and fragment aside', () => {
+    const key = urlKey('https://claude.ai/artifact/0f4e1c2a-brief')
+    expect(urlKey('https://claude.ai/code/artifact/0f4e1c2a-brief')).toBe(key)
+    expect(urlKey('https://claude.ai/artifact/0f4e1c2a-brief?utm=x&v=2#top')).toBe(key)
+    expect(urlKey('https://claude.ai/code/artifact/0F4E1C2A-BRIEF/')).toBe(key)
+    expect(urlKey('https://claude.ai/artifact/other')).not.toBe(key)
+  })
+
+  it('keeps the query of any other page and only drops the fragment, trailing slash and case', () => {
+    expect(urlKey('https://Example.com/report/7/#sec')).toBe('https://example.com/report/7')
+    expect(urlKey('https://example.com/a?b=1')).toBe('https://example.com/a?b=1')
+    expect(urlKey('https://example.com/a?b=2')).not.toBe(urlKey('https://example.com/a?b=1'))
+  })
+
+  it('is linear on a long run of slashes (agent output reaches it)', () => {
+    const t = Date.now()
+    expect(urlKey(`https://x.com/${'/'.repeat(200_000)}a`)).toBe(`https://x.com/${'/'.repeat(200_000)}a`)
+    expect(urlKey(`https://x.com${'/'.repeat(200_000)}`)).toBe('https://x.com')
+    expect(Date.now() - t).toBeLessThan(500)
   })
 })

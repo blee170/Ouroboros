@@ -1,3 +1,5 @@
+import type { Task } from './ledger'
+
 /** Which CLI a Claude/Conductor card runs. Codex and Gemini get the same hooks, lines and board tools. */
 export type AgentEngine = 'claude' | 'codex' | 'gemini'
 
@@ -148,6 +150,9 @@ export interface Workspace {
   viewport?: { x: number; y: number; zoom: number }
   nodes: WorkspaceNode[]
   edges: WorkspaceEdge[]
+  /** The task ledger (main owns it; the renderer never writes these two). */
+  tasks?: Task[]
+  nextTaskId?: number
 }
 
 /** Subset of a Claude Code hook payload that we care about. */
@@ -165,6 +170,8 @@ export interface HookEvent {
   last_assistant_message?: string
   /** SessionStart */
   source?: string
+  /** Set when the hook fires inside a subagent (absent for the main agent) */
+  agent_id?: string
   [key: string]: unknown
 }
 

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import type { AgentStatus } from '@shared/types'
+import { summarizeTasks } from '@shared/ledger'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { rosterOrder } from '@/lib/rosterOrder'
+import { hottestWindow, resetsIn } from '@shared/usage'
 
 const hhmm = (t: number): string => {
   const d = new Date(t)
@@ -34,6 +36,9 @@ export function StatusBar() {
   const justSaved = Boolean(savedAt && Date.now() - savedAt < 4000)
   const upd = useBoard((s) => s.updateStatus)
   const usage = useBoard((s) => s.usage)
+  const tasks = useBoard((s) => s.tasks)
+  const showRpanel = useBoard((s) => s.showRpanel)
+  const taskCounts = useMemo(() => summarizeTasks(tasks), [tasks])
 
   // the same cards in the same order as the sidebar: a card with no status yet counts as starting, and
   // "the first" card of a state is the first row there
@@ -47,6 +52,24 @@ export function StatusBar() {
         .sort((a, b) => b.pct - a.pct),
     [nodes, usage]
   )
+  // the account's plan windows, one chip: "Claude 5h 42% · 7d 61%" (the Claude plan, else Codex); orange from 90%
+  const accountUsage = useBoard((s) => s.accountUsage)
+  const setUsageOpen = useBoard((s) => s.setUsageOpen)
+  const planChip = useMemo(() => {
+    const u = accountUsage?.engines.find((e) => e.windows.length) ?? undefined
+    if (!u) return null
+    const five = u.windows.find((w) => w.id === 'five_hour')
+    const week = u.windows.find((w) => w.id === 'seven_day')
+    const shown = [five && { short: '5h', w: five }, week && { short: '7d', w: week }].filter(Boolean) as Array<{ short: string; w: (typeof u.windows)[number] }>
+    const lead = shown.length ? shown : [{ short: '', w: hottestWindow(u.windows)! }]
+    const name = u.engine === 'claude' ? 'Claude' : u.engine === 'codex' ? 'Codex' : 'Gemini'
+    const now = Date.now()
+    return {
+      text: `${name} ${lead.map((x) => `${x.short ? x.short + ' ' : ''}${Math.round(x.w.usedPct)}%`).join(' · ')}`,
+      hot: lead.some((x) => x.w.usedPct >= 90),
+      title: `${name} plan usage: ${u.windows.map((w) => `${w.label} ${Math.round(w.usedPct)}%${w.resetsAt ? ` (${resetsIn(w.resetsAt, now)})` : ''}`).join(', ')}. Click for every engine.`
+    }
+  }, [accountUsage])
   const count = (...statuses: string[]): number => agents.filter((n) => statuses.includes(n.data.status ?? 'starting')).length
   const groups: Array<{ status: AgentStatus; statuses: string[]; label: string; hint: string }> = [
     { status: 'working', statuses: ['working', 'starting'], label: 'working', hint: 'Cards working now' },
@@ -85,6 +108,24 @@ export function StatusBar() {
         </button>
       )}
       <span className="spacer" />
+      {(taskCounts.doing > 0 || taskCounts.blocked > 0 || taskCounts.todo > 0) && (
+        <button className={`ghost${taskCounts.blocked ? ' ctx-chip' : ''}`} onClick={() => showRpanel('tasks')} title={`Task ledger: ${taskCounts.todo} to do, ${taskCounts.doing} doing, ${taskCounts.blocked} blocked, ${taskCounts.done} done. Click to open the Tasks tab.`}>
+          <Icon name="tasks" size={12} />
+          <span className="n">{taskCounts.doing}</span> doing
+          {taskCounts.blocked > 0 && (
+            <>
+              {' · '}
+              <span className="n">{taskCounts.blocked}</span> need you
+            </>
+          )}
+        </button>
+      )}
+      {planChip && (
+        <button className={`ghost plan-chip${planChip.hot ? ' hot' : ''}`} onClick={() => setUsageOpen(true)} title={planChip.title}>
+          <Icon name="usage" size={12} />
+          {planChip.text}
+        </button>
+      )}
       {hot.length > 0 && (
         <button className="ghost ctx-chip" onClick={() => jumpToNode(hot[0].id)} title={`Context nearly full: ${hot.map((h) => `${h.title} ${h.pct}%`).join(', ')}. Ask the card to /compact, or start a fresh card. Click to jump to the fullest.`}>
           <Icon name="gauge" size={12} />

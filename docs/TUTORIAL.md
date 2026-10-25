@@ -63,16 +63,17 @@ Try it: snapshot, let *Explorer* make a change you do not want (*"Rename every v
 
 ## 5. The Conductor: let the board run itself (15 min)
 
-A **Conductor** is a Claude card that gets an MCP server with the board as tools: it can list cards, create them, draw lines, read diffs, take checkpoints and tidy up. It also carries an operating procedure: plan → review → implement → score → bug hunt → deploy guide, with human gates.
+A **Conductor** is a Claude card that gets an MCP server with the board as tools: it can list cards, create them, draw lines, read diffs, take checkpoints, keep a task list and tidy up. It also carries an operating procedure: plan → review → implement → score → bug hunt → deploy guide, with human gates.
 
 1. Add one: the arrow next to **New card** → **Conductor** (or right-click the canvas). It starts in the project root. Give it a goal small enough to finish in a few minutes:
 
    > *"Goal: add a `--version` flag to the CLI. Plan it, have a worker implement it on its own worktree, have a reviewer score the diff, and report."*
 
-2. Watch the canvas. The Conductor creates cards (each a real agent with a role), wires report lines back to itself, and runs the stages. Workers created with a worktree get their own branch (`<project>-worktrees/<slug>`), so they never trample each other or your checkout.
-3. When a worker asks something the Conductor cannot answer, the card shows an orange **?** (**Needs you**) and the sidebar puts it first. Answer in the card, or in the composer. The Conductor never answers for you.
-4. The Conductor's report lands as a reply; **📄** on the Conductor reopens the brief it published. Open the worker's diff badge before you believe the report.
-5. Human gates: the Conductor proposes a push, a merge, a deploy or anything that spends money, and waits until you answer `APPROVED BY OWNER`. Nothing is pushed on its own.
+2. Open the **Tasks** tab of the right panel: the Conductor writes its plan there as tasks (`T1`, `T2`…) with an owner and a state, and marks them done with a result as reports come in. A task it cannot finish without you is *blocked* with the reason and counts as *need you* in the status bar.
+3. Watch the canvas. The Conductor creates cards (each a real agent with a role), wires report lines back to itself, and runs the stages. Workers created with a worktree get their own branch (`<project>-worktrees/<slug>`), so they never trample each other or your checkout.
+4. When a worker asks something the Conductor cannot answer, the card shows an orange **?** (**Needs you**) and the sidebar puts it first. Answer in the card, or in the composer. The Conductor never answers for you.
+5. The Conductor's report lands as a reply; **📄** on the Conductor reopens the brief it published. Open the worker's diff badge before you believe the report.
+6. Human gates: the Conductor proposes a push, a merge, a deploy or anything that spends money, and waits until you answer `APPROVED BY OWNER`. Nothing is pushed on its own.
 
 When the run is over, **🧹 Tidy** closes finished cards (dispatched workers retire by themselves a few minutes after their report is in; pin a card with *Keep* to exempt it), and **⊞ Arrange** lines the board up along its lines. Press **✨ Build board** if you would rather start from a generated board based on your folder and your Claude Code history; its *Specialists* section adds cards with a persona from your `.claude/agents` files or the Agency roster (press *Get the Agency roster* once; a runbook ticks a whole team).
 

@@ -13,3 +13,18 @@ export function findBriefUrl(o: { message: string; output: string; anyUrl: boole
   const all = o.output.match(ARTIFACT_RE)
   return all?.length ? { url: trim(all[all.length - 1]), inMessage: false } : null
 }
+
+const ARTIFACT_ID_RE = /^https:\/\/claude\.ai\/(?:code\/)?artifact\/([^/?#]+)/i
+
+/**
+ * The page a URL names, for "is this already on the canvas": no fragment, no trailing slash, lower-case.
+ * A claude.ai artifact is its id alone — `/code/artifact/<id>` and `/artifact/<id>` are the same page
+ * (claude.ai redirects between them) and the query string it adds on the way is not part of the page.
+ */
+export function urlKey(u: string): string {
+  const art = ARTIFACT_ID_RE.exec(u)
+  if (art) return `https://claude.ai/artifact/${art[1].toLowerCase()}`
+  let k = u.replace(/#.*$/, '')
+  while (k.endsWith('/')) k = k.slice(0, -1) // not /\/+$/: quadratic on a long run of slashes, and agent output reaches here
+  return k.toLowerCase()
+}

@@ -137,7 +137,7 @@ export class Board extends EventEmitter {
   /** Apply a hook event addressed to a known node. Returns the status update if any. */
   applyHook(nodeId: string, event: HookEvent): void {
     const n = this.nodes.get(nodeId)
-    const update = reduceHook(n?.data.status, event)
+    const update = reduceHook(n?.data.status, event, n?.data.statusDetail)
     this.emit('hook', { nodeId, event })
     if (n && typeof event.session_id === 'string' && !n.data.sessionId) {
       n.data.sessionId = event.session_id
@@ -166,7 +166,7 @@ export class Board extends EventEmitter {
     // Sessions we launched ourselves also fire the global hook; ignore those.
     if (this.sessionToNode.has(sessionId)) return
     const prev = this.externalSessions.get(sessionId)
-    const update = reduceHook(prev?.status, event)
+    const update = reduceHook(prev?.status, event, prev?.statusDetail)
     if (!update) return
     const entry: ExternalSession = {
       sessionId,

@@ -39,6 +39,10 @@ describe('bundled mcp server', () => {
         else if (req.url === '/api/agents/a1/checkpoints' && req.method === 'GET') res.end(JSON.stringify({ ok: true, checkpoints: [] }))
         else if (req.url === '/api/agents/a1/checkpoints/1700000000000-abcd/restore' && req.method === 'POST') res.end(JSON.stringify({ ok: true }))
         else if (req.url === '/api/agents/a1/checkpoints/1700000000000-abcd' && req.method === 'DELETE') res.end(JSON.stringify({ ok: true, id: '1700000000000-abcd' }))
+        else if (req.url === '/api/tasks' && req.method === 'POST') res.end(JSON.stringify({ ok: true, task: { id: 'T1', title: 'plan', state: 'todo' } }))
+        else if (req.url === '/api/tasks/T1/claim' && req.method === 'POST') res.end(JSON.stringify({ ok: true, task: { id: 'T1', state: 'doing', owner: 'a1' } }))
+        else if (req.url === '/api/tasks/T1' && req.method === 'PATCH') res.writeHead(400).end(JSON.stringify({ ok: false, error: 'done needs a result: what was done and how it was checked' }))
+        else if (req.url?.startsWith('/api/tasks') && req.method === 'GET') res.end(JSON.stringify({ text: '1 tasks: 0 todo · 1 doing · 0 blocked · 0 done · 0 dropped\nT1 [doing] plan · owner: A', tasks: [] }))
         else res.writeHead(404).end('{"error":"nf"}')
       })
     })
@@ -52,7 +56,7 @@ describe('bundled mcp server', () => {
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_prompt', 'set_board_tools', 'set_note', 'tidy_board', 'wait_for_agents'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_prompt', 'set_board_tools', 'set_note', 'task_claim', 'task_create', 'task_list', 'task_update', 'tidy_board', 'wait_for_agents'])
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text
@@ -93,6 +97,20 @@ describe('bundled mcp server', () => {
     expect(calls.find((c) => c.url === '/api/agents/a1/checkpoints/1700000000000-abcd/restore')?.body).toBe('{"move_head":false}')
     await client.callTool({ name: 'delete_checkpoint', arguments: { agent_id: 'a1', checkpoint_id: '1700000000000-abcd' } })
     expect(calls.some((c) => c.url === '/api/agents/a1/checkpoints/1700000000000-abcd' && c.method === 'DELETE')).toBe(true)
+
+    // the task ledger
+    const tc = await client.callTool({ name: 'task_create', arguments: { title: 'plan', deps: [], detail: 'write it' } })
+    expect((tc.content as Array<{ text: string }>)[0].text).toContain('"id": "T1"')
+    expect(calls.find((c) => c.url === '/api/tasks' && c.method === 'POST')?.body).toBe('{"title":"plan","detail":"write it","deps":[]}')
+    await client.callTool({ name: 'task_claim', arguments: { task_id: 'T1', agent_id: 'a1' } })
+    expect(calls.find((c) => c.url === '/api/tasks/T1/claim')?.body).toBe('{"agent_id":"a1"}')
+    const tu = await client.callTool({ name: 'task_update', arguments: { task_id: 'T1', state: 'done' } })
+    expect(tu.isError).toBe(true)
+    expect((tu.content as Array<{ text: string }>)[0].text).toContain('done needs a result')
+    expect(calls.find((c) => c.url === '/api/tasks/T1' && c.method === 'PATCH')?.body).toBe('{"state":"done"}')
+    const tl = await client.callTool({ name: 'task_list', arguments: { owner: 'a1', all: true } })
+    expect((tl.content as Array<{ text: string }>)[0].text).toBe('1 tasks: 0 todo · 1 doing · 0 blocked · 0 done · 0 dropped\nT1 [doing] plan · owner: A')
+    expect(calls.find((c) => c.url.startsWith('/api/tasks?'))?.url).toBe('/api/tasks?owner=a1&all=1')
 
     await client.close()
     server.close()

@@ -246,6 +246,76 @@ server.registerTool(
   }
 )
 
+const TASK_STATE = z.enum(['todo', 'doing', 'blocked', 'done', 'dropped'])
+const TASK_ID = z.string().max(8).describe('task id, e.g. T3')
+
+server.registerTool(
+  'task_create',
+  {
+    title: 'Add a task to the ledger',
+    description:
+      'The task ledger is the durable list of work on this board: one task per stage or work item, with dependencies. Create them at intake, before dispatching. Returns the new task (T1, T2, …). deps = tasks that must be done before this one can be claimed; parent groups sub-tasks; owner = agent_id to claim it at once.',
+    inputSchema: {
+      title: z.string().max(120),
+      detail: z.string().max(2000).optional().describe('what to do, for the card that takes it'),
+      parent: TASK_ID.optional(),
+      deps: z.array(TASK_ID).max(50).optional(),
+      owner: z.string().optional().describe('agent_id that starts on it now (claims it)')
+    }
+  },
+  async ({ title, detail, parent, deps, owner }) => text(await api('POST', '/api/tasks', { title, detail, parent, deps, owner }))
+)
+
+server.registerTool(
+  'task_claim',
+  {
+    title: 'Claim a task for a card',
+    description:
+      'Mark a task as being worked on by a card (agent_id; omitted = you). Do this when you dispatch the work. Refused while a dependency is not done or another live card owns it (task_update owner= reassigns). A card that ends with the task still doing hands it back to todo on its own.',
+    inputSchema: { task_id: TASK_ID, agent_id: z.string().optional() }
+  },
+  async ({ task_id, agent_id }) => text(await api('POST', `/api/tasks/${encodeURIComponent(task_id)}/claim`, { agent_id }))
+)
+
+server.registerTool(
+  'task_update',
+  {
+    title: 'Update a task',
+    description:
+      "Change a task's state or fields. done needs result (what was done, how it was checked: the worker's RESULT line, after get_changes for code). blocked needs reason; start it with \"APPROVAL NEEDED:\" when the owner must decide, so it is listed first for them. dropped = not needed. todo reopens it. owner reassigns it to a card.",
+    inputSchema: {
+      task_id: TASK_ID,
+      state: TASK_STATE.optional(),
+      result: z.string().max(2000).optional(),
+      reason: z.string().max(300).optional(),
+      title: z.string().max(120).optional(),
+      detail: z.string().max(2000).optional(),
+      deps: z.array(TASK_ID).max(50).optional(),
+      parent: TASK_ID.nullable().optional(),
+      owner: z.string().nullable().optional()
+    }
+  },
+  async ({ task_id, ...patch }) => text(await api('PATCH', `/api/tasks/${encodeURIComponent(task_id)}`, patch))
+)
+
+server.registerTool(
+  'task_list',
+  {
+    title: 'List the task ledger',
+    description: 'Open tasks (todo, doing, blocked) with owner, deps, reason and result, one line each; all=true includes done and dropped. Filter by state, owner (agent_id) or parent.',
+    inputSchema: { state: TASK_STATE.optional(), owner: z.string().optional(), parent: TASK_ID.optional(), all: z.boolean().optional() }
+  },
+  async ({ state, owner, parent, all }) => {
+    const q = new URLSearchParams()
+    if (state) q.set('state', state)
+    if (owner) q.set('owner', owner)
+    if (parent) q.set('parent', parent)
+    if (all) q.set('all', '1')
+    const r = (await api('GET', `/api/tasks${q.size ? `?${q}` : ''}`)) as { text?: string }
+    return text(r.text ?? '')
+  }
+)
+
 server.registerTool(
   'tidy_board',
   {

@@ -1,10 +1,15 @@
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
 import type { AgentEngine, HookEvent } from '@shared/types'
+import type { LedgerApiResult, Task, TaskFilter, TaskInput, TaskPatch, TaskState } from '@shared/ledger'
+import { TASK_STATES } from '@shared/ledger'
 
 export const PREFERRED_HOOK_PORT = 47821
 
 export type CheckpointApiResult = ({ ok: boolean; error?: string } & Record<string, unknown>) | null
+
+/** a /api/tasks caller with no x-ouroboros-self header (a raw curl): attributed to nobody, never to the owner */
+const UNKNOWN_CARD = 'unknown card'
 
 export interface ApiHandlers {
   listAgents(): unknown
@@ -50,6 +55,13 @@ export interface ApiHandlers {
   tidy(opts: { olderThanMinutes?: number; includeOwn?: boolean; scope?: string; auto?: boolean }, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
+  /** The task ledger: text for task_list (one line per task) plus the raw tasks. */
+  taskList(filter: TaskFilter): { text: string; tasks: Task[] }
+  /** `by` is the card id, or OWNER for the Tasks tab (main's IPC handlers only; the HTTP side never attributes to the owner) */
+  taskCreate(input: TaskInput, by: string): LedgerApiResult
+  /** Claim for agent_id (default: the caller); refused while a dependency is not done or a live card owns it. */
+  taskClaim(id: string, agentId: string | undefined, self?: string): LedgerApiResult
+  taskUpdate(id: string, patch: TaskPatch, by: string): LedgerApiResult
   listHandoffs(): unknown
   createHandoff(input: { source: string; target: string; mode?: 'auto' | 'manual'; template?: string; condition?: string }): { id: string } | { error: string }
   removeHandoff(id: string): boolean
@@ -70,6 +82,8 @@ export interface ApiHandlers {
 export interface HookServerDeps {
   onHook(nodeId: string, event: HookEvent): void
   onExternalHook(event: HookEvent): void
+  /** A Claude card's status-line JSON (its `statusLine` command POSTs it on every API response). */
+  onStatusLine?(nodeId: string, body: unknown): void
   /** API scoped to the window that owns `selfId` (the caller's own card id); unscoped = current window. */
   resolveApi(selfId?: string): ApiHandlers | undefined
 }
@@ -161,6 +175,16 @@ export class HookServer {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
     const method = req.method ?? 'GET'
+
+    // --- Claude Code status line (plan usage, cost, context per card) ---------
+    const sl = /^\/hook\/([^/]+)\/statusline$/.exec(path)
+    if (method === 'POST' && sl) {
+      const body = await readJson(req, 200_000)
+      // no body: the card's curl prints nothing, so Claude Code shows no status line in the terminal
+      res.writeHead(204).end()
+      if (body && typeof body === 'object') this.deps.onStatusLine?.(decodeURIComponent(sl[1]), body)
+      return
+    }
 
     // --- Claude Code hooks ---------------------------------------------------
     if (method === 'POST' && path.startsWith('/hook/')) {
@@ -274,6 +298,34 @@ export class HookServer {
           if (action === 'screenshot') return send(res, 200, await api.browser.screenshot(id))
         } catch (err) {
           return send(res, 400, { error: (err as Error).message })
+        }
+      }
+      if (path === '/api/tasks') {
+        if (method === 'GET') {
+          const state = url.searchParams.get('state') ?? undefined
+          if (state && !TASK_STATES.includes(state as TaskState)) return send(res, 400, { error: `bad state: ${state}` })
+          return send(res, 200, api.taskList({ state: state as TaskState | undefined, owner: url.searchParams.get('owner') ?? undefined, parent: url.searchParams.get('parent') ?? undefined, all: url.searchParams.get('all') === '1' }))
+        }
+        if (method === 'POST') {
+          const body = (await readJson(req)) as TaskInput | null
+          if (!body || typeof body.title !== 'string') return send(res, 400, { error: 'title required' })
+          const r = api.taskCreate(body, self || UNKNOWN_CARD)
+          return send(res, r.ok ? 200 : 400, r)
+        }
+      }
+      const t = /^\/api\/tasks\/([^/]+)(?:\/(claim))?$/.exec(path)
+      if (t) {
+        const id = decodeURIComponent(t[1])
+        if (t[2] === 'claim' && method === 'POST') {
+          const body = ((await readJson(req)) ?? {}) as { agent_id?: string }
+          const r = api.taskClaim(id, typeof body.agent_id === 'string' && body.agent_id ? body.agent_id : undefined, self)
+          return send(res, r.ok ? 200 : r.error.startsWith('no task') ? 404 : 400, r)
+        }
+        if (!t[2] && method === 'PATCH') {
+          const body = (await readJson(req)) as TaskPatch | null
+          if (!body || typeof body !== 'object') return send(res, 400, { error: 'patch required' })
+          const r = api.taskUpdate(id, body, self || UNKNOWN_CARD)
+          return send(res, r.ok ? 200 : r.error.startsWith('no task') ? 404 : 400, r)
         }
       }
       const n = /^\/api\/notes\/([^/]+)$/.exec(path)

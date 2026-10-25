@@ -87,6 +87,11 @@ const api: OuroborosApi = {
   session: {
     usage: (sessionId) => ipcRenderer.invoke(IPC.sessionUsage, sessionId)
   },
+  usage: {
+    get: () => ipcRenderer.invoke(IPC.usageGet),
+    refresh: () => ipcRenderer.invoke(IPC.usageRefresh),
+    onChange: (cb) => on(IPC.usageChanged, cb)
+  },
   engines: {
     detect: () => ipcRenderer.invoke(IPC.enginesDetect)
   },
@@ -108,6 +113,12 @@ const api: OuroborosApi = {
     list: (cwd) => ipcRenderer.invoke(IPC.rolesList, cwd),
     fetch: () => ipcRenderer.invoke(IPC.rolesFetch),
     read: (cwd, id) => ipcRenderer.invoke(IPC.rolesRead, cwd, id)
+  },
+  tasks: {
+    list: () => ipcRenderer.invoke(IPC.tasksList),
+    create: (input) => ipcRenderer.invoke(IPC.tasksCreate, input),
+    update: (id, patch) => ipcRenderer.invoke(IPC.tasksUpdate, id, patch),
+    onChange: (cb) => on(IPC.tasksChanged, cb)
   },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)

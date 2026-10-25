@@ -10,8 +10,8 @@ import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTempla
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
-import type { Board } from './board'
-import { findBriefUrl } from './briefs'
+import type { Board, NodeMeta } from './board'
+import { findBriefUrl, urlKey } from './briefs'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
@@ -34,7 +34,18 @@ import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } 
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
 import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
-import { loadWorkspace, saveWorkspace, UserStore } from './workspace-store'
+import { loadWorkspace, saveLedger, saveWorkspace, UserStore } from './workspace-store'
+import { Ledger } from './ledger'
+import type { UsageMonitor } from './usage'
+import { OWNER, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
+
+/** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
+const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
+
+function liveCards(board: Board): Set<string> {
+  // a killed card keeps a stale status, so the process decides; a card that has not spawned yet is starting
+  return new Set(board.snapshot().filter((a) => a.status === 'starting' || (a.ptyAlive && a.status !== 'ended')).map((a) => a.id))
+}
 import { createWorktree, removeWorktree } from './worktree'
 import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
@@ -55,6 +66,8 @@ export interface WindowSession {
   api: ApiHandlers
   /** This window's Autonomous mode run (off until the owner starts one). */
   autonomy: Autonomy
+  /** The project's task ledger (task_* tools, the Tasks tab, the morning report). */
+  ledger: Ledger
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
   /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
@@ -72,6 +85,8 @@ export interface MainContext {
   openProjectWindow(projectRoot?: string): WindowSession
   ptys: PtyManager
   hookServer: HookServer
+  /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
+  usage: UsageMonitor
   store: UserStore
   browsers: BrowserManager
   updater: Updater
@@ -185,9 +200,11 @@ export function createHandoffEdge(
 function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.ptys.kill(id)
   s.board.setPtyAlive(id, false)
+  s.ledger.release(id, s.board.nodes.get(id)?.data.title ?? id)
   s.board.nodes.delete(id)
   ctx.windows.unbindNode(id)
   running.delete(id)
+  ctx.usage.forgetCard(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -241,6 +258,30 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       n.data.note = note
       sendToRenderer(s, IPC.boardSetNote, { nodeId, note })
       return true
+    },
+    taskList: (filter) => {
+      const tasks = s.ledger.list(filter)
+      const titles = new Map<string, string>()
+      for (const n of board.nodes.values()) titles.set(n.id, n.data.title)
+      return { text: formatTasks(tasks, s.ledger.data.tasks, titles), tasks }
+    },
+    taskCreate: (input, by) => {
+      if (input?.owner && !board.nodes.has(input.owner)) return { ok: false, error: `no card ${input.owner}` }
+      const r = s.ledger.create(input, by)
+      if (r.ok && r.task.owner) s.ledger.cardStopped(board, r.task.owner) // handed back later unless the card is (or comes) alive
+      return toApiResult(r)
+    },
+    taskClaim: (id, agentId, self) => {
+      const cardId = agentId ?? self
+      if (!cardId) return { ok: false, error: 'agent_id required' }
+      if (!board.nodes.has(cardId)) return { ok: false, error: `no card ${cardId}` }
+      const r = s.ledger.claim(id, cardId, liveCards(board))
+      if (r.ok) s.ledger.cardStopped(board, cardId) // a claim for a dead card is handed back after the grace period
+      return toApiResult(r)
+    },
+    taskUpdate: (id, patch, by) => {
+      if (patch.owner && !board.nodes.has(patch.owner)) return { ok: false, error: `no card ${patch.owner}` }
+      return toApiResult(s.ledger.update(id, patch, by))
     },
     listHandoffs: () =>
       board.edges.map((e) => ({
@@ -297,7 +338,6 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       return query ? { ...l, roles: filterRoles(l.roles, query) } : l
     },
     createAgent: async (input) => {
-      const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
       const parentId = input.created_by && board.nodes.has(input.created_by) ? input.created_by : undefined
       let cwd = input.cwd || board.projectRoot || app.getPath('home')
       // a specialist role: its file is the system prompt, the caller's own role_prompt follows it
@@ -658,11 +698,10 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
     evidence: async (cwd) => {
       const c = await getChanges(cwd)
       return c.repo ? { branch: c.branch, added: c.added, removed: c.deleted, files: c.files.length } : undefined
-    }
+    },
+    tasks: () => s.ledger.data.tasks
   }
 }
-
-const urlKey = (u: string): string => u.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase()
 
 /** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
 function browserShowing(ctx: MainContext, board: Board, url: string): string | undefined {
@@ -675,8 +714,24 @@ function browserShowing(ctx: MainContext, board: Board, url: string): string | u
   return undefined
 }
 
+const BRIEFS_TITLE = '📄 Briefs'
+const briefsCard = (board: Board): NodeMeta | undefined => [...board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === BRIEFS_TITLE)
+
+/** One brief open at a time per window: two Stop events in the same second must not both create the card. */
+const briefOpens = new WeakMap<WindowSession, Promise<void>>()
+/** A page that never finishes loading must not hold the window's briefs queue (loadURL settles only on finish/fail). */
+const BRIEF_STEP_MS = 15_000
+
 /** Show a brief (claude.ai artifact, report URL) in the window's "📄 Briefs" browser card, created on first use. */
-async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+function openBrief(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
+  const run = (briefOpens.get(s) ?? Promise.resolve())
+    .then(() => Promise.race([openBriefNow(ctx, s, url), new Promise<void>((r) => setTimeout(r, BRIEF_STEP_MS))]))
+    .catch((e) => console.warn('[briefs] open failed', url, e))
+  briefOpens.set(s, run)
+  return run
+}
+
+async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Promise<void> {
   // Briefs stay on the canvas. Only when the owner turned the setting on (claude.ai refusing to sign in
   // inside the card, which its ↗ button also works around per page) do claude.ai links go to the system browser.
   if (/^https:\/\/claude\.ai\//.test(url) && ctx.store.getSettings().claudeLinksExternal === true) {
@@ -685,9 +740,30 @@ async function openBrief(ctx: MainContext, s: WindowSession, url: string): Promi
   }
   // a card already on that page (the Conductor's own browser_open, say) is enough: no second copy
   if (browserShowing(ctx, s.board, url)) return
-  const existing = [...s.board.nodes.values()].find((n) => n.data.kind === 'browser' && n.data.title === '📄 Briefs')
-  if (existing && ctx.browsers.has(existing.id)) await ctx.browsers.navigate(existing.id, url).catch(() => undefined)
-  else await s.api.browser.create({ url, title: '📄 Briefs' })
+  const existing = briefsCard(s.board)
+  if (!existing) {
+    const { id } = await s.api.browser.create({ url, title: BRIEFS_TITLE })
+    // create returns at dom-ready; the card reaches main's board on the renderer's next (debounced) sync,
+    // and the next queued brief must find it there
+    for (let i = 0; i < 20 && !s.board.nodes.has(id); i++) await new Promise((r) => setTimeout(r, 100))
+    return
+  }
+  // The card is there but its page has not registered (still loading, stuck on claude.ai sign-in, crashed,
+  // restored from the board file a moment ago): wait for it rather than open a second Briefs card.
+  for (let i = 0; i < 40 && !ctx.browsers.has(existing.id) && s.board.nodes.has(existing.id); i++) await new Promise((r) => setTimeout(r, 250))
+  if (!s.board.nodes.has(existing.id)) {
+    await s.api.browser.create({ url, title: BRIEFS_TITLE })
+    return
+  }
+  if (ctx.browsers.has(existing.id)) {
+    await ctx.browsers.navigate(existing.id, url).catch((e) => console.warn('[briefs] navigate failed', url, e))
+    return
+  }
+  // never came up: point the card at the brief and let the renderer load it when it can
+  // (re-read: a board sync during the wait replaces main's node objects)
+  const node = s.board.nodes.get(existing.id)
+  if (node) node.data.url = url
+  sendToRenderer(s, IPC.boardUpdateNode, { nodeId: existing.id, data: { url }, restart: false })
 }
 
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
@@ -731,9 +807,9 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
     if (!found) return
     const { url, inMessage } = found
     // a link that is only in the scrollback was handled when it first appeared
-    if (!inMessage && src.data.lastBriefUrl === url) return
-    if (Date.now() - (lastOpened.get(url) ?? 0) < 60_000) return
-    lastOpened.set(url, Date.now())
+    if (!inMessage && src.data.lastBriefUrl && urlKey(src.data.lastBriefUrl) === urlKey(url)) return
+    if (Date.now() - (lastOpened.get(urlKey(url)) ?? 0) < 60_000) return
+    lastOpened.set(urlKey(url), Date.now())
     // remembered on the card and on every conductor so the owner can reopen it with the 📄 button
     for (const n of board.nodes.values()) {
       if (n.id !== nodeId && n.data.kind !== 'conductor') continue
@@ -779,6 +855,14 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     initialProject,
     api: null as unknown as ApiHandlers,
     autonomy: null as unknown as Autonomy,
+    ledger: new Ledger((data) => {
+      if (!board.projectRoot) return
+      try {
+        saveLedger(board.projectRoot, data)
+      } catch (err) {
+        log(`[ledger] save failed: ${(err as Error).message}`)
+      }
+    }),
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
     selectedNodeId: null,
@@ -788,6 +872,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     },
     dispose() {
       s.autonomy.dispose()
+      s.ledger.dispose()
       for (const id of board.nodes.keys()) {
         ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
@@ -800,6 +885,8 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
+  s.ledger.attach(board)
+  s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   board.on('status', (p: AgentStatusPayload) => {
     sendToRenderer(s, IPC.agentStatus, p)
     if (p.status === 'needs-you') notifyNeedsYou(ctx, s, p)
@@ -900,7 +987,12 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
   ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
     ptys.kill(nodeId)
-    sessionOf(e)?.board.setPtyAlive(nodeId, false)
+    ctx.usage.forgetCard(nodeId)
+    const s = sessionOf(e)
+    if (!s) return
+    s.board.setPtyAlive(nodeId, false)
+    // an explicit kill reports no exit: the ledger hears about it here (a restart spawns again before the grace period ends)
+    if (s.board.nodes.has(nodeId)) s.ledger.cardStopped(s.board, nodeId)
   })
 
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
@@ -969,11 +1061,21 @@ export function registerIpc(ctx: MainContext): void {
       other.win.focus()
       return { workspace: null, projectRoot, alreadyOpen: true }
     }
+    s?.ledger.flush() // the previous project's pending ledger write goes to its own file first
     if (s) s.board.projectRoot = projectRoot
     store.pushRecent(projectRoot)
-    return { workspace: loadWorkspace(projectRoot), projectRoot }
+    const workspace = loadWorkspace(projectRoot)
+    s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
+    return { workspace, projectRoot }
   })
-  ipcMain.handle(IPC.workspaceSave, (_e, ws: Workspace) => saveWorkspace(ws))
+  ipcMain.handle(IPC.workspaceSave, (e, ws: Workspace) => {
+    // the renderer never carries the ledger: main's copy goes into every save. A save for a project this window has
+    // already left (an autosave in flight during a switch) is dropped rather than written with the new project's tasks.
+    const s = sessionOf(e)
+    if (!s) return saveWorkspace(ws)
+    if (!s.board.projectRoot || !samePath(ws.projectRoot, s.board.projectRoot)) return
+    saveWorkspace({ ...ws, tasks: s.ledger.data.tasks, nextTaskId: s.ledger.data.nextTaskId })
+  })
   ipcMain.handle(IPC.projectOpen, async (e) => {
     const win = sessionOf(e)?.win
     const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Open project folder' }
@@ -1026,6 +1128,10 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.rolesList, (_e, cwd: string) => ctx.roles.list(typeof cwd === 'string' ? cwd : ''))
   ipcMain.handle(IPC.rolesFetch, () => ctx.roles.fetch())
   ipcMain.handle(IPC.rolesRead, (_e, cwd: string, id: string) => (typeof id === 'string' ? ctx.roles.prompt(typeof cwd === 'string' ? cwd : '', id) : undefined))
+  // the owner's Tasks tab: the same ledger the task_* tools use, with the owner as the actor
+  ipcMain.handle(IPC.tasksList, (e) => sessionOf(e)?.ledger.list({ all: true }) ?? [])
+  ipcMain.handle(IPC.tasksCreate, (e, input: TaskInput) => sessionOf(e)?.api.taskCreate(input, OWNER) ?? { ok: false, error: 'no window' })
+  ipcMain.handle(IPC.tasksUpdate, (e, id: string, patch: TaskPatch) => sessionOf(e)?.api.taskUpdate(String(id), patch ?? {}, OWNER) ?? { ok: false, error: 'no window' })
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
   ipcMain.handle(IPC.filesPasteClipboard, async (_e, saveImage = true): Promise<{ path?: string; text?: string; image?: boolean }> => {
@@ -1137,6 +1243,10 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
+  ipcMain.handle(IPC.usageGet, () => ctx.usage.snapshot())
+  ipcMain.handle(IPC.usageRefresh, () => ctx.usage.snapshot({ refresh: true }))
+  // a card's status line brought new plan numbers: every window shows them (the account is one)
+  ctx.usage.onChange(() => void ctx.usage.snapshot().then((snap) => broadcast(ctx, IPC.usageChanged, snap)).catch(() => undefined))
   ipcMain.handle(IPC.enginesDetect, () => detectEngines())
   ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number, includeOwn: boolean) => (await sessionOf(e)?.api.tidy({ olderThanMinutes: minutes, includeOwn }, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {

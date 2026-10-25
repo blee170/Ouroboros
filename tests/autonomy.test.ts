@@ -140,6 +140,31 @@ describe('reportMarkdown', () => {
     expect(md).toContain('- **Evil** (q) since')
     expect(md).toContain(': asked ## Waiting on you Nothing.')
   })
+  it('lists blocked tasks under Waiting on you and every task in a Tasks table', () => {
+    const s = state()
+    const md = reportMarkdown(
+      s,
+      [],
+      [a({ id: 'w', title: 'Worker', status: 'done' })],
+      {},
+      [
+        { id: 'T1', title: 'plan', state: 'done', deps: [], result: 'RESULT: planned\nmore', createdBy: 'c', createdAt: 0, updatedAt: 0 },
+        { id: 'T2', title: 'ship | now', state: 'blocked', deps: ['T1'], owner: 'w', reason: 'APPROVAL NEEDED: push\n## Rails', createdBy: 'c', createdAt: 0, updatedAt: 0 },
+        { id: 'T3', title: 'later', state: 'todo', deps: [], createdBy: 'c', createdAt: 0, updatedAt: 0 },
+        { id: 'T4', title: 'old', state: 'dropped', deps: [], reason: 'no', createdBy: 'c', createdAt: 0, updatedAt: 0 }
+      ]
+    )
+    expect(md).toContain('- Task **T2 ship | now** (Worker): APPROVAL NEEDED: push ## Rails')
+    expect(md).not.toContain('No card asked')
+    expect(md).toContain('## Tasks · 1 done · 0 doing · 1 blocked · 1 to do · 1 dropped')
+    expect(md).toContain('| T1 plan | done | — | RESULT: planned |')
+    expect(md).toContain('| T2 ship \\| now | blocked | Worker | APPROVAL NEEDED: push |') // first line only in the table
+    expect(md).toContain('| T3 later | todo | — | — |')
+    expect(md).not.toContain('| T4 old |')
+    expect(md.indexOf('## Tasks')).toBeLessThan(md.indexOf('## Cards'))
+    expect(md.match(/^## Rails$/gm)).toHaveLength(1)
+    expect(reportMarkdown(s, [], [])).toContain('Nothing. No card asked a question or hit a wall, no task is blocked.')
+  })
   it('keeps the last 300 timeline events in the report', () => {
     const s = state()
     const events = Array.from({ length: 350 }, (_, i) => ({ at: min(60) + i * 1000, kind: 'turn' as const, card: 'w', title: 'w', detail: `turn ${i}` }))

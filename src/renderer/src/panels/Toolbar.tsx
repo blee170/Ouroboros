@@ -8,6 +8,7 @@ import { BoardBuilder } from './BoardBuilder'
 import { TidyDialog } from './TidyDialog'
 import { AutonomyDialog } from './AutonomyDialog'
 import { HelpDialog } from './HelpDialog'
+import { UsageDialog } from './UsageDialog'
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -32,6 +33,9 @@ export function Toolbar() {
   const [tidyOpen, setTidyOpen] = useState(false)
   const [autoOpen, setAutoOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState<false | 'help' | 'first-run'>(false)
+  // the Usage dialog is in the store: the status-bar chip opens it too
+  const usageOpen = useBoard((s) => s.usageOpen)
+  const setUsageOpen = useBoard((s) => s.setUsageOpen)
   const autonomyOn = useBoard((s) => s.autonomy.on)
   // the first-run guide: once, the first time a project is open with the saved settings in hand (the defaults
   // alone would show it to everyone on every start before their settings arrived)
@@ -153,6 +157,9 @@ export function Toolbar() {
           </button>
         )}
         <span className="sep" />
+        <button className={`ghost${usageOpen ? ' on' : ''}`} title="Usage: what each plan has used of its 5-hour and weekly limits, and when they reset" aria-label="Usage" onClick={() => setUsageOpen(true)}>
+          <Icon name="usage" />
+        </button>
         <button className="ghost" title="Help: your first hour, shortcuts, the tutorial" aria-label="Help" onClick={() => setHelpOpen('help')}>
           <Icon name="help" />
         </button>
@@ -168,6 +175,7 @@ export function Toolbar() {
       {builderOpen && <BoardBuilder onClose={() => setBuilderOpen(false)} />}
       {tidyOpen && <TidyDialog onClose={() => setTidyOpen(false)} />}
       {autoOpen && <AutonomyDialog onClose={() => setAutoOpen(false)} />}
+      {usageOpen && <UsageDialog onClose={() => setUsageOpen(false)} />}
     </div>
   )
 }

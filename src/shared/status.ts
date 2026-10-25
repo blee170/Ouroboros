@@ -17,11 +17,16 @@ function detailOf(event: HookEvent): string | undefined {
   return undefined
 }
 
+/** A card whose turn is over: done, idle, ended, or stopped on an error (a needs-you marked "failed:"). */
+function isFinished(prev: AgentStatus | undefined, prevDetail: string | undefined): boolean {
+  return prev === 'done' || prev === 'idle' || prev === 'ended' || (prev === 'needs-you' && !!failureOf(prevDetail))
+}
+
 /**
  * Pure reducer: previous status + Claude Code hook event -> next status.
  * Returns null when the event does not change anything we track.
  */
-export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): StatusUpdate | null {
+export function reduceHook(prev: AgentStatus | undefined, event: HookEvent, prevDetail?: string): StatusUpdate | null {
   const sessionId = typeof event.session_id === 'string' ? event.session_id : undefined
   switch (event.hook_event_name) {
     case 'SessionStart':
@@ -29,11 +34,19 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent): Sta
     case 'UserPromptSubmit':
       return { status: 'working', statusDetail: 'thinking', sessionId }
     case 'PreToolUse':
+      // a subagent's tool calls carry agent_id (the main agent's do not): a background subagent still working after
+      // the turn ended does not make the finished card Working again; its report back starts a turn with UserPromptSubmit
+      if (typeof event.agent_id === 'string' && event.agent_id && isFinished(prev, prevDetail)) return null
       return { status: 'working', statusDetail: event.tool_name ? `tool: ${event.tool_name}` : 'tool', sessionId }
     case 'PostToolUse':
     case 'PostToolUseFailure':
     case 'SubagentStart':
     case 'SubagentStop':
+      // These also arrive after a turn has ended (a background agent or shell finishing, the post-turn recap) and no
+      // Stop follows them, so they never start a turn: a turn starts with UserPromptSubmit or PreToolUse. They keep a
+      // working card working and resume one that was waiting on a permission prompt the owner just answered; a
+      // needs-you marked "failed:" is a turn that ended on an error (StopFailure), not a prompt.
+      if (isFinished(prev, prevDetail)) return null
       return { status: 'working', statusDetail: prev === 'working' ? undefined : 'working', sessionId }
     // Compaction is not a turn: Claude Code also compacts while idle ("Compacted while idle, before the prompt
     // cache expired"), and no Stop follows that, so a card that was not working must stay idle/done.

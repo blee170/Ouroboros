@@ -131,7 +131,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           </span>
         )}
         {data.lastBriefUrl && (
-          <button className="icon-btn nodrag" title={`Open the latest brief in the Briefs card\n${data.lastBriefUrl}`} aria-label="Open the latest brief" onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string)}>
+          <button className="icon-btn nodrag" title={`Open the latest brief in the Briefs card\n${data.lastBriefUrl}`} aria-label="Open the latest brief" onClick={() => void window.ouroboros.brief.open(data.lastBriefUrl as string, id)}>
             <Icon name="brief" size={14} />
           </button>
         )}

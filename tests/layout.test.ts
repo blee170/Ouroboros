@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GAP, GRID, arrangeBoard, defaultSize, placeNew, type ArrangeInput, type Rect } from '@shared/layout'
+import { GAP, GRID, arrangeBoard, defaultSize, placeBeside, placeNew, type ArrangeInput, type Rect } from '@shared/layout'
 
 const cell = (col: number, row: number): { x: number; y: number } => ({ x: GRID.originX + col * GRID.pitchX, y: GRID.originY + row * GRID.pitchY })
 const card = (col: number, row: number, size = defaultSize('claude')): Rect => ({ ...cell(col, row), ...size })
@@ -91,5 +91,19 @@ describe('arrangeBoard', () => {
     expect(Math.max(...workers.map((w) => pos[w.id].x)) + 560).toBeLessThan(pos.k.x)
     noOverlap(cards, pos)
     expect(arrangeBoard([...cards].reverse(), [...edges].reverse())).toEqual(pos)
+  })
+})
+
+describe('placeBeside', () => {
+  const anchor = { x: 100, y: 100, width: 560, height: 400 }
+  const size = { width: 640, height: 480 }
+  it('puts the card right of the anchor, top edges aligned', () => {
+    expect(placeBeside(anchor, [anchor], size)).toEqual({ x: 100 + 560 + GAP, y: 100 })
+  })
+  it('goes below a card already there, then one column further right', () => {
+    const right = { x: 100 + 560 + GAP, y: 100, width: 640, height: 480 }
+    expect(placeBeside(anchor, [anchor, right], size)).toEqual({ x: right.x, y: 100 + 480 + GAP })
+    const column = Array.from({ length: 6 }, (_, i) => ({ x: right.x, y: 100 + i * (480 + GAP), width: 640, height: 480 }))
+    expect(placeBeside(anchor, [anchor, ...column], size)).toEqual({ x: right.x + 640 + GAP, y: 100 })
   })
 })

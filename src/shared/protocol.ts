@@ -143,7 +143,7 @@ export interface BoardSyncPayload {
 }
 
 /** A card added by main (Conductor tools, browser_open): without a position the renderer puts it in the first free grid cell. */
-export type AddNodePayload = Omit<WorkspaceNode, 'position'> & { position?: WorkspaceNode['position'] }
+export type AddNodePayload = Omit<WorkspaceNode, 'position'> & { position?: WorkspaceNode['position']; /** placed right of this card when it has no position */ near?: string }
 
 export interface AgentStatusPayload {
   nodeId: string
@@ -379,7 +379,8 @@ export interface OuroborosApi {
   }
   brief: {
     /** Show a URL in this window's "📄 Briefs" browser card (created on first use). */
-    open(url: string): Promise<void>
+    /** `near`: the card whose brief it is; a new Briefs card goes to its right */
+    open(url: string, near?: string): Promise<void>
   }
   autonomy: {
     /** Start a run (keep-awake, deadline, caps, deny rules, parking, report); live Claude cards are relaunched in auto mode. */

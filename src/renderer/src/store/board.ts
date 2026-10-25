@@ -11,7 +11,7 @@ import type { Approval } from '@shared/gate'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
-import { arrangeBoard, defaultSize, placeNew, type Rect } from '@shared/layout'
+import { arrangeBoard, defaultSize, placeBeside, placeNew, type Rect } from '@shared/layout'
 import { EMPTY_ATTENTION, onStatus as attentionOnStatus, onViewed, type Attention } from '@shared/attention'
 import { SETTLE_ROWS_MS, rosterSnapshot, sameIds, sameRoster, type RosterRow } from '@shared/roster'
 import { DONE_ECHO_DETAIL } from '@shared/status'
@@ -118,7 +118,7 @@ interface BoardState {
   onNodesChange(changes: NodeChange<BoardNode>[]): void
   onEdgesChange(changes: EdgeChange<BoardEdge>[]): void
   onConnect(c: Connection): void
-  addNode(kind: NodeKind, partial?: Partial<NodeData> & { id?: string; position?: { x: number; y: number }; select?: boolean }): string
+  addNode(kind: NodeKind, partial?: Partial<NodeData> & { id?: string; position?: { x: number; y: number }; select?: boolean; near?: string }): string
   /** Add a generated set of nodes/edges (Board Builder). `replace` closes every existing card first. */
   addGenerated(nodes: WorkspaceNode[], edges: WorkspaceEdge[], replace: boolean): Promise<void>
   updateNodeData(id: string, patch: Partial<NodeData>): void
@@ -297,9 +297,11 @@ export const useBoard = create<BoardState>((set, get) => ({
     const isBrowser = kind === 'browser'
     const size = { width: isNote ? 300 : isBrowser ? 640 : 560, height: isNote ? 220 : isBrowser ? 480 : 400 }
     // the first grid cell nothing overlaps: a closed card frees its cell, a resized one keeps new cards out
-    const position = partial.position ?? placeNew(s.nodes.filter((n) => n.data.kind !== 'external').map(rectOf), size)
+    const occupied = s.nodes.filter((n) => n.data.kind !== 'external').map(rectOf)
+    const anchor = partial.near ? s.nodes.find((n) => n.id === partial.near) : undefined
+    const position = partial.position ?? (anchor ? placeBeside(rectOf(anchor), occupied, size) : placeNew(occupied, size))
     const titleDefault = kind === 'conductor' ? 'Conductor' : kind === 'note' ? 'Note' : kind === 'browser' ? 'Browser' : kind === 'command' ? 'Command' : basename(cwd)
-    const { position: _p, id: _id, select = true, ...rest } = partial
+    const { position: _p, id: _id, select = true, near: _near, ...rest } = partial
     const data: NodeData = {
       kind,
       title: rest.title ?? titleDefault,

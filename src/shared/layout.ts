@@ -54,6 +54,22 @@ export function placeNew(occupied: Rect[], size: Size): { x: number; y: number }
   return { x: GRID.originX, y: GRID.originY }
 }
 
+/**
+ * A spot right of `anchor` (the card a new one belongs to: the Briefs card beside the card whose reply had the
+ * link), top edges aligned; if something is there, the next free spot below it in that column, then one column
+ * further right. Falls back to the first free grid cell.
+ */
+export function placeBeside(anchor: Rect, occupied: Rect[], size: Size): { x: number; y: number } {
+  for (let col = 0; col < 3; col++) {
+    const x = anchor.x + anchor.width + GAP + col * (size.width + GAP)
+    for (let step = 0; step < 6; step++) {
+      const candidate: Rect = { x, y: anchor.y + step * (size.height + GAP), ...size }
+      if (!occupied.some((r) => overlaps(candidate, r, GAP))) return { x: candidate.x, y: candidate.y }
+    }
+  }
+  return placeNew(occupied, size)
+}
+
 export interface ArrangeInput extends Size {
   id: string
   kind: NodeKind

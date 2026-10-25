@@ -3,6 +3,7 @@ import { useBoard } from '@/store/board'
 import type { AppInfo, UpdateStatus } from '@shared/protocol'
 import { EnginesPanel } from './EnginesPanel'
 import { announceSettings } from '@shared/announce'
+import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
 import type { TtsKeyEngine } from '@shared/protocol'
 import { speak, voiceFor } from '@/lib/speak'
@@ -77,6 +78,14 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <h4>Announcements</h4>
           <label className="check">
             <input type="checkbox" checked={settings.notifications} onChange={(e) => void setSettings({ notifications: e.target.checked })} /> Desktop notification when a card needs you
+          </label>
+          <label className="field">
+            <span>Stall alert</span>
+            <div className="ctl">
+              <input className="text" style={{ width: 80, flex: 'none' }} type="number" min={0} max={240} defaultValue={settings.stallMinutes ?? DEFAULT_STALL_MINUTES} onBlur={(e) => void setSettings({ stallMinutes: Math.min(240, Math.max(0, Number(e.target.value) | 0)) })} />
+              <span className="small">min</span>
+            </div>
+            <div className="hint">A card Working with no activity (three times as long inside a tool call), or waiting on you, this long is reported to its Conductor; the third report, or a card with no Conductor, notifies you. 0 = off. Autonomous mode has its own stall rule.</div>
           </label>
           <label className="field">
             <span>Announce</span>

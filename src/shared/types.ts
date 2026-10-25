@@ -207,6 +207,8 @@ export interface AppSettings {
   autoTidyMinutes?: number
   /** Dispatched cards are retired this many minutes after their report reached the card that made them (default 5; 0 = never automatically). */
   retireMinutes?: number
+  /** Stall watchdog: a card Working with no activity, or waiting on a person, this long is reported to its Conductor (default 15; 0 = off). */
+  stallMinutes?: number
   /** create_agent refuses when a card already has this many live dispatched cards (default 6). */
   maxWorkersPerLead?: number
   /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default false: briefs stay on the canvas. */

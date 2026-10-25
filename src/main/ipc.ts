@@ -36,8 +36,9 @@ import { log, logPath } from './diagnostics'
 import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, detectEngines } from './engines'
 import { loadWorkspace, saveLedger, saveWorkspace, UserStore } from './workspace-store'
 import { Ledger } from './ledger'
+import { DEFAULT_STALL_MINUTES, newWatchdogState, watchdogReports } from '@shared/watchdog'
 import type { UsageMonitor } from './usage'
-import { OWNER, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
+import { OWNER, cleanLine, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
 
 /** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
 const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
@@ -766,6 +767,64 @@ async function openBriefNow(ctx: MainContext, s: WindowSession, url: string): Pr
   sendToRenderer(s, IPC.boardUpdateNode, { nodeId: existing.id, data: { url }, restart: false })
 }
 
+/**
+ * Stall watchdog (roadmap D), once a minute outside an autonomous run (which nudges and parks on its own): a card
+ * Working with no hook event, or waiting on a person, for stallMinutes is reported to the Conductor it reports to
+ * (its parent, or a Conductor its auto line feeds); the third report since the card last finished a turn, or a
+ * card with no Conductor, also gets a desktop notification.
+ */
+function installWatchdog(ctx: MainContext, s: WindowSession): void {
+  const state = newWatchdogState()
+  const timer = setInterval(() => {
+    if (s.win.isDestroyed()) return clearInterval(timer)
+    const minutes = ctx.store.getSettings().stallMinutes ?? DEFAULT_STALL_MINUTES
+    if (s.autonomy.on) {
+      watchdogReports([], state, Date.now(), minutes) // a run starts the count over
+      return
+    }
+    const agents = s.board.snapshot()
+    for (const r of watchdogReports(agents, state, Date.now(), minutes)) {
+      const a = agents.find((x) => x.id === r.id)
+      if (!a) continue
+      const title = cleanLine(a.title, 80) || a.id
+      const detail = cleanLine(a.statusDetail, 160)
+      const owns = s.ledger.list({ owner: a.id, state: 'doing' }).map((t) => t.id)
+      const ownsText = owns.length ? ` It owns ${owns.join(', ')}.` : ''
+      // the card's own words, quoted: they come from hooks and may be anyone's text
+      const detailText = detail ? ` (card says: "${detail.replace(/"/g, "'")}")` : ''
+      const msg =
+        r.reason === 'silent'
+          ? `[card stalled] ${title}: Working with no activity for ${r.minutes} min${detailText}.${ownsText} Check it with read_output; nudge it with send_prompt, or kill it and dispatch the work again.`
+          : `[card waiting] ${title}: waiting for input for ${r.minutes} min${detailText}.${ownsText} Read the question with read_output, then answer it with send_prompt or ask the owner.`
+      const targets = new Set<string>()
+      const parent = a.parentId ? s.board.nodes.get(a.parentId) : undefined
+      if (parent && parent.data.kind !== 'terminal' && parent.data.kind !== 'command') targets.add(parent.id)
+      for (const e of s.board.edges) {
+        if (e.source !== a.id || e.data.mode !== 'auto') continue
+        if (s.board.nodes.get(e.target)?.data.kind === 'conductor') targets.add(e.target)
+      }
+      let told = false
+      // a Conductor on a prompt of its own would take the pasted line and Enter as its answer
+      for (const t of targets) if (s.board.nodes.get(t)?.data.status !== 'needs-you' && sendPrompt(ctx, s, t, msg)) told = true
+      log(`[watchdog] ${a.id} ${r.reason} ${r.minutes} min, ${told ? `reported to ${[...targets].join(',')}` : targets.size ? `not delivered to ${[...targets].join(',')}` : 'no conductor'}${r.escalate ? ', escalated' : ''}`)
+      if ((r.escalate || !told) && ctx.store.getSettings().notifications && !viewing(s, a.id) && Notification.isSupported()) {
+        const note = new Notification({
+          title: r.reason === 'silent' ? `${title} looks stuck` : `${title} is still waiting`,
+          body: `${r.reason === 'silent' ? 'Working with no activity' : 'Waiting for input'} for ${r.minutes} min${detail ? ` · ${detail}` : ''}`
+        })
+        note.on('click', () => {
+          if (!s.win.isDestroyed()) {
+            s.win.show()
+            s.win.focus()
+          }
+        })
+        note.show()
+      }
+    }
+  }, 60_000)
+  timer.unref?.()
+}
+
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
 function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession['fireHandoff'] {
   const board = s.board
@@ -831,8 +890,11 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
       if (edge.source !== p.nodeId || edge.data.mode !== 'auto') continue
       const dst = board.nodes.get(edge.target)
       if (!dst || dst.data.kind !== 'conductor') continue
+      // a Conductor on a prompt of its own would take the pasted line and Enter as its answer
+      if (dst.data.status === 'needs-you') continue
       noticed.set(p.nodeId, now)
-      sendPrompt(ctx, s, edge.target, `[${src?.data.title ?? p.nodeId} needs input] ${p.statusDetail ?? 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
+      const what = cleanLine(p.statusDetail, 200)
+      sendPrompt(ctx, s, edge.target, `[${cleanLine(src?.data.title, 80) || p.nodeId} needs input] ${what ? `card says: "${what.replace(/"/g, "'")}"` : 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
     }
   })
   return (edgeId, manual) => {
@@ -885,6 +947,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
+  installWatchdog(ctx, s)
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   board.on('status', (p: AgentStatusPayload) => {

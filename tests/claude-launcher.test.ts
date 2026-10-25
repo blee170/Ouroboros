@@ -19,10 +19,14 @@ describe('prepareLaunch', () => {
     const { prepareLaunch } = await import('../src/main/claude-launcher')
     const tmpDir = mkdtempSync(join(tmpdir(), 'ouro-launch-'))
     try {
-      const l = prepareLaunch({ nodeId: 'n1', kind: 'claude', claude: {}, shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 't', tmpDir, execPath: 'x', mcpScriptPath: 'm.js', settingsExtra: { permissions: { deny: ['Bash(git push*)'] } } })
+      const l = prepareLaunch({ nodeId: 'n1', kind: 'claude', claude: {}, shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 't', apiToken: 'api-t', tmpDir, execPath: 'x', mcpScriptPath: 'm.js', settingsExtra: { permissions: { deny: ['Bash(git push*)'] } } })
       const written = JSON.parse(readFileSync(l.settingsPath!, 'utf8')) as { hooks: unknown; permissions: { deny: string[] } }
       expect(written.hooks).toBeTruthy()
       expect(written.permissions.deny).toEqual(['Bash(git push*)'])
+      // the card's token is in its environment only; the hooks name the variable
+      expect(l.env).toEqual({ OUROBOROS_HOOK_TOKEN: 't' }) // no board tools: no API token at all
+      const stop = (written.hooks as Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>).Stop[0].hooks[0]
+      expect(stop).toMatchObject({ headers: { 'x-ouroboros-token': '$OUROBOROS_HOOK_TOKEN' }, allowedEnvVars: ['OUROBOROS_HOOK_TOKEN'] })
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
@@ -31,13 +35,15 @@ describe('prepareLaunch', () => {
 
 describe('buildMcpConfig', () => {
   it('uses system node when available and electron-as-node otherwise', () => {
-    const base = { execPath: 'C:\\App\\Ouroboros.exe', scriptPath: 'C:\\App\\mcp.js', baseUrl: 'http://127.0.0.1:1', token: 't', nodeId: 'n' }
+    const base = { execPath: 'C:\\App\\Ouroboros.exe', scriptPath: 'C:\\App\\mcp.js', baseUrl: 'http://127.0.0.1:1', nodeId: 'n' }
     const withNode = buildMcpConfig({ ...base, nodeBin: 'C:\\nodejs\\node.exe' }) as { mcpServers: { ouroboros: { command: string; env: Record<string, string> } } }
     expect(withNode.mcpServers.ouroboros.command).toBe('C:\\nodejs\\node.exe')
     expect(withNode.mcpServers.ouroboros.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
     const fallback = buildMcpConfig(base) as { mcpServers: { ouroboros: { command: string; env: Record<string, string> } } }
     expect(fallback.mcpServers.ouroboros.command).toBe('C:\\App\\Ouroboros.exe')
     expect(fallback.mcpServers.ouroboros.env.ELECTRON_RUN_AS_NODE).toBe('1')
+    // Claude Code expands this from the card's environment when it starts the server (checked on 2.1.310)
+    expect(fallback.mcpServers.ouroboros.env.OUROBOROS_TOKEN).toBe('${OUROBOROS_CARD_API_TOKEN}')
   })
 })
 
@@ -74,7 +80,7 @@ import { prepareLaunch } from '../src/main/claude-launcher'
 describe('prepareLaunch', () => {
   it('writes an mcp config when a plain claude card has extra servers, and merges the board server for conductors', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'ouro-launch-'))
-    const base = { shell: '/bin/bash', baseUrl: 'http://127.0.0.1:1', token: 't', tmpDir: tmp, execPath: '/el', mcpScriptPath: '/mcp.js' }
+    const base = { shell: '/bin/bash', baseUrl: 'http://127.0.0.1:1', token: 't', apiToken: 'api-t', tmpDir: tmp, execPath: '/el', mcpScriptPath: '/mcp.js' }
     const plain = prepareLaunch({ ...base, nodeId: 'p1', kind: 'claude', claude: {} })
     expect(plain.mcpConfigPath).toBeUndefined()
     expect(plain.systemPromptPath).toBeUndefined()
@@ -100,4 +106,29 @@ describe('prepareLaunch', () => {
     expect(cfg.mcpServers.ouroboros.command).toBe('/el') // no nodeBin given -> electron-as-node fallback
     rmSync(tmp, { recursive: true, force: true })
   })
+
+describe('card tokens at launch', () => {
+  it('gives the API token only to the Conductor and board-tools cards, and refuses ids that are not file-safe', async () => {
+    const { mkdtempSync, readFileSync, rmSync, existsSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { prepareLaunch } = await import('../src/main/claude-launcher')
+    const tmpDir = mkdtempSync(join(tmpdir(), 'ouro-tok-'))
+    try {
+      const p = { shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 'hook-t', apiToken: 'api-t', tmpDir, execPath: 'x', mcpScriptPath: 'm.js' }
+      expect(prepareLaunch({ ...p, nodeId: 'c1', kind: 'conductor', claude: {} }).env).toEqual({ OUROBOROS_HOOK_TOKEN: 'hook-t', OUROBOROS_CARD_API_TOKEN: 'api-t' })
+      expect(prepareLaunch({ ...p, nodeId: 'w1', kind: 'claude', claude: { boardTools: true } }).env).toMatchObject({ OUROBOROS_CARD_API_TOKEN: 'api-t' })
+      expect(readFileSync(join(tmpDir, 'c1.mcp.json'), 'utf8')).not.toContain('api-t')
+      // Codex / Gemini: the hook token always in a file, the API token only with board tools
+      prepareLaunch({ ...p, nodeId: 'g1', kind: 'claude', engine: 'gemini', claude: {}, hookScriptPath: 'h.js', nodeBin: 'node' })
+      expect(readFileSync(join(tmpDir, 'g1.token'), 'utf8')).toBe('hook-t')
+      expect(existsSync(join(tmpDir, 'g1.api-token'))).toBe(false)
+      prepareLaunch({ ...p, nodeId: 'g2', kind: 'conductor', engine: 'gemini', claude: {}, hookScriptPath: 'h.js', nodeBin: 'node' })
+      expect(readFileSync(join(tmpDir, 'g2.api-token'), 'utf8')).toBe('api-t')
+      for (const bad of ['../evil', 'a/b', 'external', '', 'x'.repeat(65)]) expect(() => prepareLaunch({ ...p, nodeId: bad, kind: 'claude', claude: {} }), bad).toThrow(/cannot be launched/)
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+})
 })

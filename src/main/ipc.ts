@@ -1087,7 +1087,8 @@ export function registerIpc(ctx: MainContext): void {
         claude: { ...opts.claude, permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'] },
         shell,
         baseUrl: hookServer.baseUrl,
-        token: hookServer.token,
+        token: hookServer.hookToken(opts.nodeId),
+        apiToken: hookServer.apiToken(opts.nodeId),
         tmpDir: ctx.tmpDir,
         execPath: process.execPath,
         nodeBin: findNodeBinary(),
@@ -1267,7 +1268,7 @@ export function registerIpc(ctx: MainContext): void {
 
   ipcMain.handle(IPC.externalInstallHooks, (_e, enable: boolean) => {
     try {
-      setGlobalExternalHooks(enable, hookServer.baseUrl)
+      setGlobalExternalHooks(enable, hookServer.baseUrl, hookServer.externalToken)
       store.setSettings({ trackExternalSessions: enable })
       return { ok: true }
     } catch (err) {

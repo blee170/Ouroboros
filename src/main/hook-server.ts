@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { AgentEngine, HookEvent } from '@shared/types'
 import type { LedgerApiResult, Task, TaskFilter, TaskInput, TaskPatch, TaskState } from '@shared/ledger'
 import { TASK_STATES } from '@shared/ledger'
@@ -86,6 +86,26 @@ export interface HookServerDeps {
   onStatusLine?(nodeId: string, body: unknown): void
   /** API scoped to the window that owns `selfId` (the caller's own card id); unscoped = current window. */
   resolveApi(selfId?: string): ApiHandlers | undefined
+  /** The token the global hook in the owner's Claude Code settings sends with `/hook/external` (persisted across launches). */
+  externalToken?: string
+  /** Diagnostics line (refused requests: a CLI only logs a failed hook, so this is where a broken card shows why). */
+  log?(line: string): void
+}
+
+/** Header every authenticated call carries: a card's own token, the external-hook token, or the app's master token. */
+export const TOKEN_HEADER = 'x-ouroboros-token'
+
+const headerOf = (req: http.IncomingMessage, name: string): string | undefined => {
+  const v = req.headers[name]
+  return Array.isArray(v) ? v[0] : v
+}
+
+/** Constant-time string compare (different lengths are simply unequal). */
+function same(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false
+  const x = Buffer.from(a)
+  const y = Buffer.from(b)
+  return x.length === y.length && timingSafeEqual(x, y)
 }
 
 function readJson(req: http.IncomingMessage, limit = 2_000_000): Promise<unknown> {
@@ -122,21 +142,59 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
 
 /**
  * Local HTTP server that (1) receives Claude Code HTTP hooks and (2) serves the small JSON API the
- * MCP server process uses. Binds to 127.0.0.1 only. API routes require the per-launch token.
+ * MCP server process uses. Binds to 127.0.0.1 only and answers only requests addressed to that host with no
+ * `Origin` (a browser page cannot reach it). Every card has its own hook token, derived from its id, required on
+ * its hook route; the Conductor and cards with board tools also get an API token, which is what makes the API caller that
+ * card (`x-ouroboros-self` is checked against it).
  */
 export class HookServer {
-  /** Per-launch secret for the JSON API; OUROBOROS_API_TOKEN overrides it (tests). */
+  /** Master token for the JSON API, for the main process and tests only (never given to a card); OUROBOROS_API_TOKEN overrides it. */
   readonly token = process.env.OUROBOROS_API_TOKEN || randomBytes(24).toString('hex')
+  /** Per-launch key the card tokens are derived from; it never leaves this process. */
+  private readonly secret = randomBytes(32)
   port = 0
   private server: http.Server | null = null
+  /** refusals already logged (route + reason), so a card that keeps failing logs once */
+  private refusedLogged = new Set<string>()
 
   constructor(private deps: HookServerDeps) {}
+
+  /** What the global hook in the owner's Claude Code settings sends (empty: the external route answers nobody). */
+  get externalToken(): string {
+    return this.deps.externalToken ?? ''
+  }
 
   get baseUrl(): string {
     return `http://127.0.0.1:${this.port}`
   }
 
-  async start(): Promise<number> {
+  /** A card's hook token: HMAC of its id, so nothing is stored and a card restarted in this launch keeps it. Every card has one. */
+  hookToken(nodeId: string): string {
+    return createHmac('sha256', this.secret).update(`hook\0${nodeId}`).digest('hex')
+  }
+
+  /** A card's API token (a different HMAC domain): only the Conductor and cards with board tools are given one. */
+  apiToken(nodeId: string): string {
+    return createHmac('sha256', this.secret).update(`api\0${nodeId}`).digest('hex')
+  }
+
+  private refuse(res: http.ServerResponse, status: number, error: string, route: string): void {
+    const key = `${status} ${route}`
+    if (!this.refusedLogged.has(key) && this.refusedLogged.size < 200) {
+      this.refusedLogged.add(key)
+      this.deps.log?.(`[hook-server] refused ${route}: ${status} ${error}`)
+    }
+    send(res, status, { error })
+  }
+
+  /** Only requests to our own address, never from a browser page (CLIs send no Origin; a page's fetch always does). */
+  private allowed(req: http.IncomingMessage): boolean {
+    if (req.headers.origin !== undefined) return false
+    const host = (req.headers.host ?? '').toLowerCase()
+    return host === `127.0.0.1:${this.port}` || host === `localhost:${this.port}`
+  }
+
+  async start(preferredPort = PREFERRED_HOOK_PORT): Promise<number> {
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => {
         send(res, 500, { error: String(err?.message ?? err) })
@@ -159,7 +217,7 @@ export class HookServer {
         server.listen(port, '127.0.0.1')
       })
     try {
-      this.port = await tryListen(PREFERRED_HOOK_PORT)
+      this.port = await tryListen(preferredPort)
     } catch {
       this.port = await tryListen(0)
     }
@@ -175,6 +233,9 @@ export class HookServer {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
     const method = req.method ?? 'GET'
+    if (!this.allowed(req)) return this.refuse(res, 403, req.headers.origin !== undefined ? 'browser origin' : `host ${String(req.headers.host ?? '(none)').slice(0, 60)}`, path.slice(0, 80))
+    // hooks and the status line are JSON from a CLI: anything else (a form post, text/plain) is not one of ours
+    if (method === 'POST' && path.startsWith('/hook/') && !(headerOf(req, 'content-type') ?? '').toLowerCase().startsWith('application/json')) return this.refuse(res, 415, 'application/json only', path.slice(0, 80))
 
     // --- Claude Code status line (plan usage, cost, context per card) ---------
     const sl = /^\/hook\/([^/]+)\/statusline$/.exec(path)
@@ -182,6 +243,7 @@ export class HookServer {
       const body = await readJson(req, 200_000)
       // no body: the card's curl prints nothing, so Claude Code shows no status line in the terminal
       res.writeHead(204).end()
+      // no token here (it would sit in the shell command, in the settings file): the worst a forged one does is a wrong usage chip
       if (body && typeof body === 'object') this.deps.onStatusLine?.(decodeURIComponent(sl[1]), body)
       return
     }
@@ -189,6 +251,9 @@ export class HookServer {
     // --- Claude Code hooks ---------------------------------------------------
     if (method === 'POST' && path.startsWith('/hook/')) {
       const target = decodeURIComponent(path.slice('/hook/'.length))
+      const token = headerOf(req, TOKEN_HEADER)
+      // a card's events only with that card's token: a forged Stop would type its "reply" into the Conductor
+      if (!same(token, target === 'external' ? this.deps.externalToken : this.hookToken(target))) return this.refuse(res, 401, token ? 'wrong token' : 'no token', `/hook/${target.slice(0, 64)}`)
       const body = (await readJson(req)) as HookEvent
       // Respond immediately so Claude Code is never blocked by our processing.
       send(res, 200, {})
@@ -200,10 +265,14 @@ export class HookServer {
 
     // --- JSON API (MCP server, tests) --------------------------------------
     if (path.startsWith('/api/')) {
-      const token = req.headers['x-ouroboros-token']
-      if (token !== this.token) return send(res, 401, { error: 'unauthorized' })
-      const selfHeader = req.headers['x-ouroboros-self']
-      const self = (Array.isArray(selfHeader) ? selfHeader[0] : selfHeader) || url.searchParams.get('self') || undefined
+      const token = headerOf(req, TOKEN_HEADER)
+      const claimed = headerOf(req, 'x-ouroboros-self') || url.searchParams.get('self') || undefined
+      // a card is who its token says: the master token (main process, tests) may name any card or none
+      let self: string | undefined
+      if (same(token, this.token)) self = claimed
+      // a hook token is no API credential: a card without board tools must not drive the board with it
+      else if (claimed && same(token, this.apiToken(claimed))) self = claimed
+      else return this.refuse(res, 401, 'unauthorized', `/api as ${String(claimed ?? '(nobody)').slice(0, 64)}`)
       const api = this.deps.resolveApi(self)
       if (!api) return send(res, 503, { error: 'no window open' })
       const m = /^\/api\/agents\/([^/]+)(?:\/(output|prompt|changes))?$/.exec(path)

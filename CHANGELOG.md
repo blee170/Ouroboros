@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Security
+- **One token per card, and hooks need it** (RESEARCH §11, build step 1). Before: one token per launch shared by every card, `/hook/*` open to any local process (a forged *Stop* on a card typed its "reply" into the Conductor), `x-ouroboros-self` taken on trust (card A could act as card B), the token on a Codex card's command line, and no check on who was calling. Now each card has a hook token, an HMAC of its id under a per-launch key held only by the app, and `/hook/<card>` takes only that card's token. The Conductor and cards with board tools also get an API token (a separate HMAC domain); on `/api/*` it decides which card the caller is, and a hook token is refused there, so a card without board tools cannot drive the board. Claude cards hold them in their environment only (`OUROBOROS_HOOK_TOKEN` in hook headers via `allowedEnvVars`, `OUROBOROS_CARD_API_TOKEN` in the MCP config via `${...}`), so they are in no launch file; Codex and Gemini cards get the path of a token file instead. A card id that is not letters, digits, `-` and `_` (or is `external`) is no longer launched. A closed card's token reaches no window. Every request must be addressed to `127.0.0.1:<port>` or `localhost:<port>` with no `Origin` (browser pages, DNS rebinding), and hook posts must be JSON. The global hook for sessions started outside Ouroboros now carries a token kept in the app's data folder; an installed hook is rewritten at start, only by the instance on the fixed port 47821 (a second instance or a dev build leaves it alone) and only when it changed; a failed rewrite is logged, not shown. Claude Code sessions already open outside Ouroboros keep the old hook until they restart. The first refusal per route and status is written to main.log. The status-line route stays without a token (it only feeds the usage chip).
+
+### Verified
+- Unit tests for the auth matrix (right / other card's / master / no token, `Origin`, foreign `Host`, `text/plain`, `self` mismatch, external token) and for every launcher. Live on Claude Code 2.1.310: a real `claude -p` with the generated settings sent its hooks (through *Stop* and *SessionEnd*) and an MCP `list_agents` call with the card token from its environment; with another card's token every hook got 401 and the tool answered *unauthorized*. Built app on a second port (Playwright, the owner's sign-in, one tiny turn, run twice, the second time after the review fixes): the card went Working → Done through its hooks, the owner's `~/.claude/settings.json` was byte-identical before and after, its settings file names the variable and holds no token, and forged posts (no token, wrong token, browser `Origin`) were refused without changing its state. Not verified: Codex and Gemini cards against real installs (neither CLI is on the development machine; fixture tests only), the startup rewrite of an installed global hook.
+
 ## [0.8.3] — 2026-10-25
 
 ### Added
@@ -313,6 +321,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
+[Unreleased]: https://github.com/blee170/Ouroboros/compare/v0.8.3...HEAD
 [0.8.3]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.3
 [0.8.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.2
 [0.8.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.1

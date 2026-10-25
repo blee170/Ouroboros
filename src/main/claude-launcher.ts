@@ -39,9 +39,24 @@ export function buildStatusLineCommand(baseUrl: string, target: string, platform
  */
 export const SHELL_SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
 
+/** The card's own hook token, in the card's environment only (never in a file it or another card can read). */
+export const CARD_TOKEN_ENV = 'OUROBOROS_HOOK_TOKEN'
+/** The card's API token, the same way, only for the Conductor and cards with board tools (its MCP server reads it). */
+export const CARD_API_TOKEN_ENV = 'OUROBOROS_CARD_API_TOKEN'
+
+/** Ids become file names in the launch folder and part of a hook URL; `external` is the global hook's route. */
+export function assertLaunchableId(nodeId: string): void {
+  if (!SHELL_SAFE_ID.test(nodeId) || nodeId === 'external') throw new Error(`card id ${JSON.stringify(nodeId).slice(0, 80)} cannot be launched (letters, digits, - and _ only)`)
+}
+
+/** How a hook proves who sent it: a card names the environment variable holding its token; the global hook carries it. */
+export type HookAuth = { env: string } | { token: string }
+
 /** Claude Code settings fragment that forwards lifecycle hooks and the status line to our local server. */
-export function buildHookSettings(baseUrl: string, target: string, events: string[] = HOOK_EVENTS): Record<string, unknown> {
-  const handler = { type: 'http', url: `${baseUrl}/hook/${encodeURIComponent(target)}`, timeout: 5 }
+export function buildHookSettings(baseUrl: string, target: string, events: string[] = HOOK_EVENTS, auth: HookAuth = { env: CARD_TOKEN_ENV }): Record<string, unknown> {
+  // Claude Code resolves `$VAR` in an http hook's headers, only for names in allowedEnvVars
+  const headers = 'env' in auth ? { headers: { 'x-ouroboros-token': `$${auth.env}` }, allowedEnvVars: [auth.env] } : { headers: { 'x-ouroboros-token': auth.token } }
+  const handler = { type: 'http', url: `${baseUrl}/hook/${encodeURIComponent(target)}`, timeout: 5, ...headers }
   const hooks: Record<string, unknown[]> = {}
   for (const ev of events) {
     hooks[ev] = [HOOK_EVENTS_WITH_MATCHER.includes(ev) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }]
@@ -50,10 +65,11 @@ export function buildHookSettings(baseUrl: string, target: string, events: strin
   return { hooks, statusLine: { type: 'command', command: buildStatusLineCommand(baseUrl, target) } }
 }
 
-export function buildMcpConfig(opts: { execPath: string; nodeBin?: string; scriptPath: string; baseUrl: string; token: string; nodeId: string }): Record<string, unknown> {
+export function buildMcpConfig(opts: { execPath: string; nodeBin?: string; scriptPath: string; baseUrl: string; nodeId: string }): Record<string, unknown> {
   const env: Record<string, string> = {
     OUROBOROS_URL: opts.baseUrl,
-    OUROBOROS_TOKEN: opts.token,
+    // Claude Code expands ${VAR} from the card's environment when it starts the server: the token stays out of the file
+    OUROBOROS_TOKEN: `${'$'}{${CARD_API_TOKEN_ENV}}`,
     OUROBOROS_SELF_ID: opts.nodeId
   }
   // Prefer a system node; fall back to running the app binary as node.
@@ -163,7 +179,10 @@ export function prepareLaunch(params: {
   claude: ClaudeOptions
   shell: string
   baseUrl: string
+  /** this card's hook token (HookServer.hookToken) */
   token: string
+  /** this card's API token (HookServer.apiToken): handed to the card only when it gets board tools */
+  apiToken: string
   tmpDir: string
   execPath: string
   nodeBin?: string
@@ -176,6 +195,7 @@ export function prepareLaunch(params: {
   /** More for the card's `--settings` file (Autonomous mode writes its `permissions.deny` rules here). */
   settingsExtra?: Record<string, unknown>
 }): PreparedLaunch {
+  assertLaunchableId(params.nodeId)
   mkdirSync(params.tmpDir, { recursive: true })
   const engine = params.engine ?? 'claude'
   if (engine === 'codex' || engine === 'gemini') return prepareEngineLaunch(engine, params)
@@ -192,7 +212,6 @@ export function prepareLaunch(params: {
         nodeBin: params.nodeBin,
         scriptPath: params.mcpScriptPath,
         baseUrl: params.baseUrl,
-        token: params.token,
         nodeId: params.nodeId
       }).mcpServers as Record<string, unknown>)
     )
@@ -209,7 +228,10 @@ export function prepareLaunch(params: {
   }
   const sessionName = params.title ? safeSessionName(params.title) || undefined : undefined
   const command = buildClaudeCommand(claude, { settingsPath, mcpConfigPath, systemPromptPath, sessionName }, shellKind(params.shell), params.claudeBin)
-  return { settingsPath, mcpConfigPath, systemPromptPath, command }
+  const boardTools = params.kind === 'conductor' || Boolean(claude.boardTools)
+  const env: Record<string, string> = { [CARD_TOKEN_ENV]: params.token }
+  if (boardTools) env[CARD_API_TOKEN_ENV] = params.apiToken
+  return { settingsPath, mcpConfigPath, systemPromptPath, command, env }
 }
 
 /** Codex / Gemini cards: same hooks, lines and board tools through their own config mechanisms. */
@@ -220,13 +242,23 @@ function prepareEngineLaunch(engine: 'codex' | 'gemini', params: Parameters<type
   if (!params.nodeBin && engine === 'codex') {
     throw new Error('Codex cards need Node.js on PATH (the Codex notify hook runs a node script without the app environment)')
   }
+  // their hook and MCP helpers are started by the CLI with an environment of its own choosing: they read the token
+  // from a file named on the command line (the path is no secret; the token never goes on argv)
+  const tokenFile = join(params.tmpDir, `${params.nodeId}.token`)
+  writeFileSync(tokenFile, params.token, { encoding: 'utf8', mode: 0o600 })
+  let apiTokenFile: string | undefined
+  if (boardTools) {
+    apiTokenFile = join(params.tmpDir, `${params.nodeId}.api-token`)
+    writeFileSync(apiTokenFile, params.apiToken, { encoding: 'utf8', mode: 0o600 })
+  }
   const input = {
     nodeId: params.nodeId,
     claude: params.claude,
     rolePrompt,
     boardTools,
     baseUrl: params.baseUrl,
-    token: params.token,
+    tokenFile,
+    apiTokenFile,
     nodeBin: params.nodeBin ?? params.execPath,
     electronAsNode: !params.nodeBin,
     hookScriptPath: params.hookScriptPath,

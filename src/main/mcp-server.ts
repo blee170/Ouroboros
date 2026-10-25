@@ -6,7 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,7 +24,21 @@ process.on('uncaughtException', (e) => {
 })
 
 const BASE = process.env.OUROBOROS_URL ?? 'http://127.0.0.1:47821'
-const TOKEN = process.env.OUROBOROS_TOKEN ?? ''
+// Claude cards pass the token in the environment (Claude Code expands ${...} in the MCP config); Codex and Gemini
+// cards name a file holding it. A `$` left in it means the CLI did not expand the placeholder: say so, do not send it.
+const RAW_TOKEN = process.env.OUROBOROS_TOKEN || readTokenFile(process.env.OUROBOROS_TOKEN_FILE)
+const TOKEN = RAW_TOKEN.startsWith('$') ? '' : RAW_TOKEN
+if (RAW_TOKEN !== TOKEN) log('OUROBOROS_TOKEN is an unexpanded placeholder: this CLI did not substitute it; board calls will be refused')
+
+function readTokenFile(file: string | undefined): string {
+  if (!file) return ''
+  try {
+    return readFileSync(file, 'utf8').trim()
+  } catch (e) {
+    log(`token file unreadable: ${(e as Error).message}`)
+    return ''
+  }
+}
 const SELF = process.env.OUROBOROS_SELF_ID ?? ''
 
 async function api(method: 'GET' | 'POST' | 'DELETE' | 'PATCH', path: string, body?: unknown): Promise<unknown> {

@@ -4,7 +4,18 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Board } from './board'
 import { BrowserManager } from './browser-manager'
-import { HookServer } from './hook-server'
+import { HookServer, PREFERRED_HOOK_PORT } from './hook-server'
+import { globalExternalHooksInstalled, loadExternalToken, setGlobalExternalHooks } from './external'
+
+/** The external-hook token; an unwritable data folder must not stop the app (outside sessions just go unseen). */
+function externalTokenOrNull(): string | undefined {
+  try {
+    return loadExternalToken(app.getPath('userData'))
+  } catch (err) {
+    log(`external hook token unavailable: ${(err as Error).message}`)
+    return undefined
+  }
+}
 import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, routeExternalHook, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { PtyManager } from './pty-manager'
@@ -161,9 +172,21 @@ async function main(): Promise<void> {
     onExternalHook: (event) => routeExternalHook(ctx, event),
     onStatusLine: (nodeId, body) => ctx.usage.onStatusLine(nodeId, body),
     // A caller identifies its window by its own card id; unscoped calls go to the current window.
-    resolveApi: (selfId) => (selfId ? ctx.windows.forNode(selfId) : undefined)?.api ?? ctx.windows.current()?.api
+    // a named card must still be on a board: a closed card's token keeps working until relaunch, but reaches no window
+    resolveApi: (selfId) => (selfId ? ctx.windows.forNode(selfId)?.api : ctx.windows.current()?.api),
+    externalToken: externalTokenOrNull(),
+    log
   })
   await ctx.hookServer.start()
+  // the installed global hook carries this launch's port and the external token: write it again (an older one has no token)
+  // only the instance on the fixed port owns that hook: a second Ouroboros (another data folder, a dev build) leaves it alone
+  if (ctx.hookServer.port === PREFERRED_HOOK_PORT && ctx.hookServer.externalToken && globalExternalHooksInstalled()) {
+    try {
+      setGlobalExternalHooks(true, ctx.hookServer.baseUrl, ctx.hookServer.externalToken)
+    } catch (err) {
+      log(`external hooks not updated: ${(err as Error).message}`)
+    }
+  }
   registerIpc(ctx)
 
   createWindow(ctx, initialProjectArg())

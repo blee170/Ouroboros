@@ -289,6 +289,11 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .sb-composer textarea { font-family: var(--font-ui); font-size: 13px; min-height: 58px; }
 .sb-composer .foot { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .sb-composer .foot .btn { margin-left: auto; }
+.sb-mic { position: relative; flex: none; }
+.sb-mic.recording { color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 15%, transparent); }
+.sb-mic.transcribing { opacity: .6; }
+.sb-mic .wake-dot { position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: var(--ok, #22c55e); }
+.sb-voice-line { font-size: 11px; color: var(--muted); margin: 4px 0; }
 
 /* right panel: 350px, a 36px header, the Inspector scrolls under it */
 .rpanel { flex: 0 1 350px; width: 350px; min-width: 280px; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }

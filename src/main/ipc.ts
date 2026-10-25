@@ -1,4 +1,6 @@
-import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, globalShortcut, ipcMain, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { transcribe } from './stt'
+import { voiceSettings, type VoiceSettings } from '@shared/voice'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
@@ -1687,7 +1689,11 @@ export function registerIpc(ctx: MainContext): void {
   })
 
   ipcMain.handle(IPC.settingsGet, () => store.getSettings())
-  ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => store.setSettings(patch))
+  ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => {
+    const next = store.setSettings(patch)
+    if (patch && typeof patch === 'object' && 'voice' in patch) registerVoiceHotkey(ctx)
+    return next
+  })
 
   ipcMain.handle(IPC.worktreeCreate, async (_e, projectRoot: string, name: string) => {
     try {
@@ -1811,6 +1817,21 @@ export function registerIpc(ctx: MainContext): void {
     return Object.fromEntries(TTS_KEY_ENGINES.map((e) => [e, Boolean(ttsKeyFor(settings, e))])) as Record<TtsKeyEngine, boolean>
   })
 
+  ipcMain.handle(IPC.voiceTranscribe, (_e, wav: unknown, override?: Partial<VoiceSettings>) => {
+    if (!(wav instanceof Uint8Array)) return { ok: false, error: 'no audio' }
+    // the Test button may try another engine or language, never other paths: a page cannot make the app run a program
+    const o: Partial<VoiceSettings> = {}
+    if (override && typeof override === 'object') {
+      if (override.stt === 'openai' || override.stt === 'whisper') o.stt = override.stt
+      if (override.language === 'auto' || override.language === 'ko' || override.language === 'en') o.language = override.language
+    }
+    return transcribe(store.getSettings(), wav, o)
+  })
+  ipcMain.handle(IPC.voiceListening, (e, on: boolean) => {
+    // a wake word in a hidden window needs its timers and audio at full speed
+    if (e.sender.getType() === 'window') e.sender.setBackgroundThrottling(on !== true)
+  })
+
   ipcMain.handle(IPC.notionSetToken, (_e, token: string) => {
     const enc = encryptToken(String(token ?? '').replace(/\s+/g, ''))
     store.setSettings({ notionTokenEnc: enc || undefined })
@@ -1831,6 +1852,39 @@ export function registerIpc(ctx: MainContext): void {
     if (which === 'updates') return testNotion({ token, databaseId }, UPDATE_SCHEMA, 'a release-notes page')
     return testNotion({ token, databaseId })
   })
+}
+
+let voiceHotkey: string | undefined
+/** (Re)register the push-to-talk hotkey from Settings → Voice; a key another app holds is logged, not fatal. */
+export function registerVoiceHotkey(ctx: MainContext): string | undefined {
+  const v = voiceSettings(ctx.store.getSettings().voice)
+  const want = v.enabled ? v.hotkey : undefined
+  if (want === voiceHotkey) return undefined
+  const fire = (): void => {
+    const s = ctx.windows.current() ?? ctx.windows.all()[0]
+    if (s && !s.win.isDestroyed()) s.win.webContents.send(IPC.voiceHotkey)
+  }
+  const tryRegister = (acc: string): boolean => {
+    try {
+      return globalShortcut.register(acc, fire)
+    } catch (err) {
+      log(`[voice] hotkey ${acc}: ${(err as Error).message}`)
+      return false
+    }
+  }
+  const previous = voiceHotkey
+  if (previous) globalShortcut.unregister(previous)
+  voiceHotkey = undefined
+  if (!want) return undefined
+  if (tryRegister(want)) {
+    voiceHotkey = want
+    return undefined
+  }
+  const error = `${want.replace('CommandOrControl', 'Ctrl')} is taken by another app`
+  log(`[voice] hotkey ${error}`)
+  if (previous && tryRegister(previous)) voiceHotkey = previous
+  if (Notification.isSupported()) new Notification({ title: 'Voice hotkey not set', body: `${error}${voiceHotkey ? `; ${voiceHotkey.replace('CommandOrControl', 'Ctrl')} still works` : ''}. Pick another in Settings → Voice input.` }).show()
+  return error
 }
 
 /** A project folder from a command line (`Ouroboros.exe <folder>`), resolved against `cwd`. */

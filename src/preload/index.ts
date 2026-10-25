@@ -126,6 +126,11 @@ const api: OuroborosApi = {
     send: (to, body) => ipcRenderer.invoke(IPC.mailSend, to, body),
     onChange: (cb) => on(IPC.mailChanged, cb)
   },
+  voice: {
+    transcribe: (wav, override) => ipcRenderer.invoke(IPC.voiceTranscribe, wav, override),
+    setListening: (on) => ipcRenderer.invoke(IPC.voiceListening, on),
+    onHotkey: (cb) => on(IPC.voiceHotkey, cb)
+  },
   phone: {
     status: () => ipcRenderer.invoke(IPC.phoneStatus),
     interfaces: () => ipcRenderer.invoke(IPC.phoneInterfaces),

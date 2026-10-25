@@ -10,6 +10,8 @@ import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
 import { setDragShield } from '@/lib/dragShield'
+import { useVoice } from '@/voice/useVoice'
+import { voiceSettings, VOICE_LIMITS } from '@shared/voice'
 
 const WIDTH_KEY = 'ouroboros.sidebarWidth'
 /** 220–500px, and never so wide that the canvas (320px at least) and the Inspector lose their room. */
@@ -153,11 +155,15 @@ export function Sidebar() {
     if (n) void rf.fitView({ nodes: [{ id }], duration: 400, padding: 0.3 })
     select(id, null)
   }
-  const targets = ordered.filter((n) => checked[n.id] && n.data.kind !== 'external')
+  const checkedTargets = ordered.filter((n) => checked[n.id] && n.data.kind !== 'external')
+  // nothing checked: the composer talks to the Conductor
+  const conductor = ordered.find((n) => n.data.kind === 'conductor')
+  const targets = checkedTargets.length ? checkedTargets : conductor ? [conductor] : []
   // Screenshots pasted or files dropped into the composer travel with the prompt: a Claude Code card gets an
   // image as its own [Image #N] chip, every other card (and any non-image file) gets the path typed in.
   const [files, setFiles] = useState<string[]>([])
   const [sending, setSending] = useState(false)
+  const [countdown, setCountdown] = useState<{ until: number; text: string } | null>(null)
   const quote = (p: string): string => (/[\s"']/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)
   const isImage = (p: string): boolean => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p)
   const onComposerPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
@@ -172,8 +178,9 @@ export function Sidebar() {
     e.preventDefault()
     setFiles((cur) => [...cur, ...paths])
   }
-  const broadcast = async (): Promise<void> => {
-    if ((!text.trim() && !files.length) || !targets.length || sending) return
+  const broadcast = async (body = text): Promise<void> => {
+    setCountdown(null) // a press of Send during the countdown sends once
+    if ((!body.trim() && !files.length) || !targets.length || sending) return
     setSending(true)
     try {
       for (const n of targets) {
@@ -183,7 +190,7 @@ export function Sidebar() {
           if (claude && isImage(p) && (await window.ouroboros.pty.pasteImage(n.id, p)).ok) continue
           typed.push(quote(p))
         }
-        const prompt = [text.trim(), ...typed].filter(Boolean).join(' ')
+        const prompt = [body.trim(), ...typed].filter(Boolean).join(' ')
         if (prompt) typePrompt(n.id, prompt)
       }
       setText('')
@@ -192,6 +199,36 @@ export function Sidebar() {
       setSending(false)
     }
   }
+
+  // voice: a transcript lands in the composer; with auto-send it goes after a countdown the owner can stop (Esc)
+  const autoSend = useBoard((s) => voiceSettings(s.settings.voice).autoSend)
+  const broadcastRef = useRef(broadcast)
+  broadcastRef.current = broadcast // the countdown sends with the targets of the moment it ends
+  const voice = useVoice((said, fromWake) => {
+    const next = text.trim() ? `${text.trim()} ${said}` : said
+    setText(next)
+    // a wake phrase heard while nobody is looking at the window (a video, a speaker in the room) never sends by itself
+    const watched = document.hasFocus() && !document.hidden
+    if (autoSend && targets.length && (!fromWake || watched)) setCountdown({ until: Date.now() + VOICE_LIMITS.autoSendMs, text: next })
+    else inputRef.current?.focus()
+  })
+  useEffect(() => {
+    if (!countdown) return
+    const esc = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setCountdown(null)
+    }
+    window.addEventListener('keydown', esc, true)
+    const t = setInterval(() => {
+      if (Date.now() < countdown.until) return setNow(Date.now())
+      setCountdown(null)
+      void broadcastRef.current(countdown.text)
+    }, 250)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener('keydown', esc, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown])
 
   // the search narrows the rows; the hotkeys keep following the full order
   const q = query.trim().toLowerCase()
@@ -300,6 +337,7 @@ export function Sidebar() {
           }}
           onChange={(e) => {
             setText(e.target.value)
+            setCountdown(null) // the owner is editing what they said: they send it
             setPick(0)
             setPickerClosed(false)
             if (e.target.value.startsWith('/')) loadSkills()
@@ -327,8 +365,28 @@ export function Sidebar() {
             ))}
           </ul>
         )}
+        {(voice.message || countdown) && (
+          <div className="sb-voice-line" role="status">
+            {countdown ? (
+              <>
+                Sending to {checkedTargets.length ? `${targets.length} card${targets.length === 1 ? '' : 's'}` : (conductor?.data.title ?? 'the Conductor')} in {Math.max(1, Math.ceil((countdown.until - now) / 1000))}s ·{' '}
+                <button className="link" onClick={() => setCountdown(null)}>
+                  cancel (Esc)
+                </button>
+              </>
+            ) : (
+              voice.message
+            )}
+          </div>
+        )}
         <div className="foot">
-          <span>{targets.length ? `To ${targets.length} checked card${targets.length === 1 ? '' : 's'}` : 'Check cards above to send to them'}</span>
+          {voice.state !== 'off' && (
+            <button className={`icon-btn sb-mic ${voice.state}`} title={voice.state === 'recording' ? 'Listening… click to stop' : voice.state === 'transcribing' ? 'Writing down what you said…' : `Speak a prompt (${voiceSettings(useBoard.getState().settings.voice).hotkey.replace('CommandOrControl', 'Ctrl')})${voice.wakeOn ? ' · wake phrase on' : ''}`} aria-label="Voice input" aria-pressed={voice.state === 'recording'} disabled={voice.state === 'transcribing'} onClick={voice.toggle}>
+              <Icon name="mic" size={14} />
+              {voice.wakeOn && <span className="wake-dot" aria-hidden />}
+            </button>
+          )}
+          <span>{checkedTargets.length ? `To ${checkedTargets.length} checked card${checkedTargets.length === 1 ? '' : 's'}` : conductor ? `To ${conductor.data.title} (check cards to send to them instead)` : 'Check cards above to send to them'}</span>
           <button className="btn primary small" disabled={!targets.length || (!text.trim() && !files.length) || sending} onClick={() => void broadcast()}>
             {sending ? 'Sending…' : 'Send'}
           </button>

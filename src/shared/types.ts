@@ -1,3 +1,4 @@
+import type { VoiceSettings } from './voice'
 import type { Task } from './ledger'
 
 /** Which CLI a Claude/Conductor card runs. Codex and Gemini get the same hooks, lines and board tools. */
@@ -249,6 +250,8 @@ export interface AppSettings {
   notionUpdatesDatabaseId?: string
   /** The version whose release notes were last published, so each goes up once. */
   notionLastUpdate?: string
+  /** Voice input for the left composer (see shared/voice.ts; read through voiceSettings()). */
+  voice?: Partial<VoiceSettings>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

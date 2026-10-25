@@ -1,3 +1,4 @@
+import type { VoiceSettings } from './voice'
 import type { AgentEngine, AgentSnapshot, AgentStatus, AppSettings, HandoffEdgeData, HookEvent, NodeData, Workspace, WorkspaceEdge, WorkspaceNode } from './types'
 import type { AnnouncePayload } from './announce'
 import type { AutonomyConfig, AutonomyPublic } from './autonomy'
@@ -84,6 +85,9 @@ export const IPC = {
   notionSetToken: 'notion:setToken',
   notionStatus: 'notion:status',
   notionTest: 'notion:test',
+  voiceTranscribe: 'voice:transcribe',
+  voiceListening: 'voice:listening',
+  voiceHotkey: 'voice:hotkey',
   tidyCandidates: 'tidy:candidates',
   bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
@@ -451,6 +455,14 @@ export interface OuroborosApi {
     /** The owner messages a card (the Inspector). */
     send(to: string, body: string): Promise<{ ok: boolean; error?: string }>
     onChange(cb: (messages: Mail[]) => void): () => void
+  }
+  voice: {
+    /** One take (16 kHz mono WAV) to text with the engine in Settings → Voice, or `override` (the Test button). */
+    transcribe(wav: Uint8Array, override?: Partial<VoiceSettings>): Promise<{ ok: true; text: string } | { ok: false; error: string }>
+    /** The wake word is listening: keep this window's audio and timers running while it is hidden. */
+    setListening(on: boolean): Promise<void>
+    /** The global push-to-talk hotkey was pressed with this window as the target. */
+    onHotkey(cb: () => void): () => void
   }
   phone: {
     status(): Promise<PhoneStatus>

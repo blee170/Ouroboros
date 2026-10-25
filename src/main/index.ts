@@ -1,4 +1,5 @@
-import { BrowserWindow, Menu, Notification, Tray, app, crashReporter, nativeImage, shell } from 'electron'
+import { BrowserWindow, Menu, Notification, Tray, app, crashReporter, globalShortcut, nativeImage, session, shell } from 'electron'
+import { whisper } from './stt'
 import { initDiagnostics, log } from './diagnostics'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -196,6 +197,20 @@ async function main(): Promise<void> {
   }
   ctx.phone = createPhone(ctx)
   registerIpc(ctx)
+  // the microphone is for the app's own window (the voice composer), audio only: a page in a browser card (its own
+  // persist:ouroboros-browser session) gets neither mic nor camera. Everything else keeps Electron's default (allowed).
+  const guardMedia = (ses: Electron.Session): void => {
+    ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+      if (permission !== 'media') return callback(true)
+      const types = (details as { mediaTypes?: string[] }).mediaTypes ?? []
+      callback(wc.getType() === 'window' && types.length > 0 && types.every((m) => m === 'audio'))
+    })
+    ses.setPermissionCheckHandler((wc, permission) => (permission === 'media' ? wc?.getType() === 'window' : true))
+  }
+  app.on('session-created', guardMedia)
+  guardMedia(session.defaultSession)
+  guardMedia(session.fromPartition('persist:ouroboros-browser'))
+  registerVoiceHotkey(ctx)
   const phoneView = store.getSettings().phone
   if (phoneView?.enabled) {
     void ctx.phone.apply(phoneView).then((err) => {
@@ -227,6 +242,8 @@ async function main(): Promise<void> {
     ptys.killAll()
     ctx.hookServer.stop()
     ctx.phone?.stop()
+    whisper.stop()
+    globalShortcut.unregisterAll()
   })
   app.on('window-all-closed', () => {
     if (!ctx.store.getSettings().minimizeToTray || !tray) app.quit()

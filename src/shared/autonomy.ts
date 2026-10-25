@@ -167,6 +167,9 @@ export const WORKER_DENY_RULES: string[] = [
   // "except" (a `~/.claude/*` would match the projects folder as a whole; `[!x]` classes did not work on 2.1.310), so this is
   // a list: a folder nobody listed is not covered.
   'Edit(**/.ouroboros.json)',
+  // the app's own settings (a program path there is run by the app) and data, on Windows and macOS
+  'Edit(~/AppData/Roaming/Ouroboros/**)',
+  'Edit(~/Library/Application Support/Ouroboros/**)',
   'Edit(**/.claude/settings.json)',
   'Edit(**/.claude/settings.local.json)',
   ...['*.json', '*.md', '*.sh', '*.ps1', '*.cmd', '*.bat', '*.js', '*.cjs', '*.mjs', '*.ts', '*.py', 'statusline*', '.claude.json', '.credentials.json'].map((f) => `Edit(~/.claude/${f})`),

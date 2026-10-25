@@ -7,6 +7,7 @@ import {
   Brush,
   Camera,
   Check,
+  Mic,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -68,6 +69,7 @@ export type IconName =
   | 'volume'
   | 'image'
   | 'clip'
+  | 'mic'
   | 'refresh'
   | 'close'
   | 'search'
@@ -95,6 +97,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   folder: Folder,
   window: AppWindow,
   plus: Plus,
+  mic: Mic,
   chevron: ChevronDown,
   back: ChevronLeft,
   forward: ChevronRight,

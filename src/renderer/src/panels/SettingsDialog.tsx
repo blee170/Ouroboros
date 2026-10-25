@@ -3,6 +3,7 @@ import { useBoard } from '@/store/board'
 import type { AppInfo, UpdateStatus } from '@shared/protocol'
 import { EnginesPanel } from './EnginesPanel'
 import { PhoneSettings } from './PhoneSettings'
+import { VoiceSettings } from './VoiceSettings'
 import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
@@ -267,6 +268,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </label>
         </section>
 
+        <VoiceSettings />
         <PhoneSettings />
 
         <section className="settings-section">

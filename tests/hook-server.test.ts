@@ -10,7 +10,9 @@ const api = { listAgents: () => [] } as unknown as ApiHandlers
 const logged: string[] = []
 const server = new HookServer({
   log: (l) => logged.push(l),
-  onHook: (id, e) => hooks.push([id, e]),
+  onHook: (id, e) => {
+    hooks.push([id, e])
+  },
   onExternalHook: (e) => external.push(e),
   resolveApi: (self) => (selves.push(self), api),
   externalToken: 'ext-token'

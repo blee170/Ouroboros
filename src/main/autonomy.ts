@@ -6,6 +6,7 @@ import { LIMIT_PROMPT, LIMIT_RETRY_MINUTES, NUDGE_PROMPT, RESUME_PROMPT, START_G
 import { failureOf } from '@shared/status'
 import type { Board } from './board'
 import type { Task } from '@shared/ledger'
+import type { Mail } from '@shared/mail'
 import type { ReportMeta } from '@shared/notion'
 import type { NotionResult } from './notion'
 
@@ -32,6 +33,8 @@ export interface AutonomyHost {
   evidence(cwd: string): Promise<CardEvidence | undefined>
   /** The task ledger, for the report's Tasks section and the blocked tasks under "Waiting on you". */
   tasks?(): Task[]
+  /** Board mail, for the report's Mail line and unhandled escalations. */
+  mail?(): Mail[]
   /**
    * The report publisher (Notion) for a run, resolved from Settings when the run *starts*: a card that rewrites the
    * settings file during the night cannot redirect the morning report. Undefined when publishing is off; the
@@ -157,7 +160,8 @@ export class Autonomy {
     const logPath = this.logPath
     const agents = this.host.agents()
     const tasks = this.host.tasks?.() ?? []
-    let saveError = this.writeReport(reportMarkdown(s, this.events, agents, {}, tasks))
+    const mail = this.host.mail?.() ?? []
+    let saveError = this.writeReport(reportMarkdown(s, this.events, agents, {}, tasks, mail))
     this.ended = { at: s.stopped.at, reason, reportPath: this.reportPath }
     this.host.changed(this.public())
     if (opts.quick) {
@@ -174,7 +178,7 @@ export class Autonomy {
       const ev = await this.host.evidence(cwd).catch(() => undefined)
       if (ev) evidence[a.id] = ev
     }
-    const md = reportMarkdown(s, this.events, agents, evidence, tasks)
+    const md = reportMarkdown(s, this.events, agents, evidence, tasks, this.host.mail?.() ?? mail)
     saveError = this.writeReport(md)
     this.host.addNote('Morning report', `${md}\n\n_${saveError ? `Could not save the report file (${saveError}); this note is the only copy` : `Saved at ${this.reportPath}`}_`)
     this.host.toast('Autonomous run ended', `${reason}. ${Object.keys(s.parked).length} waiting on you; the report is on the canvas${saveError ? ' (file not saved)' : ''}. Cards restart without the run's rules once their turn is over.`)

@@ -7,6 +7,7 @@ const base: EngineLaunchInput = {
   boardTools: false,
   baseUrl: 'http://127.0.0.1:47821',
   tokenFile: 'C:\\data\\n1.token',
+  mcpTokenFile: 'C:\\data\\n1.mail-token',
   nodeBin: 'C:\\Program Files\\nodejs\\node.exe',
   hookScriptPath: 'C:\\App\\resources\\app.asar.unpacked\\out\\main\\agent-hook.js',
   mcpScriptPath: 'C:\\App\\resources\\app.asar.unpacked\\out\\main\\mcp-server.js',
@@ -48,7 +49,7 @@ describe('buildCodexLaunch', () => {
     expect(c.command.endsWith(' resume --last')).toBe(true)
     const long = buildCodexLaunch({ ...base, shell: 'posix', rolePrompt: 'x'.repeat(120_000) })
     expect(long.command).not.toContain('developer_instructions')
-    expect(long.command).toMatch(/"--node","n1","--token-file","[^"]*n1.token"]'$/)
+    expect(long.command).toMatch(/"--node","n1","--token-file","[^"]*n1.token"]'/)
     expect(long.initialPrompt).toContain('x'.repeat(120_000))
   })
 })
@@ -83,14 +84,23 @@ describe('buildGeminiSettings / buildGeminiLaunch', () => {
 
 describe('card token', () => {
   it('reaches Codex and Gemini helpers as a file path, never on the command line', () => {
-    const codex = buildCodexLaunch({ ...base, boardTools: true, apiTokenFile: 'C:\\data\\n1.api-token' })
+    const codex = buildCodexLaunch({ ...base, boardTools: true, mcpTokenFile: 'C:\\data\\n1.api-token' })
     expect(codex.command).toContain('--token-file')
     expect(codex.command).toContain('OUROBOROS_TOKEN_FILE=')
     expect(codex.command).not.toMatch(/OUROBOROS_TOKEN=/)
-    const gem = buildGeminiSettings({ ...base, boardTools: true, apiTokenFile: 'C:\\data\\n1.api-token' }) as { hooks: Record<string, Array<{ hooks: Array<{ env: Record<string, string> }> }>> }
+    const gem = buildGeminiSettings({ ...base, boardTools: true, mcpTokenFile: 'C:\\data\\n1.api-token' }) as { hooks: Record<string, Array<{ hooks: Array<{ env: Record<string, string> }> }>> }
     expect(gem.hooks.AfterAgent[0].hooks[0].env.OUROBOROS_TOKEN_FILE).toBe('C:\\data\\n1.token')
     expect((gem as unknown as { mcpServers: { ouroboros: { env: Record<string, string> } } }).mcpServers.ouroboros.env.OUROBOROS_TOKEN_FILE).toBe('C:\\data\\n1.api-token')
     expect(codex.command).toContain('n1.api-token')
+  })
+  it('gives a card without board tools the mail-only MCP server', () => {
+    const codex = buildCodexLaunch(base)
+    expect(codex.command).toContain('mcp_servers.ouroboros.env=')
+    expect(codex.command).toContain('OUROBOROS_TOOLS=')
+    expect(codex.command).toContain('n1.mail-token')
+    const gem = buildGeminiSettings(base) as unknown as { mcpServers: { ouroboros: { env: Record<string, string> } } }
+    expect(gem.mcpServers.ouroboros.env.OUROBOROS_TOOLS).toBe('mail')
+    expect(buildCodexLaunch({ ...base, boardTools: true, mcpTokenFile: 'x' }).command).not.toContain('OUROBOROS_TOOLS')
   })
 })
 })

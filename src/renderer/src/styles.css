@@ -427,6 +427,15 @@ body.ouro-dragging webview { pointer-events: none; }
 /* board builder */
 .modal.wide { width: 980px; }
 .modal.wide-ish { width: 720px; }
+.mail-badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); white-space: nowrap; }
+.mail-panel { display: flex; flex-direction: column; gap: 8px; }
+.mail-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.mail-item { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 8px; }
+.mail-item.unread { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.mail-head { display: flex; gap: 8px; align-items: baseline; }
+.mail-kind { color: var(--warn); }
+.mail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; margin-top: 4px; }
+.error-text { color: var(--danger); }
 .held-list { list-style: none; padding: 0; margin: 12px 0; max-height: 52vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .held-card { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 12px; }
 .held-card .title { font-weight: 600; }

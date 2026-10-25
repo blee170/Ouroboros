@@ -6,6 +6,7 @@ import type { UsageSnapshot } from '@shared/usage'
 import type { AutonomyPublic } from '@shared/autonomy'
 import type { Task } from '@shared/ledger'
 import { revertPrivileges, trustedIncoming, type HeldCard } from '@shared/board-trust'
+import type { Mail } from '@shared/mail'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
@@ -75,6 +76,8 @@ interface BoardState {
   tasks: Task[]
   /** Cards not launched because the board file was changed outside Ouroboros (main refuses them until the owner decides). */
   held: HeldCard[]
+  /** The project mailbox, as main pushes it (unacknowledged messages of the last week). */
+  mail: Mail[]
   /** What the right panel shows. */
   rpanelTab: 'inspector' | 'tasks'
   /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
@@ -95,6 +98,7 @@ interface BoardState {
   // actions
   setAutonomy(p: AutonomyPublic): void
   setTasks(t: Task[]): void
+  setMail(m: Mail[]): void
   /** The owner's call on held cards: trust the change as it is, or put the values the app last wrote back. Either way they launch. */
   resolveHeld(ids: string[], revert: boolean): Promise<void>
   /** Show a tab of the right panel (opening the panel when it is closed). */
@@ -172,6 +176,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
   tasks: [],
   held: [],
+  mail: [],
   rpanelTab: 'inspector',
   async resolveHeld(ids, revert) {
     const views = await api().workspace.trust(ids, revert)
@@ -197,6 +202,9 @@ export const useBoard = create<BoardState>((set, get) => ({
         })
     })
     scheduleSync(get)
+  },
+  setMail(m) {
+    set({ mail: m })
   },
   setTasks(t) {
     set({ tasks: t })
@@ -248,6 +256,9 @@ export const useBoard = create<BoardState>((set, get) => ({
     void api()
       .tasks.list()
       .then((t) => set({ tasks: t }))
+    void api()
+      .mail.list()
+      .then((m) => set({ mail: m }))
   },
 
   onNodesChange(changes) {

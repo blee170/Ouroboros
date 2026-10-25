@@ -56,7 +56,7 @@ describe('bundled mcp server', () => {
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_prompt', 'set_board_tools', 'set_note', 'task_claim', 'task_create', 'task_list', 'task_update', 'tidy_board', 'wait_for_agents'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['ack', 'browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'check_inbox', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_message', 'send_prompt', 'set_board_tools', 'set_note', 'task_claim', 'task_create', 'task_list', 'task_update', 'tidy_board', 'wait_for_agents'])
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text
@@ -112,6 +112,42 @@ describe('bundled mcp server', () => {
     expect((tl.content as Array<{ text: string }>)[0].text).toBe('1 tasks: 0 todo · 1 doing · 0 blocked · 0 done · 0 dropped\nT1 [doing] plan · owner: A')
     expect(calls.find((c) => c.url.startsWith('/api/tasks?'))?.url).toBe('/api/tasks?owner=a1&all=1')
 
+    await client.close()
+    server.close()
+  }, 20000)
+
+  it.skipIf(!existsSync(script))('a mail-only server (no board tools) lists the mail tools and sends as the card', async () => {
+    const calls: Array<{ method: string; url: string; body: string; self?: string }> = []
+    const server = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c))
+      req.on('end', () => {
+        calls.push({ method: req.method ?? '', url: req.url ?? '', body, self: String(req.headers['x-ouroboros-self'] ?? '') })
+        res.setHeader('content-type', 'application/json')
+        if (req.url === '/api/mail' && req.method === 'POST') res.end(JSON.stringify({ ok: true, id: 'M4', to: 'chief' }))
+        else if (req.url?.startsWith('/api/mail?') && req.method === 'GET') res.end(JSON.stringify({ count: 0, text: 'No messages.' }))
+        else if (req.url === '/api/mail/M4/ack') res.writeHead(404).end(JSON.stringify({ ok: false, error: 'no message M4 in your inbox' }))
+        else res.writeHead(404).end('{"error":"nf"}')
+      })
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const port = (server.address() as { port: number }).port
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [script],
+      env: { ...process.env, OUROBOROS_URL: `http://127.0.0.1:${port}`, OUROBOROS_TOKEN: 'mail-tok', OUROBOROS_SELF_ID: 'w1', OUROBOROS_TOOLS: 'mail' } as Record<string, string>
+    })
+    const client = new Client({ name: 'test', version: '0' })
+    await client.connect(transport)
+    expect((await client.listTools()).tools.map((x) => x.name).sort()).toEqual(['ack', 'check_inbox', 'send_message'])
+    const s = await client.callTool({ name: 'send_message', arguments: { to: 'chief', body: 'done: tests pass', kind: 'worker_done' } })
+    expect((s.content as Array<{ text: string }>)[0].text).toBe('Sent M4 to chief.')
+    expect(calls[0]).toMatchObject({ method: 'POST', url: '/api/mail', self: 'w1', body: '{"to":"chief","body":"done: tests pass","kind":"worker_done"}' })
+    const inbox = await client.callTool({ name: 'check_inbox', arguments: {} })
+    expect((inbox.content as Array<{ text: string }>)[0].text).toBe('No messages.')
+    expect(calls[1].url).toBe('/api/mail?unread=1')
+    const ack = await client.callTool({ name: 'ack', arguments: { id: 'M4' } })
+    expect(ack.isError).toBe(true)
     await client.close()
     server.close()
   }, 20000)

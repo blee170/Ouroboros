@@ -45,6 +45,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
   const usage = useBoard((s) => s.usage[id])
+  // board mail waiting for this card (sent to it, not acknowledged yet)
+  const unreadMail = useBoard((s) => s.mail.filter((m) => m.to === id && !m.ackedAt).length)
   const select = useBoard((s) => s.select)
 
   // Spawn (or re-spawn) the process once the terminal knows its size.
@@ -114,6 +116,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           {data.statusDetail ? ` · ${data.statusDetail}` : ''}
         </span>
         <span className="spacer" />
+        {unreadMail > 0 && (
+          <span className="mail-badge" title={`${unreadMail} board message(s) for this card not acknowledged yet (Inspector → Mail)`}>
+            ✉ {unreadMail}
+          </span>
+        )}
         {usage && (
           <span
             className={`ctx-meter nodrag ${usage.contextTokens / usage.contextWindow > 0.7 ? 'hot' : ''}`}

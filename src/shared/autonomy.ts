@@ -1,5 +1,6 @@
 import type { AgentSnapshot } from './types'
 import { summarizeTasks, type Task } from './ledger'
+import type { Mail } from './mail'
 
 /**
  * Autonomous mode ("Governor-lite"): the board keeps working for hours while the owner sleeps or is out.
@@ -291,7 +292,7 @@ export interface CardEvidence {
  * (branch, diff size, last reply line), the denials and stalls, the caps, and the timeline. Built from
  * the event log and the board; the Tasks table is what the cards recorded in the ledger and is marked as such.
  */
-export function reportMarkdown(state: RunState, events: RunEvent[], agents: AgentSnapshot[], evidence: Record<string, CardEvidence> = {}, tasks: Task[] = []): string {
+export function reportMarkdown(state: RunState, events: RunEvent[], agents: AgentSnapshot[], evidence: Record<string, CardEvidence> = {}, tasks: Task[] = [], mail: Mail[] = []): string {
   const titleOf = (id: string | undefined): string => (id ? (agents.find((a) => a.id === id)?.title ?? id) : '—')
   const end = state.stopped?.at ?? Date.now()
   const lines: string[] = []
@@ -302,9 +303,11 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   const parked = Object.entries(state.parked)
   lines.push('## Waiting on you')
   const blocked = tasks.filter((t) => t.state === 'blocked')
-  if (parked.length === 0 && blocked.length === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
+  const escalations = mail.filter((m) => m.kind === 'escalation' && !m.ackedAt && m.createdAt >= state.startedAt)
+  if (parked.length === 0 && blocked.length === 0 && escalations.length === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
   for (const t of blocked) lines.push(`- Task **${t.id} ${oneLine(t.title)}**${t.owner ? ` (${oneLine(titleOf(t.owner))})` : ''}: ${oneLine(t.reason)}`)
   for (const [id, p] of parked) lines.push(`- **${oneLine(p.title)}** (${id}) since ${hhmm(p.at)}: ${oneLine(p.reason)}`)
+  for (const m of escalations) lines.push(`- Escalation ${m.id} from **${oneLine(titleOf(m.from))}** to ${oneLine(titleOf(m.to))} at ${hhmm(m.createdAt)}, not handled: ${oneLine(m.body)}`)
   lines.push('')
   if (tasks.length) {
     const c = summarizeTasks(tasks)
@@ -338,6 +341,8 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
   lines.push(`- Auto-mode denials (Claude Code's classifier; rule denials are not reported by the CLI): ${denies.length}${denies.length ? ' — ' + denies.slice(0, 8).map((e) => `${who(e)}: ${oneLine(e.detail)}`).join('; ') : ''}`)
   lines.push(`- Refused dispatches: ${refused.length}${refused.length ? ' — ' + refused.slice(0, 5).map((e) => oneLine(e.detail)).join('; ') : ''}`)
   lines.push(`- Stalls: ${stalls.length}${stalls.length ? ' — ' + stalls.slice(0, 8).map((e) => `${who(e)} ${e.kind} at ${hhmm(e.at)}`).join('; ') : ''}`)
+  const runMail = mail.filter((m) => m.createdAt >= state.startedAt)
+  lines.push(`- Mail: ${runMail.length} sent, ${runMail.filter((m) => !m.ackedAt).length} not acked`)
   lines.push(`- Usage limits: ${limits.length}${limits.length ? ' — ' + limits.slice(0, 5).map((e) => `${who(e)} at ${hhmm(e.at)}`).join('; ') : ''}`)
   lines.push('')
   lines.push('## Timeline')

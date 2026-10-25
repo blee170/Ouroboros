@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.10.0] — 2026-10-26
 
 ### Added
 - **Grok Build as a fourth engine.** A card can run xAI's `grok` CLI next to Claude Code, Codex and Gemini: *New card → Grok agent*, or Inspector → Engine → *Grok Build (xAI)*, or the Conductor's `create_agent engine=grok`. It gets the same status, lines, reports and board tools: a per-card plugin folder (passed with `--plugin-dir`, so `~/.grok` is never touched) carries its lifecycle hooks (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop`, `StopFailure`, `Notification`, `SessionEnd`, run through `agent-hook.js` with the card's token file) and the board MCP server (mail tools only unless board tools are on). Model: *Grok 4.7* or any name `grok models` lists; *auto* and *bypass* permission modes start it with `--always-approve`; Plan and Accept edits use Grok's own default. The role prompt goes in with `--rules` on posix shells and as the first message on Windows. Settings → Engines detects it (installed, signed in with `grok login` or `XAI_API_KEY`) and shows `irm https://x.ai/cli/install.ps1 | iex`. `XAI_API_KEY` stays with Grok cards only; Grok cards lose the other engines' keys. Grok cards need Node.js on `PATH` and, like Codex and Gemini, are closed when an autonomous run starts. Grok needs a SuperGrok / X Premium+ plan or an xAI API key.

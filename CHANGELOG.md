@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Changed
+- **Model is a dropdown.** A card's Inspector → Model offers the engine's presets (Claude: Opus, Sonnet, Haiku as the latest of each, Fable 5.1, and pinned 5.5 ids), the CLI's default, or *Custom…* for any name; Codex and Gemini get default or custom (their own `/model` lists the names). Switching a card's engine resets a model name that belonged to the old one.
+
+### Verified
+- Unit tests for the preset mapping; built-app probe: the options per engine, picking a preset, a custom name, back to default, and the reset on an engine switch.
+
 ## [0.9.0] — 2026-10-25
 
 ### Added

@@ -8,8 +8,42 @@ import { ChangesPanel } from './ChangesPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
 import { ReplyView } from './ReplyView'
 import { MailPanel } from './MailPanel'
+import { MODEL_PRESETS, modelChoice } from '@shared/models'
+import type { AgentEngine } from '@shared/types'
 
 /** A titled group of fields; the same grammar as the Settings dialog. */
+/** Model: the engine's presets, its CLI default, or a name typed in (what the CLI's own /model lists). */
+function ModelField({ engine, model, onChange }: { engine: AgentEngine; model: string | undefined; onChange: (model: string | undefined) => void }) {
+  const [typing, setTyping] = useState(false)
+  const choice = typing ? 'custom' : modelChoice(engine, model)
+  const presets = MODEL_PRESETS[engine]
+  return (
+    <label className="field">
+      <span>Model</span>
+      <div className="ctl">
+        <select
+          value={choice}
+          onChange={(e) => {
+            const v = e.target.value
+            setTyping(v === 'custom')
+            if (v !== 'custom') onChange(v || undefined)
+          }}
+        >
+          <option value="">Default (the CLI's own)</option>
+          {presets.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+          <option value="custom">Custom…</option>
+        </select>
+        {choice === 'custom' && <input className="text mono" placeholder={engine === 'claude' ? 'claude-opus-5-5' : 'a name from /model'} value={model ?? ''} autoFocus={typing} onChange={(e) => onChange(e.target.value.trim() || undefined)} />}
+      </div>
+      {choice === 'custom' && engine !== 'claude' && <div className="hint">Run {engine} in a terminal and type /model to see the names it takes.</div>}
+    </label>
+  )
+}
+
 function Section({ title, first, children, hint }: { title: string; first?: boolean; hint?: string; children: ReactNode }) {
   return (
     <section className={`isec${first ? ' first' : ''}`}>
@@ -226,7 +260,14 @@ export function Inspector() {
           <label className="field">
             <span>Engine</span>
             <div className="ctl">
-              <select value={d.engine ?? 'claude'} onChange={(e) => updateNodeData(nodeId, { engine: normalizeEngine(e.target.value) })}>
+              <select
+                value={d.engine ?? 'claude'}
+                onChange={(e) => {
+                  const engine = normalizeEngine(e.target.value)
+                  // a model name is one engine's: opus means nothing to Codex, so it goes back to the new engine's default
+                  updateNodeData(nodeId, engine !== (d.engine ?? 'claude') && claude.model ? { engine, claude: { ...claude, model: undefined } } : { engine })
+                }}
+              >
                 <option value="claude">Claude Code</option>
                 <option value="codex">OpenAI Codex CLI</option>
                 <option value="gemini">Gemini CLI</option>
@@ -249,12 +290,7 @@ export function Inspector() {
               <input className="text mono" placeholder="session id (--resume)" value={claude.resume ?? ''} onChange={(e) => setClaude({ resume: e.target.value || undefined })} />
             </div>
           </label>
-          <label className="field">
-            <span>Model</span>
-            <div className="ctl">
-              <input className="text" placeholder="default" value={claude.model ?? ''} onChange={(e) => setClaude({ model: e.target.value || undefined })} />
-            </div>
-          </label>
+          <ModelField key={`${nodeId}-${d.engine ?? 'claude'}`} engine={d.engine ?? 'claude'} model={claude.model} onChange={(model) => setClaude({ model })} />
           <label className="field">
             <span>Permissions</span>
             <div className="ctl">

@@ -33,7 +33,7 @@ export interface ApiHandlers {
     title?: string
     prompt?: string
     kind?: 'claude' | 'terminal' | 'command'
-    /** claude (default) | codex | gemini for kind=claude */
+    /** claude (default) | codex | gemini | grok for kind=claude */
     engine?: AgentEngine
     /** command cards: shell template with {{prompt}} / {{prompt_file}} */
     command_template?: string

@@ -14,7 +14,7 @@ const LINKS = [
 ]
 
 const STEPS: Array<{ title: string; text: string }> = [
-  { title: 'Add a card', text: 'New card in the title bar adds your default agent; its arrow (or a right-click on the canvas) lists Codex, Gemini, Conductor, Terminal, Browser, Note. A card is a real terminal running the CLI in your project folder; answer its first "trust this folder?" like in any terminal.' },
+  { title: 'Add a card', text: 'New card in the title bar adds your default agent; its arrow (or a right-click on the canvas) lists Codex, Gemini, Grok, Conductor, Terminal, Browser, Note. A card is a real terminal running the CLI in your project folder; answer its first "trust this folder?" like in any terminal.' },
   { title: 'Read the status', text: 'A turning ring = working, an orange ? = needs you, a green check = done. The sidebar lists every card by state, what needs you first; the status bar counts them. Click either to jump. Zoom out and a card shows its last reply in large type.' },
   { title: 'Draw a line', text: 'Drag a card\'s right port to another\'s left port. When the first card finishes a reply, the line types it into the second (Auto), or you press ▶ (Manual). The Inspector edits the template and a condition such as PASS or /SCORE: 9/.' },
   { title: 'Check the diff', text: 'The +n −m badge on a card opens its uncommitted changes: per-file diff, discard, "ask the card to review". Read diffs, not replies.' },

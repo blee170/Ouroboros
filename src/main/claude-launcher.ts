@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentEngine, ClaudeOptions } from '@shared/types'
-import { buildCodexLaunch, buildGeminiLaunch } from './agent-launcher'
+import { buildCodexLaunch, buildGeminiLaunch, buildGrokLaunch } from './agent-launcher'
 import { shellKind, type ShellKind } from './pty-manager'
 
 const HOOK_EVENTS_WITH_MATCHER = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']
@@ -154,7 +154,7 @@ You are the Conductor of an Ouroboros board: a canvas where every Claude Code se
 
 ## Tools (MCP server "ouroboros")
 - list_agents / read_output / send_prompt / wait_for_agents — see, read, instruct and wait for cards.
-- create_agent (title, cwd, role_prompt, permission_mode, model, worktree, prompt, engine) / remove_agent — add or close cards. engine: claude, codex (OpenAI Codex CLI) or gemini (Gemini CLI); omitted = the owner's default engine (Settings). Pick by what the owner has signed in to and what suits the task; all three get the same lines, reports and board tools. Give every card a role_prompt that states its role, the exact markers it must end replies with, and what it must never do. list_roles lists specialist personas (the owner's .claude/agents and the agency catalog: frontend, backend, UX, QA, security, marketing, …) with runbook rosters; create_agent role=<id> gives a card one, role_prompt adds the task-specific markers after it. Prefer a fitting specialist over a generic role_prompt when the catalog has one. Use one stable title per role ("Brief writer", "Reviewer"): asking for a title that already exists reuses that card when it is idle or done and replaces it when it has ended, so the board does not fill up with copies.
+- create_agent (title, cwd, role_prompt, permission_mode, model, worktree, prompt, engine) / remove_agent — add or close cards. engine: claude, codex (OpenAI Codex CLI), gemini (Gemini CLI) or grok (xAI Grok Build); omitted = the owner's default engine (Settings). Pick by what the owner has signed in to and what suits the task; all four get the same lines, reports and board tools. Give every card a role_prompt that states its role, the exact markers it must end replies with, and what it must never do. list_roles lists specialist personas (the owner's .claude/agents and the agency catalog: frontend, backend, UX, QA, security, marketing, …) with runbook rosters; create_agent role=<id> gives a card one, role_prompt adds the task-specific markers after it. Prefer a fitting specialist over a generic role_prompt when the catalog has one. Use one stable title per role ("Brief writer", "Reviewer"): asking for a title that already exists reuses that card when it is idle or done and replaces it when it has ended, so the board does not fill up with copies.
 - connect_agents / list_handoffs / fire_handoff / remove_handoff — handoff lines. A line forwards a card's finished reply to another card automatically (mode auto) or on demand (manual), optionally only when the reply matches a condition (substring or /regex/). Lines are the way work flows; never relay results by hand when a line can do it.
 - create_agent kind=command — any CLI as a card (its output is its reply, lines work the same). Known templates: Aside browser agent "aside exec {{prompt}}" (uses the owner's signed-in Aside browser, bookmarks and all; the Aside window stays separate), "aside --session <id> {{prompt}}" to continue an Aside session, Codex "codex exec {{prompt}}".
 - get_changes (agent_id, diff) — the uncommitted git changes of a card's folder/worktree with the diff: review a worker's result yourself before accepting it, scoring it or sending it on.
@@ -188,7 +188,8 @@ RESULT: <what changed, how verified> · SCORE: <n>/10 · ISSUES: <list or none> 
 - Human gates: production deploys, destructive git (reset --hard, force push, branch deletion, restore_checkpoint with move_head=true — a pushed branch ends up behind its upstream), spending money, sending messages outside this machine — propose, never do, unless the owner replies with the exact phrase APPROVED BY OWNER.
 - Do not do the coding yourself when a card for it exists; delegate and verify.
 - Prefer small parallel cards with clear markers over one long card, within the live-card cap.
-- Keep the owner's own conventions (names, ledgers, checkpoints) exactly as before.`
+- Keep the owner's own conventions (names, ledgers, checkpoints) exactly as before.
+- The owner is only alerted when you need them. End a reply with one owner line, as its very last line, only in these two cases: \`OWNER: DECIDE — <the question, one line>\` when they must choose or approve something, \`OWNER: REPORT — <one line>\` when a finished report or result is ready for them to read. Progress updates, plans, relayed worker results and acknowledgements carry neither.`
 
 export interface PreparedLaunch {
   settingsPath?: string
@@ -218,7 +219,7 @@ export function prepareLaunch(params: {
   execPath: string
   nodeBin?: string
   mcpScriptPath: string
-  /** out/main/agent-hook.js — Codex notify / Gemini hooks bridge (codex/gemini engines) */
+  /** out/main/agent-hook.js — Codex notify / Gemini and Grok hooks bridge (codex/gemini/grok engines) */
   hookScriptPath?: string
   claudeBin?: string
   /** Card title → `--name` session display name. */
@@ -229,7 +230,7 @@ export function prepareLaunch(params: {
   assertLaunchableId(params.nodeId)
   mkdirSync(params.tmpDir, { recursive: true })
   const engine = params.engine ?? 'claude'
-  if (engine === 'codex' || engine === 'gemini') return prepareEngineLaunch(engine, params)
+  if (engine === 'codex' || engine === 'gemini' || engine === 'grok') return prepareEngineLaunch(engine, params)
   const settingsPath = join(params.tmpDir, `${params.nodeId}.settings.json`)
   writeFileSync(settingsPath, JSON.stringify(mergeSettings(buildHookSettings(params.baseUrl, params.nodeId), params.settingsExtra ?? {}), null, 2))
   let mcpConfigPath: string | undefined
@@ -266,13 +267,16 @@ export function prepareLaunch(params: {
   return { settingsPath, mcpConfigPath, systemPromptPath, command, env }
 }
 
-/** Codex / Gemini cards: same hooks, lines and board tools through their own config mechanisms. */
-function prepareEngineLaunch(engine: 'codex' | 'gemini', params: Parameters<typeof prepareLaunch>[0]): PreparedLaunch {
+/** Codex / Gemini / Grok cards: same hooks, lines and board tools through their own config mechanisms. */
+function prepareEngineLaunch(engine: 'codex' | 'gemini' | 'grok', params: Parameters<typeof prepareLaunch>[0]): PreparedLaunch {
   const boardTools = params.kind === 'conductor' || Boolean(params.claude.boardTools)
   const rolePrompt = [boardTools ? CONDUCTOR_SYSTEM_PROMPT : '', params.claude.appendSystemPrompt ?? ''].filter((t) => t.trim()).join('\n\n')
-  if (!params.hookScriptPath) throw new Error('hookScriptPath is required for codex/gemini cards')
+  if (!params.hookScriptPath) throw new Error('hookScriptPath is required for codex/gemini/grok cards')
   if (!params.nodeBin && engine === 'codex') {
     throw new Error('Codex cards need Node.js on PATH (the Codex notify hook runs a node script without the app environment)')
+  }
+  if (!params.nodeBin && engine === 'grok') {
+    throw new Error('Grok cards need Node.js on PATH (its hooks and the board tools run node scripts started by Grok)')
   }
   // their hook and MCP helpers are started by the CLI with an environment of its own choosing: they read the token
   // from a file named on the command line (the path is no secret; the token never goes on argv)
@@ -297,6 +301,15 @@ function prepareEngineLaunch(engine: 'codex' | 'gemini', params: Parameters<type
   }
   if (engine === 'codex') {
     const l = buildCodexLaunch(input)
+    return { command: l.command, initialPrompt: l.initialPrompt }
+  }
+  if (engine === 'grok') {
+    const pluginDir = join(params.tmpDir, `${params.nodeId}.grok`)
+    const l = buildGrokLaunch(input, pluginDir)
+    for (const [file, text] of Object.entries(l.files ?? {})) {
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, text, 'utf8')
+    }
     return { command: l.command, initialPrompt: l.initialPrompt }
   }
   const settingsPath = join(params.tmpDir, `${params.nodeId}.gemini.json`)

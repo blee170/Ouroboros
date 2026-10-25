@@ -35,6 +35,15 @@ export const ENGINE_META: Record<AgentEngine, { label: string; bin: string; inst
     login: 'gemini',
     signupUrl: 'https://aistudio.google.com/',
     needsNode: true
+  },
+  grok: {
+    label: 'Grok Build (xAI)',
+    bin: 'grok',
+    install: process.platform === 'win32' ? 'irm https://x.ai/cli/install.ps1 | iex' : 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    login: 'grok login',
+    signupUrl: 'https://x.ai/grok',
+    // the CLI is a native binary, but its card hooks and board tools are node scripts
+    needsNode: true
   }
 }
 
@@ -115,13 +124,14 @@ const KEEP_PREFIXES = ['OUROBOROS_', 'CLAUDE_CODE_']
 const ENGINE_KEY_VARS: Record<AgentEngine, readonly string[]> = {
   claude: CLAUDE_KEY_VARS,
   codex: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
-  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+  grok: ['XAI_API_KEY']
 }
 
 /**
  * Pure: credential variables an agent card must not inherit (§11.5 #3): a prompt-injected card can print its
  * environment. Deploy, database and cloud tokens are dropped, and so are the other engines' keys; the card's own
- * engine key is left to `claudeEnvKeysToStrip` (Claude) or kept (Codex, Gemini). The owner can pass them on purpose.
+ * engine key is left to `claudeEnvKeysToStrip` (Claude) or kept (Codex, Gemini, Grok). The owner can pass them on purpose.
  */
 export function credentialEnvKeys(env: NodeJS.ProcessEnv, engine: AgentEngine, passCredentials: boolean): string[] {
   if (passCredentials) return []
@@ -139,6 +149,9 @@ export function credentialEnvKeys(env: NodeJS.ProcessEnv, engine: AgentEngine, p
   })
 }
 
+/** Where `grok login` may keep its cached sign-in (not documented; checked in this order). */
+const GROK_LOGIN_FILES = ['auth.json', 'credentials.json', 'oauth.json', 'token.json']
+
 /**
  * Pure: sign-in state from the files each CLI keeps (undefined only when the files cannot be read). For Claude an
  * API key in the environment does not count: the app drops it from the cards of a signed-in owner (see
@@ -150,6 +163,13 @@ export function signedInFromFiles(engine: AgentEngine, home: string, env: NodeJS
     if (engine === 'codex') {
       if (exists(join(home, '.codex', 'auth.json'))) return true
       return Boolean(env.OPENAI_API_KEY)
+    }
+    if (engine === 'grok') {
+      // `grok login` caches its sign-in under ~/.grok (the file name is not documented: any of these counts)
+      if (GROK_LOGIN_FILES.some((f) => exists(join(home, '.grok', f)))) return true
+      if (env.XAI_API_KEY) return true
+      // ~/.grok without a file we know: it may keep the sign-in elsewhere (unknown, not "signed out")
+      return exists(join(home, '.grok')) ? undefined : false
     }
     if (exists(join(home, '.gemini', 'oauth_creds.json'))) return true
     return Boolean(env.GEMINI_API_KEY || env.GOOGLE_API_KEY)
@@ -184,7 +204,7 @@ export async function detectEngines(): Promise<EngineInfo[]> {
   const node = findNodeBinary()
   const home = homedir()
   return Promise.all(
-    (['claude', 'codex', 'gemini'] as AgentEngine[]).map(async (engine) => {
+    (['claude', 'codex', 'gemini', 'grok'] as AgentEngine[]).map(async (engine) => {
       const meta = ENGINE_META[engine]
       const r = await run(meta.bin, ['--version'])
       return {

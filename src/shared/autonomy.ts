@@ -222,14 +222,14 @@ export type RelaunchAction = 'relaunch' | 'close' | 'keep'
 
 /**
  * What the toggle does to each live card: Claude cards are relaunched in auto mode with the deny rules
- * (same conversation via --resume), Codex and Gemini cards are closed (no such guarantees there),
+ * (same conversation via --resume), Codex, Gemini and Grok cards are closed (no such guarantees there),
  * terminals and command cards are left alone.
  */
 export function relaunchAction(a: Pick<AgentSnapshot, 'kind' | 'engine' | 'ptyAlive' | 'status'>): RelaunchAction {
   if (a.status === 'ended') return 'keep' // /exit or a crash inside a live shell is still an ended card
   if (!a.ptyAlive && a.status !== 'starting') return 'keep'
   if (a.kind !== 'claude' && a.kind !== 'conductor') return 'keep'
-  return a.engine === 'codex' || a.engine === 'gemini' ? 'close' : 'relaunch'
+  return a.engine === 'codex' || a.engine === 'gemini' || a.engine === 'grok' ? 'close' : 'relaunch'
 }
 
 export interface StallAction {

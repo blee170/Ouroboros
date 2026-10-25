@@ -125,7 +125,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 <option value="all">every card's replies</option>
               </select>
             </div>
-            <div className="hint">A turn of 10 s or more; "needs you" and "all cards have finished" are announced too. The reply itself is never read out.</div>
+          </label>
+          <label className="field">
+            <span>When</span>
+            <div className="ctl">
+              <select value={announce.mode} onChange={(e) => void setSettings({ announceMode: e.target.value as 'important' | 'every' })}>
+                <option value="important">decisions and reports only</option>
+                <option value="every">every reply</option>
+              </select>
+            </div>
+            <div className="hint">
+              Decisions and reports: a reply ending in an OWNER: DECIDE or OWNER: REPORT line (the Conductor is told to add one), a report link, or a task blocked on your approval. Every reply: any turn of 10 s or more, and "all cards have finished". A card waiting on you is always announced; the reply itself is never read out.
+            </div>
           </label>
           <label className="check">
             <input type="checkbox" checked={announce.toast} onChange={(e) => void setSettings({ announceToast: e.target.checked })} /> Desktop toast with the first line of the reply

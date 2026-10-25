@@ -12,7 +12,7 @@ import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, 
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
-import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, announcesStop, firstLine, langFor, phrase, type AnnouncePayload } from '@shared/announce'
+import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { listSkills } from './skills'
@@ -758,15 +758,17 @@ function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayloa
 }
 
 /**
- * Tell the owner when work is done: a toast and/or a spoken sentence when a card finishes a turn (Conductor
- * replies by default, every card if asked), "needs you" spoken too, and "all cards have finished" once a
- * run of several cards settles. The reply itself is never read out; its first line goes in the toast.
+ * Tell the owner when they are needed: a toast and/or a spoken sentence when a card's reply asks for a decision
+ * or hands over a report (Conductor replies by default, every card if asked), "needs you" spoken too. In the
+ * `every` mode, any finished turn and "all cards have finished" once a run of several cards settles. The reply
+ * itself is never read out; its owner line (or first line) goes in the toast.
  */
 function installAnnouncer(ctx: MainContext, s: WindowSession): void {
   const board = s.board
   const workingSince = new Map<string, number>()
   const lastTurnMs = new Map<string, number>()
   const spokenNeedsYou = new Map<string, number>()
+  const lastStopAt = new Map<string, number>()
   const done = new BoardDone()
   let settleTimer: ReturnType<typeof setTimeout> | null = null
   // a card still booting (no status yet, or starting) is about to get its prompt: the board is not finished
@@ -815,7 +817,8 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
       settleTimer = null
       if (s.win.isDestroyed() || !done.settle(anyBusy())) return
       const prefs = announceSettings(ctx.store.getSettings())
-      if (prefs.target === 'off') return
+      // in the default mode a settled board is not news: what needs the owner was announced on its own
+      if (prefs.target === 'off' || prefs.mode !== 'every') return
       deliver({ kind: 'all-done', title: '', lang: langFor(...[...board.nodes.values()].map((n) => n.data.title)) }, undefined, prefs)
     }, SETTLE_MS)
   })
@@ -825,12 +828,23 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
     const prefs = announceSettings(ctx.store.getSettings())
     const elapsed = lastTurnMs.get(nodeId)
     lastTurnMs.delete(nodeId)
+    // the turn's start was not seen (app restarted mid-turn): anything since this card's previous reply
+    const start = elapsed !== undefined ? Date.now() - elapsed : lastStopAt.get(nodeId)
+    lastStopAt.set(nodeId, Date.now())
+    const reportLink = findBriefUrl({ message, output: '', anyUrl: false })?.inMessage === true
+    // a gate the card put in front of the owner this turn: a line of the reply that starts with it (not "no
+    // approval needed", not a relayed task list), or a task it blocked on approval
+    const askedApproval =
+      /^[\s>*_`•-]*APPROVAL NEEDED\b/m.test(message) ||
+      (start !== undefined && s.ledger.data.tasks.some((t) => t.state === 'blocked' && t.updatedBy === nodeId && t.updatedAt >= start && /^\s*APPROVAL NEEDED/i.test(t.reason ?? '')))
+    const kind = stopAnnouncement(n.data.kind, elapsed, prefs, { reply: message, reportLink, askedApproval })
     // the owner is looking at the card (the reply is on screen), or this card was announced seconds ago: the
     // finish is not announced, so a settling board may still say "all cards have finished"
-    const announced = announcesStop(n.data.kind, elapsed, prefs) && !viewing(s, nodeId) && s.burst.allow(`finished:${nodeId}`, Date.now())
+    const announced = kind !== null && !viewing(s, nodeId) && s.burst.allow(`finished:${nodeId}`, Date.now())
     done.stopped(announced)
     if (!announced) return
-    deliver({ kind: 'finished', title: n.data.title, lang: langFor(n.data.title, message) }, firstLine(message) || undefined, prefs)
+    const body = ownerMarker(message)?.line || firstLine(message)
+    deliver({ kind, title: n.data.title, lang: langFor(n.data.title, message) }, body || undefined, prefs)
   })
 }
 
@@ -1469,15 +1483,16 @@ export function registerIpc(ctx: MainContext): void {
         launchFailed.add(nodeId)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
       } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
-      else if (n.data.engine === 'codex' && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
-        // Codex sends no session-start event: once it has printed more than the echoed launch line,
-        // treat 4s of quiet as "ready"
+      else if ((n.data.engine === 'codex' || n.data.engine === 'grok') && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
+        // Codex sends no session-start event (and a Grok card whose plugin hooks did not load sends none either):
+        // once it has printed more than the echoed launch line, treat 4s of quiet as "ready"
         clearTimeout(readyTimers.get(nodeId))
         readyTimers.set(
           nodeId,
           setTimeout(() => {
             const cur = board.nodes.get(nodeId)
-            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+            // a Grok card sends SessionStart from its plugin hooks: ready without one means the hooks did not load
+            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: cur.data.engine === 'grok' ? 'ready (no hooks yet: status and lines may not work)' : 'ready' })
           }, 4000)
         )
       }

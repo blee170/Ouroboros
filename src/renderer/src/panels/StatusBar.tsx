@@ -7,6 +7,7 @@ import { Icon } from '@/lib/icons'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { rosterOrder } from '@/lib/rosterOrder'
 import { hottestWindow, resetsIn } from '@shared/usage'
+import { ApprovalsChip } from './ApprovalsChip'
 
 const hhmm = (t: number): string => {
   const d = new Date(t)
@@ -132,6 +133,7 @@ export function StatusBar() {
           <span className="n">{hot.length}</span> near context limit
         </button>
       )}
+      <ApprovalsChip />
       {autonomy.on && (
         <div className="auto-pill" title={`Autonomous mode until ${hhmm(autonomy.until ?? 0)} · ${autonomy.dispatches}/${autonomy.maxDispatches} new cards · ${autonomy.parked.length} waiting on you${autonomy.parked.length ? ': ' + autonomy.parked.map((p) => p.title).join(', ') : ''}`}>
           <Icon name="moon" size={12} />

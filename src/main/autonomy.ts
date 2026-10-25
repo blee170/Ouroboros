@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { AgentStatusPayload } from '@shared/protocol'
 import type { AgentSnapshot, ClaudeOptions, HookEvent, NodeData } from '@shared/types'
 import { LIMIT_PROMPT, LIMIT_RETRY_MINUTES, NUDGE_PROMPT, RESUME_PROMPT, START_GRACE_MINUTES, autonomyBrief, autonomyDispatchRefusal, autonomyRetryRefusal, autonomySettingsFragment, endsEarly, isUsageLimit, newRunState, relaunchAction, reportMarkdown, stallActions, staleStarting, type AutonomyConfig, type AutonomyPublic, type CardEvidence, type RunEvent, type RunState } from '@shared/autonomy'
+import { failureOf } from '@shared/status'
 import type { Board } from './board'
 import type { Task } from '@shared/ledger'
 
@@ -34,6 +35,10 @@ export interface AutonomyHost {
 
 const TICK_MS = 30_000
 
+/** A card between turns: idle, done, or stopped on an error (not the SessionStart after an auto-compaction, which comes mid-turn). */
+const turnOver = (status: string | undefined, detail: string | undefined): boolean =>
+  (status === 'idle' && detail !== 'session compact') || status === 'done' || (status === 'needs-you' && !!failureOf(detail))
+
 /**
  * One window's autonomous run. The rails are enforced here and in the handlers that consult it
  * (create_agent caps and permission mode, the deny rules written into every launch), never by a prompt.
@@ -49,10 +54,13 @@ export class Autonomy {
   /** relaunched Conductors that still owe the brief, and relaunched cards cut mid-turn that owe a "continue" */
   private briefPending = new Set<string>()
   private resumePending = new Set<string>()
+  /** cards still on the run's deny rules and auto mode after it stopped: relaunched (same conversation) once their turn is over */
+  private unrail = new Set<string>()
   private ended: AutonomyPublic['ended']
   private readonly onStatus = (p: AgentStatusPayload): void => this.handleStatus(p)
   private readonly onHook = (p: { nodeId: string; event: HookEvent }): void => this.handleHook(p)
   private readonly onStop = (nodeId: string, message: string): void => this.handleStop(nodeId, message)
+  private readonly onAfterRun = (p: AgentStatusPayload): void => this.handleAfterRun(p)
 
   constructor(private host: AutonomyHost) {}
 
@@ -88,6 +96,7 @@ export class Autonomy {
     this.lastBusyAt = now
     this.briefPending.clear()
     this.resumePending.clear()
+    this.clearUnrail()
     this.record({ kind: 'start', detail: `until ${new Date(config.until).toLocaleTimeString()} · ${config.maxDispatches} dispatches · stall ${config.stallMinutes} min` })
     for (const a of this.host.agents()) {
       const action = relaunchAction(a)
@@ -140,6 +149,7 @@ export class Autonomy {
     this.ended = { at: s.stopped.at, reason, reportPath: this.reportPath }
     this.host.changed(this.public())
     if (opts.quick) return this.public()
+    this.dropRails()
     const evidence: Record<string, CardEvidence> = {}
     for (const a of agents) {
       if (a.kind === 'note' || a.kind === 'browser') continue
@@ -151,7 +161,7 @@ export class Autonomy {
     const md = reportMarkdown(s, this.events, agents, evidence, tasks)
     saveError = this.writeReport(md)
     this.host.addNote('Morning report', `${md}\n\n_${saveError ? `Could not save the report file (${saveError}); this note is the only copy` : `Saved at ${this.reportPath}`}_`)
-    this.host.toast('Autonomous run ended', `${reason}. ${Object.keys(s.parked).length} waiting on you; the report is on the canvas${saveError ? ' (file not saved)' : ''}.`)
+    this.host.toast('Autonomous run ended', `${reason}. ${Object.keys(s.parked).length} waiting on you; the report is on the canvas${saveError ? ' (file not saved)' : ''}. Cards restart without the run's rules once their turn is over.`)
     return this.public()
   }
 
@@ -164,8 +174,53 @@ export class Autonomy {
     }
   }
 
+  /**
+   * Every live Claude card was launched with the run's deny rules and in auto mode, and keeps both until it is
+   * launched again. Relaunch each one as its own card (same conversation) once it is idle, done or stopped on an
+   * error; a card mid-turn or waiting on a prompt is left until its turn is over.
+   */
+  private dropRails(): void {
+    for (const a of this.host.agents()) if (a.ptyAlive && relaunchAction(a) === 'relaunch') this.unrail.add(a.id)
+    if (!this.unrail.size) return
+    this.host.board.on('status', this.onAfterRun)
+    for (const a of this.host.agents()) if (this.unrail.has(a.id) && turnOver(a.status, a.statusDetail)) this.unrailCard(a.id)
+  }
+
+  private handleAfterRun(p: AgentStatusPayload): void {
+    for (const id of this.unrail) if (!this.host.board.nodes.has(id)) this.unrail.delete(id) // closed cards
+    if (this.unrail.has(p.nodeId)) {
+      // ended, or launched again by the owner (ours delete the id first): either way its next launch is a plain one
+      if (p.status === 'ended' || p.status === 'starting') this.unrail.delete(p.nodeId)
+      else if (turnOver(p.status, p.statusDetail)) this.unrailCard(p.nodeId)
+    }
+    if (!this.unrail.size) this.clearUnrail()
+  }
+
+  private unrailCard(id: string): void {
+    this.unrail.delete(id)
+    const n = this.host.board.nodes.get(id)
+    if (!n) return
+    const prev = n.data.claude ?? {}
+    const resume = this.host.agents().find((a) => a.id === id)?.sessionId || prev.resume
+    const title = this.titleOf(id)
+    if (!resume && !prev.continue) {
+      // a relaunch would start a fresh conversation: leave the card as it is and say so
+      this.record({ kind: 'relaunch', card: id, title, detail: 'run over: kept auto mode and the deny rules (no session to resume)' })
+      this.host.toast('Card still on the autonomous rails', `${title} has no session to resume, so it was not restarted: restart it yourself to drop auto mode and the deny rules.`)
+      return
+    }
+    this.record({ kind: 'relaunch', card: id, title, detail: 'run over: auto mode and deny rules off, same conversation' })
+    this.host.relaunch(id, { ...prev, resume, continue: resume ? undefined : prev.continue })
+  }
+
+  private clearUnrail(): void {
+    this.unrail.clear()
+    this.host.board.off('status', this.onAfterRun)
+  }
+
   /** The window is closing: end the run with what can be written synchronously. */
   dispose(): void {
+    this.clearUnrail()
     if (this.on) void this.stop('window closed', { quick: true })
   }
 

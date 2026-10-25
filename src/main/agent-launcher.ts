@@ -21,7 +21,10 @@ export interface EngineLaunchInput {
   rolePrompt?: string
   boardTools: boolean
   baseUrl: string
-  token: string
+  /** file holding the card's hook token (the hook helper reads it; it never goes on a command line) */
+  tokenFile: string
+  /** file holding the card's API token, for the board MCP server (board tools only) */
+  apiTokenFile?: string
   nodeBin: string
   /** nodeBin is the app binary: helper processes need ELECTRON_RUN_AS_NODE=1 in *their* env */
   electronAsNode?: boolean
@@ -87,11 +90,11 @@ export function roleAsMessage(role: string): string {
 export function buildCodexLaunch(input: EngineLaunchInput): EngineLaunch {
   const { claude, shell } = input
   const overrides: string[] = []
-  overrides.push(`notify=${JSON.stringify([input.nodeBin, input.hookScriptPath, 'codex', '--url', input.baseUrl, '--node', input.nodeId])}`)
+  overrides.push(`notify=${JSON.stringify([input.nodeBin, input.hookScriptPath, 'codex', '--url', input.baseUrl, '--node', input.nodeId, '--token-file', input.tokenFile])}`)
   if (input.boardTools) {
     overrides.push(`mcp_servers.ouroboros.command=${tomlString(input.nodeBin)}`)
     overrides.push(`mcp_servers.ouroboros.args=${JSON.stringify([input.mcpScriptPath])}`)
-    overrides.push(`mcp_servers.ouroboros.env={OUROBOROS_URL=${tomlString(input.baseUrl)},OUROBOROS_TOKEN=${tomlString(input.token)},OUROBOROS_SELF_ID=${tomlString(input.nodeId)}}`)
+    overrides.push(`mcp_servers.ouroboros.env={OUROBOROS_URL=${tomlString(input.baseUrl)},OUROBOROS_TOKEN_FILE=${tomlString(input.apiTokenFile ?? '')},OUROBOROS_SELF_ID=${tomlString(input.nodeId)}}`)
   }
   const role = input.rolePrompt?.trim()
   // Inline instructions are only safe where the shell quotes them exactly (posix single quotes).
@@ -141,7 +144,7 @@ export function buildCodexLaunch(input: EngineLaunchInput): EngineLaunch {
 export function buildGeminiSettings(input: EngineLaunchInput): Record<string, unknown> {
   const hookCommand = `${quoteFor(input.nodeBin, input.shell, true)} ${quoteFor(input.hookScriptPath, input.shell, true)} gemini`
   const asNode = input.electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}
-  const env = { OUROBOROS_URL: input.baseUrl, OUROBOROS_NODE_ID: input.nodeId, ...asNode }
+  const env = { OUROBOROS_URL: input.baseUrl, OUROBOROS_NODE_ID: input.nodeId, OUROBOROS_TOKEN_FILE: input.tokenFile, ...asNode }
   const hook = (name: string, matcher?: string): Record<string, unknown> => ({
     ...(matcher !== undefined ? { matcher } : {}),
     hooks: [{ name: `ouroboros-${name.toLowerCase()}`, type: 'command', command: hookCommand, timeout: 5000, env }]
@@ -162,7 +165,7 @@ export function buildGeminiSettings(input: EngineLaunchInput): Record<string, un
     mcpServers.ouroboros = {
       command: input.nodeBin,
       args: [input.mcpScriptPath],
-      env: { OUROBOROS_URL: input.baseUrl, OUROBOROS_TOKEN: input.token, OUROBOROS_SELF_ID: input.nodeId, ...asNode },
+      env: { OUROBOROS_URL: input.baseUrl, OUROBOROS_TOKEN_FILE: input.apiTokenFile ?? '', OUROBOROS_SELF_ID: input.nodeId, ...asNode },
       trust: true
     }
   }

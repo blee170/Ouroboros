@@ -10,6 +10,7 @@
  * The pure mapping functions are exported for tests; `main` only runs when executed directly.
  */
 import http from 'node:http'
+import { readFileSync } from 'node:fs'
 
 export interface OuroHook {
   hook_event_name: string
@@ -60,10 +61,10 @@ export function mapGeminiHook(input: Record<string, unknown>): OuroHook | null {
   }
 }
 
-function post(url: string, body: unknown): Promise<void> {
+function post(url: string, body: unknown, token: string): Promise<void> {
   return new Promise((resolve) => {
     const data = JSON.stringify(body)
-    const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) }, timeout: 3000 }, (res) => {
+    const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data), 'x-ouroboros-token': token }, timeout: 3000 }, (res) => {
       res.resume()
       res.on('end', resolve)
     })
@@ -74,6 +75,16 @@ function post(url: string, body: unknown): Promise<void> {
     })
     req.end(data)
   })
+}
+
+/** The card's token from the file the launcher wrote (Codex runs notify with no environment of ours). */
+function readToken(file: string): string {
+  if (!file) return ''
+  try {
+    return readFileSync(file, 'utf8').trim()
+  } catch {
+    return ''
+  }
 }
 
 function readStdin(): Promise<string> {
@@ -91,10 +102,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<void
   const [adapter, ...rest] = argv
   let url = env.OUROBOROS_URL ?? ''
   let node = env.OUROBOROS_NODE_ID ?? ''
+  let tokenFile = env.OUROBOROS_TOKEN_FILE ?? ''
   const positional: string[] = []
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--url') url = rest[++i] ?? url
     else if (rest[i] === '--node') node = rest[++i] ?? node
+    else if (rest[i] === '--token-file') tokenFile = rest[++i] ?? tokenFile
     else positional.push(rest[i])
   }
   if (!url || !node) {
@@ -108,7 +121,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<void
   } catch {
     event = null
   }
-  if (event) await post(`${url.replace(/\/$/, '')}/hook/${encodeURIComponent(node)}`, event)
+  if (event) await post(`${url.replace(/\/$/, '')}/hook/${encodeURIComponent(node)}`, event, readToken(tokenFile))
   // hooks must print only JSON on stdout; {} = no-op
   process.stdout.write('{}')
 }

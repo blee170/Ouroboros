@@ -1,7 +1,8 @@
 import http from 'node:http'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { mapCodexNotify, mapGeminiHook } from '../src/main/agent-hook'
 
@@ -28,11 +29,15 @@ describe('agent-hook mappings (pure)', () => {
 describe('agent-hook.js (bundled)', () => {
   it.skipIf(!existsSync(script))('posts to /hook/<node> from Codex argv and Gemini stdin, prints {} on stdout', async () => {
     const received: Array<{ url: string; body: unknown }> = []
+    const tokens: string[] = []
+    const tokenFile = join(mkdtempSync(join(tmpdir(), 'ouro-hooktok-')), 'card.token')
+    writeFileSync(tokenFile, 'secret-from-file\n')
     const server = http.createServer((req, res) => {
       let body = ''
       req.on('data', (c) => (body += c))
       req.on('end', () => {
         received.push({ url: req.url ?? '', body: JSON.parse(body) })
+        tokens.push(String(req.headers['x-ouroboros-token'] ?? ''))
         res.writeHead(200).end('{}')
       })
     })
@@ -44,9 +49,9 @@ describe('agent-hook.js (bundled)', () => {
         if (stdin !== undefined) child.stdin?.end(stdin)
         else child.stdin?.end()
       })
-    const out1 = await run(['codex', '--url', url, '--node', 'card1', JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'thr', 'last-assistant-message': 'finished' })])
+    const out1 = await run(['codex', '--url', url, '--node', 'card1', '--token-file', tokenFile, JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'thr', 'last-assistant-message': 'finished' })])
     expect(out1).toBe('{}')
-    const out2 = await run(['gemini'], JSON.stringify({ hook_event_name: 'AfterAgent', session_id: 'g1', prompt_response: 'ok', cwd: '/p' }), { OUROBOROS_URL: url, OUROBOROS_NODE_ID: 'card2' })
+    const out2 = await run(['gemini'], JSON.stringify({ hook_event_name: 'AfterAgent', session_id: 'g1', prompt_response: 'ok', cwd: '/p' }), { OUROBOROS_URL: url, OUROBOROS_NODE_ID: 'card2', OUROBOROS_TOKEN_FILE: tokenFile })
     expect(out2).toBe('{}')
     const out3 = await run(['gemini'], JSON.stringify({ hook_event_name: 'AfterAgent' })) // no env → no-op
     expect(out3).toBe('{}')
@@ -55,5 +60,7 @@ describe('agent-hook.js (bundled)', () => {
       { url: '/hook/card1', body: { hook_event_name: 'Stop', session_id: 'thr', last_assistant_message: 'finished' } },
       { url: '/hook/card2', body: { hook_event_name: 'Stop', session_id: 'g1', last_assistant_message: 'ok', cwd: '/p' } }
     ])
+    // the token comes from the file (Codex: --token-file; Gemini: OUROBOROS_TOKEN_FILE), trimmed
+    expect(tokens).toEqual(['secret-from-file', 'secret-from-file'])
   }, 20000)
 })

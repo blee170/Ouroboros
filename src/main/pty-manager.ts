@@ -66,6 +66,7 @@ export class PtyManager extends EventEmitter {
       ...(opts.env ?? {})
     }
     for (const k of opts.omitEnv ?? []) delete env[k]
+    delete env.OUROBOROS_API_TOKEN // the app's master token override (tests): never a card's
     const cols = Math.max(10, opts.cols | 0)
     const rows = Math.max(3, opts.rows | 0)
     log(`pty spawn ${opts.nodeId} shell=${shell} ${cols}x${rows} cwd=${cwd}`)

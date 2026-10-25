@@ -116,7 +116,7 @@ It was built as a personal tool for one developer and is shared as-is. See `docs
 ```
 
 - **Main process** owns everything that must survive a re-render: PTYs, the authoritative board state, the local HTTP server, update checks. The renderer is a view that syncs its node/edge list to main and receives pushes (status, output, lines fired).
-- **HookServer** is a tiny HTTP server bound to `127.0.0.1`. `POST /hook/<cardId>` receives lifecycle events from the CLI running in that card. `/api/*` is the JSON API the MCP server uses; it requires a per-launch random token (`x-ouroboros-token`) and an `x-ouroboros-self` header naming the calling card, which scopes every call to that card's window.
+- **HookServer** is a tiny HTTP server bound to `127.0.0.1`. `POST /hook/<cardId>` receives lifecycle events from the CLI running in that card. `/api/*` is the JSON API the MCP server uses. Every card has its own hook token (`x-ouroboros-token`, an HMAC of its id under a per-launch key), and the card's hook route takes only that token. The Conductor and cards with board tools also get an API token (a separate HMAC), which is what makes an API caller that card (`x-ouroboros-self` is checked against it) and scopes every call to that card's window; a hook token is refused on the API. Claude cards hold their tokens in their environment only (`OUROBOROS_HOOK_TOKEN` through Claude Code's hook-header interpolation, `OUROBOROS_CARD_API_TOKEN` through `${...}` in the MCP config); Codex and Gemini cards get the path of a file holding each. Requests must be addressed to `127.0.0.1:<port>` / `localhost:<port>` and carry no `Origin`, so a web page cannot reach the server.
 - **mcp-server.js** is a single-file MCP server bundled from `src/main/mcp-server.ts`. It is started by the agent CLI itself (as a configured MCP server) and talks to the HookServer over HTTP, so the agent gets tools without any plugin install.
 - **agent-hook.js** is a single-file bridge that turns Codex and Gemini notifications into the same hook events.
 
@@ -227,7 +227,7 @@ Settings (the gear in the title bar):
 ## Security and privacy
 
 - **No accounts, no telemetry, no model calls from the app.** The CLIs in the cards use your own sign-ins and plans and talk to their providers directly.
-- The local HTTP server listens on `127.0.0.1` only. Hook posts carry no secrets; the JSON API requires a random per-launch token known only to the MCP servers Ouroboros starts.
+- The local HTTP server listens on `127.0.0.1` only and refuses requests from browser pages (any `Origin`, a foreign `Host`, non-JSON hook posts). Each card has its own token: a card's events are taken only with its token, and a card's MCP server acts only as that card (only the Conductor and cards with board tools get an API token at all). The global hook for outside sessions carries a token kept in the app's data folder; Claude Code sessions that were already open when it changed need a restart to pick it up. The status-line route has no token (a forged one only skews a usage chip). This is not a sandbox: a process running as you can still read another process's memory; see RESEARCH §11.5.
 - Agents get exactly the permissions you give their CLI (permission mode / approval mode / sandbox). The Conductor's human gates are instructions, not enforcement; the enforcement is the CLI's own approval prompts, which show up as **Needs you**.
 - `.ouroboros.json` contains card titles, folders, role prompts and line templates — review it before committing it to a shared repository.
 - Browser cards share one persistent Chromium profile (`persist:ouroboros-browser`) stored in `userData`; sign-ins there stay on your machine.
@@ -320,4 +320,4 @@ MIT — see `LICENSE`.
 
 **작동 원리 요약**: 카드마다 CLI를 실제 터미널(PTY)에서 실행하고, CLI의 라이프사이클 훅(HTTP, 127.0.0.1)으로 상태를 받습니다. 선은 원본 카드의 답이 끝나는 순간 템플릿을 대상 카드에 타이핑합니다. 총괄은 앱이 제공하는 MCP 서버(`list_agents`, `create_agent`, `connect_agents`, `get_changes` …)로 보드를 조작합니다. 자세한 내용은 위 영문 [How it works](#how-it-works).
 
-**보안**: 텔레메트리·계정·자체 모델 호출 없음. 로컬 서버는 127.0.0.1 전용이고 API는 실행마다 바뀌는 토큰을 요구합니다. 저장소 공개 전 전체 커밋 이력에서 키·토큰 유출을 검사했고 없었습니다.
+**보안**: 텔레메트리·계정·자체 모델 호출 없음. 로컬 서버는 127.0.0.1 전용이고 브라우저 페이지의 요청(Origin·다른 Host)을 거절합니다. 카드마다 토큰이 따로 있어서 카드의 훅·API는 그 카드의 토큰으로만 받습니다. 저장소 공개 전 전체 커밋 이력에서 키·토큰 유출을 검사했고 없었습니다.

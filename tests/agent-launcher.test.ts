@@ -6,7 +6,7 @@ const base: EngineLaunchInput = {
   claude: {},
   boardTools: false,
   baseUrl: 'http://127.0.0.1:47821',
-  token: 'tok',
+  tokenFile: 'C:\\data\\n1.token',
   nodeBin: 'C:\\Program Files\\nodejs\\node.exe',
   hookScriptPath: 'C:\\App\\resources\\app.asar.unpacked\\out\\main\\agent-hook.js',
   mcpScriptPath: 'C:\\App\\resources\\app.asar.unpacked\\out\\main\\mcp-server.js',
@@ -27,7 +27,7 @@ describe('buildCodexLaunch', () => {
     const l = buildCodexLaunch({ ...base, boardTools: true, rolePrompt: 'Be "brief".\nEnd with RESULT:', claude: { model: 'gpt-5-codex', permissionMode: 'acceptEdits' } })
     expect(l.command.startsWith('& codex --% -c "notify=[')).toBe(true)
     expect(l.command).toContain('agent-hook.js')
-    expect(l.command).toContain('codex\\",\\"--url\\",\\"http://127.0.0.1:47821\\",\\"--node\\",\\"n1\\"]"')
+    expect(l.command).toContain('codex\\",\\"--url\\",\\"http://127.0.0.1:47821\\",\\"--node\\",\\"n1\\",\\"--token-file\\",\\"C:\\\\data\\\\n1.token\\"]"')
     expect(l.command).toContain('mcp_servers.ouroboros.command=')
     expect(l.command).toContain('mcp_servers.ouroboros.env={OUROBOROS_URL=')
     expect(l.command).toContain('OUROBOROS_SELF_ID=\\"n1\\"')
@@ -48,7 +48,7 @@ describe('buildCodexLaunch', () => {
     expect(c.command.endsWith(' resume --last')).toBe(true)
     const long = buildCodexLaunch({ ...base, shell: 'posix', rolePrompt: 'x'.repeat(120_000) })
     expect(long.command).not.toContain('developer_instructions')
-    expect(long.command.endsWith(`"--node","n1"]'`)).toBe(true)
+    expect(long.command).toMatch(/"--node","n1","--token-file","[^"]*n1.token"]'$/)
     expect(long.initialPrompt).toContain('x'.repeat(120_000))
   })
 })
@@ -64,7 +64,8 @@ describe('buildGeminiSettings / buildGeminiLaunch', () => {
     expect(Object.keys(s.hooks).sort()).toEqual(['AfterAgent', 'BeforeAgent', 'BeforeTool', 'Notification', 'SessionEnd', 'SessionStart'])
     expect(s.hooks.BeforeTool[0].matcher).toBe('*')
     expect(s.hooks.AfterAgent[0].hooks[0]).toMatchObject({ type: 'command', command: '/usr/bin/node /app/agent-hook.js gemini', env: { OUROBOROS_URL: 'http://127.0.0.1:47821', OUROBOROS_NODE_ID: 'n1' } })
-    expect(s.mcpServers.ouroboros).toMatchObject({ command: '/usr/bin/node', trust: true, env: { OUROBOROS_SELF_ID: 'n1', OUROBOROS_TOKEN: 'tok' } })
+    expect(s.mcpServers.ouroboros).toMatchObject({ command: '/usr/bin/node', trust: true, env: { OUROBOROS_SELF_ID: 'n1' } })
+    expect(JSON.stringify(s)).not.toContain('OUROBOROS_TOKEN"') // the token itself is never in the settings file
     expect(s.mcpServers.aside.command).toBe('aside')
     expect(s.hooks.AfterAgent[0].hooks[0].env.ELECTRON_RUN_AS_NODE).toBeUndefined()
     const asNode = buildGeminiSettings({ ...base, boardTools: true, electronAsNode: true }) as { hooks: Record<string, Array<{ hooks: Array<{ env: Record<string, string> }> }>>; mcpServers: Record<string, { env: Record<string, string> }> }
@@ -79,4 +80,17 @@ describe('buildGeminiSettings / buildGeminiLaunch', () => {
     expect(Object.keys(l.files ?? {})).toEqual(['C:\\tmp\\n1.gemini.json'])
     expect(tomlString('a"b')).toBe('"a\\"b"')
   })
+
+describe('card token', () => {
+  it('reaches Codex and Gemini helpers as a file path, never on the command line', () => {
+    const codex = buildCodexLaunch({ ...base, boardTools: true, apiTokenFile: 'C:\\data\\n1.api-token' })
+    expect(codex.command).toContain('--token-file')
+    expect(codex.command).toContain('OUROBOROS_TOKEN_FILE=')
+    expect(codex.command).not.toMatch(/OUROBOROS_TOKEN=/)
+    const gem = buildGeminiSettings({ ...base, boardTools: true, apiTokenFile: 'C:\\data\\n1.api-token' }) as { hooks: Record<string, Array<{ hooks: Array<{ env: Record<string, string> }> }>> }
+    expect(gem.hooks.AfterAgent[0].hooks[0].env.OUROBOROS_TOKEN_FILE).toBe('C:\\data\\n1.token')
+    expect((gem as unknown as { mcpServers: { ouroboros: { env: Record<string, string> } } }).mcpServers.ouroboros.env.OUROBOROS_TOKEN_FILE).toBe('C:\\data\\n1.api-token')
+    expect(codex.command).toContain('n1.api-token')
+  })
+})
 })

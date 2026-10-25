@@ -277,11 +277,11 @@ describe('status line plumbing', () => {
     const hooks: string[] = []
     const lines: Array<[string, unknown]> = []
     const server = new HookServer({ onHook: (id) => hooks.push(id), onExternalHook: () => undefined, onStatusLine: (id, body) => lines.push([id, body]), resolveApi: () => undefined })
-    const port = await server.start()
+    const port = await server.start(0)
     try {
-      const post = (path: string, body: string): Promise<number> =>
+      const post = (path: string, body: string, token = ''): Promise<number> =>
         new Promise((resolve, reject) => {
-          const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+          const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', 'x-ouroboros-token': token } }, (res) => {
             res.resume()
             res.on('end', () => resolve(res.statusCode ?? 0))
           })
@@ -290,7 +290,7 @@ describe('status line plumbing', () => {
         })
       expect(await post('/hook/card%201/statusline', line(STATUS_LINE))).toBe(204)
       expect(await post('/hook/card%201/statusline', 'not json')).toBe(500)
-      expect(await post('/hook/card%201', line({ hook_event_name: 'Stop' }))).toBe(200)
+      expect(await post('/hook/card%201', line({ hook_event_name: 'Stop' }), server.hookToken('card 1'))).toBe(200)
       expect(lines).toEqual([['card 1', STATUS_LINE]])
       expect(hooks).toEqual(['card 1'])
     } finally {

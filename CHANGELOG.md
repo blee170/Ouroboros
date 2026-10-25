@@ -6,6 +6,9 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Added
+- **Obsidian vault export.** Settings → *Obsidian*: pick your vault folder and turn on *Mirror this project into my Obsidian vault*. The open project is written under `Ouroboros/<project>/` in the vault a few seconds after its tasks or cards change (and with *Export now*): one note per task in `Tasks/` (frontmatter: id, title, state, owner as the card's title, parent and dependencies as links, created, updated, tags `ouroboros/task` and `ouroboros/<state>`; the detail, result and reason as the body), the morning reports in `Reports/` with a date, `Board.canvas` (the board as an Obsidian canvas: each card with its engine, state and last reply, coloured by state; browser cards as web links; lines as arrows), `Tasks.base` (an Obsidian Bases table grouped by state, and cards) and a home note that embeds it. Obsidian's graph then draws the tasks and their links. It is one-way and keeps your vault yours: nothing outside that folder is written; a file you edit in Obsidian, or one that was there before, is left alone from then on (a manifest in the folder keeps a hash of what the app wrote); a task's note is removed only when the task is gone and the note is unchanged; an export with nothing new writes nothing. The folder belongs to one project (a second project with the same folder name is refused, not mixed in); morning reports are never removed; a damaged manifest stops the export with the reason instead of guessing; a network path is refused as the vault. Text written by agents (task details, replies, reports) is made inert for plugins that run code from notes: Templater `<% %>`, Dataview query blocks and inline queries.
+
 ### Changed
 - **Model is a dropdown.** A card's Inspector → Model offers the engine's presets (Claude: Opus, Sonnet, Haiku as the latest of each, Fable 5.1, and pinned 5.5 ids), the CLI's default, or *Custom…* for any name; Codex and Gemini get default or custom (their own `/model` lists the names). Switching a card's engine resets a model name that belonged to the old one.
 - **A new Briefs card opens beside the card whose reply had the link**, top edges aligned (the next free spot below in that column if something is there), instead of the first free grid cell, often far down-left. A Briefs card that already exists stays where you put it.
@@ -13,6 +16,7 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 ### Verified
 - Unit tests for the preset mapping; built-app probe: the options per engine, picking a preset, a custom name, back to default, and the reset on an engine switch.
 - Briefs placement: unit tests (beside, below a card in the way, the next column); built-app probe: a brief opened from a card lands right of it (and below its neighbour when the right is taken).
+- Obsidian export: unit tests (task notes, report dates, the canvas, the Bases file, the home note; on disk: first export, an unchanged second run, owner edits and files that were there first kept, removal of an untouched note, a tampered manifest that points outside the folder, a missing vault); built-app probe with a temp vault: the export after a ledger change by itself, *Export now*, parent links by vault path, the report copy, the canvas, nothing outside `Ouroboros/`. Not verified: how a real Obsidian renders the Bases file and the canvas (built to the published formats).
 
 ## [0.9.0] — 2026-10-25
 

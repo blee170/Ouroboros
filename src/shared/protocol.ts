@@ -85,6 +85,8 @@ export const IPC = {
   notionSetToken: 'notion:setToken',
   notionStatus: 'notion:status',
   notionTest: 'notion:test',
+  obsidianPick: 'obsidian:pick',
+  obsidianExport: 'obsidian:export',
   voiceTranscribe: 'voice:transcribe',
   voiceListening: 'voice:listening',
   voiceHotkey: 'voice:hotkey',
@@ -523,6 +525,12 @@ export interface OuroborosApi {
     status(): Promise<{ hasToken: boolean; databaseId?: string }>
     /** Fetch one of the databases (Reports by default) with the saved token: its title, or why not. */
     test(which?: NotionDatabaseKind): Promise<{ ok: true; title: string } | { ok: false; error: string }>
+  }
+  obsidian: {
+    /** Pick the vault folder (a folder dialog); null when cancelled. */
+    pick(): Promise<string | null>
+    /** Export this window's project now: what was written, or why not. */
+    exportNow(): Promise<{ ok: boolean; error?: string; folder?: string; written: number; kept: number; removed: number }>
   }
 }
 

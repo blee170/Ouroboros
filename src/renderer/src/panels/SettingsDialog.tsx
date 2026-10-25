@@ -63,6 +63,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     void setSettings({ [field]: id ?? (raw || undefined) })
     if (raw && !id) setMsg('That does not look like a Notion database URL or id (32 hex characters expected).')
   }
+  const exportToVault = async (): Promise<void> => {
+    setMsg('Writing to the vault…')
+    const r = await window.ouroboros.obsidian.exportNow()
+    setMsg(r.ok ? `Obsidian: ${r.folder ?? 'the vault'} — ${r.written} written, ${r.removed} removed${r.kept ? `, ${r.kept} kept as you edited them` : ''}.` : `Obsidian: ${r.error ?? 'export failed'}`)
+  }
   const testNotion = async (which: 'reports' | 'tasks' | 'updates' = 'reports'): Promise<void> => {
     setMsg('Asking Notion…')
     const r = await window.ouroboros.notion.test(which)
@@ -265,6 +270,46 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="hint">On the first start of each new version, its release notes (from the changelog) as one page.</div>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h4>Obsidian</h4>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={settings.obsidianExport === true}
+              onChange={(e) => {
+                const on = e.target.checked
+                // the first export runs once main has the switch on
+                void Promise.resolve(setSettings({ obsidianExport: on })).then(() => {
+                  if (on && settings.obsidianVaultPath) void exportToVault()
+                })
+              }}
+            />{' '}
+            Mirror this project into my Obsidian vault: tasks, morning reports and the board
+          </label>
+          <div className="hint">
+            Written under <em>Ouroboros/&lt;project&gt;/</em> in the vault, a few seconds after tasks or cards change: one note per task (state, owner, links to its parent and dependencies), the morning reports, a <em>Board.canvas</em>, a <em>Tasks.base</em> table and a home note. One-way: a file you edit in Obsidian is kept and no longer updated; nothing outside that folder is touched.
+          </div>
+          <label className="field">
+            <span>Vault folder</span>
+            <div className="ctl">
+              <input className="text mono" readOnly placeholder="choose your vault folder" value={settings.obsidianVaultPath ?? ''} />
+              <button
+                className="btn"
+                onClick={() =>
+                  void window.ouroboros.obsidian.pick().then((p) => {
+                    if (p) void setSettings({ obsidianVaultPath: p })
+                  })
+                }
+              >
+                Choose…
+              </button>
+              <button className="btn" onClick={() => void exportToVault()}>
+                Export now
+              </button>
+            </div>
           </label>
         </section>
 

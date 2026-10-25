@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.8.1] — 2026-10-25
 
 ### Added
 - **Stall watchdog** (roadmap D, RESEARCH §9.6): outside an autonomous run, a card *Working* with no hook event for *Stall alert* minutes (default 15; three times as long inside a tool call), or waiting on a person that long, is reported to its Conductor (parent or auto line) as `[card stalled]` / `[card waiting]` with the task it owns and what to do; it is reported again every period while it stays quiet, and the third report since its last finished turn, or a card with no Conductor, also raises a desktop notification. Terminal, command, browser and note cards and failed turns are never reported, and Codex cards only while they wait (Codex sends nothing during a turn); a Conductor that is itself on a prompt is not typed into; 0 turns it off. Settings → Announcements → *Stall alert*.
@@ -297,6 +297,7 @@ Merged to `main` as PR #1.
 
 The first build: Claude Code cards as real PTY terminals on an infinite canvas, lines between cards, the Welcome screen, Board Builder, per-card MCP servers (Aside, ego lite, Playwright), browser cards, resume-by-session Conductor flow, a Windows installer with shortcuts and icon, node-pty packaged correctly, smoke checks.
 
+[0.8.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.1
 [0.8.0]: https://github.com/blee170/Ouroboros/releases/tag/v0.8.0
 [0.7.2]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.2
 [0.7.1]: https://github.com/blee170/Ouroboros/releases/tag/v0.7.1

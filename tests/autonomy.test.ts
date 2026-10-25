@@ -167,6 +167,19 @@ describe('reportMarkdown', () => {
     expect(md.match(/^## Rails$/gm)).toHaveLength(1)
     expect(reportMarkdown(s, [], [])).toContain('Nothing. No card asked a question or hit a wall, no task is blocked.')
   })
+  it('counts the mail of the run and lists unhandled escalations under Waiting on you', () => {
+    const s = state()
+    const mail = [
+      { id: 'M1', from: 'w', to: 'c', kind: 'escalation' as const, body: 'need the DB password', createdAt: s.startedAt + 1 },
+      { id: 'M2', from: 'w', to: 'c', kind: 'note' as const, body: 'fyi', createdAt: s.startedAt + 2, ackedAt: s.startedAt + 3 },
+      { id: 'M0', from: 'w', to: 'c', kind: 'escalation' as const, body: 'old', createdAt: s.startedAt - 1 }
+    ]
+    const md = reportMarkdown(s, [], [{ id: 'w', title: 'Worker' } as never], {}, [], mail)
+    expect(md).toContain('- Escalation M1 from **Worker** to c at')
+    expect(md).not.toContain('Escalation M0')
+    expect(md).not.toContain('No card asked')
+    expect(md).toContain('- Mail: 2 sent, 1 not acked')
+  })
   it('keeps the last 300 timeline events in the report', () => {
     const s = state()
     const events = Array.from({ length: 350 }, (_, i) => ({ at: min(60) + i * 1000, kind: 'turn' as const, card: 'w', title: 'w', detail: `turn ${i}` }))

@@ -19,12 +19,12 @@ describe('prepareLaunch', () => {
     const { prepareLaunch } = await import('../src/main/claude-launcher')
     const tmpDir = mkdtempSync(join(tmpdir(), 'ouro-launch-'))
     try {
-      const l = prepareLaunch({ nodeId: 'n1', kind: 'claude', claude: {}, shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 't', apiToken: 'api-t', tmpDir, execPath: 'x', mcpScriptPath: 'm.js', settingsExtra: { permissions: { deny: ['Bash(git push*)'] } } })
+      const l = prepareLaunch({ nodeId: 'n1', kind: 'claude', claude: {}, shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 't', apiToken: 'api-t', mailToken: 'mail-t', tmpDir, execPath: 'x', mcpScriptPath: 'm.js', settingsExtra: { permissions: { deny: ['Bash(git push*)'] } } })
       const written = JSON.parse(readFileSync(l.settingsPath!, 'utf8')) as { hooks: unknown; permissions: { deny: string[] } }
       expect(written.hooks).toBeTruthy()
       expect(written.permissions.deny).toEqual(['Bash(git push*)'])
       // the card's token is in its environment only; the hooks name the variable
-      expect(l.env).toEqual({ OUROBOROS_HOOK_TOKEN: 't' }) // no board tools: no API token at all
+      expect(l.env).toEqual({ OUROBOROS_HOOK_TOKEN: 't', OUROBOROS_CARD_MAIL_TOKEN: 'mail-t' }) // no board tools: no API token, only the mail one
       const stop = (written.hooks as Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>).Stop[0].hooks[0]
       expect(stop).toMatchObject({ headers: { 'x-ouroboros-token': '$OUROBOROS_HOOK_TOKEN' }, allowedEnvVars: ['OUROBOROS_HOOK_TOKEN'] })
     } finally {
@@ -80,9 +80,11 @@ import { prepareLaunch } from '../src/main/claude-launcher'
 describe('prepareLaunch', () => {
   it('writes an mcp config when a plain claude card has extra servers, and merges the board server for conductors', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'ouro-launch-'))
-    const base = { shell: '/bin/bash', baseUrl: 'http://127.0.0.1:1', token: 't', apiToken: 'api-t', tmpDir: tmp, execPath: '/el', mcpScriptPath: '/mcp.js' }
+    const base = { shell: '/bin/bash', baseUrl: 'http://127.0.0.1:1', token: 't', apiToken: 'api-t', mailToken: 'mail-t', tmpDir: tmp, execPath: '/el', mcpScriptPath: '/mcp.js' }
     const plain = prepareLaunch({ ...base, nodeId: 'p1', kind: 'claude', claude: {} })
-    expect(plain.mcpConfigPath).toBeUndefined()
+    // every card has the board server for its mail; without board tools it is mail-only and gets no Conductor prompt
+    const plainCfg = JSON.parse(readFileSync(plain.mcpConfigPath!, 'utf8')) as { mcpServers: { ouroboros: { env: Record<string, string> } } }
+    expect(plainCfg.mcpServers.ouroboros.env).toMatchObject({ OUROBOROS_TOOLS: 'mail', OUROBOROS_TOKEN: '${OUROBOROS_CARD_MAIL_TOKEN}' })
     expect(plain.systemPromptPath).toBeUndefined()
     const role = prepareLaunch({ ...base, nodeId: 'r1', kind: 'claude', title: 'Ops "card"', claude: { appendSystemPrompt: 'Role: Ops. Say "APPROVED BY OWNER" only when asked.' } })
     expect(readFileSync(role.systemPromptPath!, 'utf8')).toContain('APPROVED BY OWNER')
@@ -93,7 +95,7 @@ describe('prepareLaunch', () => {
     expect(role.command).toContain("--name 'Ops card'")
     expect(role.command).not.toMatch(/"/)
     const withAside = prepareLaunch({ ...base, nodeId: 'p2', kind: 'claude', claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
-    expect(JSON.parse(readFileSync(withAside.mcpConfigPath!, 'utf8'))).toEqual({ mcpServers: { aside: { command: 'aside', args: ['mcp'] } } })
+    expect(Object.keys((JSON.parse(readFileSync(withAside.mcpConfigPath!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['aside', 'ouroboros'])
     expect(withAside.command).toContain('--mcp-config')
     const cond = prepareLaunch({ ...base, nodeId: 'c1', kind: 'conductor', claude: { continue: true, mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
     expect(cond.command).toContain('--system-prompt-snapshot off')
@@ -115,17 +117,20 @@ describe('card tokens at launch', () => {
     const { prepareLaunch } = await import('../src/main/claude-launcher')
     const tmpDir = mkdtempSync(join(tmpdir(), 'ouro-tok-'))
     try {
-      const p = { shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 'hook-t', apiToken: 'api-t', tmpDir, execPath: 'x', mcpScriptPath: 'm.js' }
+      const p = { shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:1', token: 'hook-t', apiToken: 'api-t', mailToken: 'mail-t', tmpDir, execPath: 'x', mcpScriptPath: 'm.js' }
       expect(prepareLaunch({ ...p, nodeId: 'c1', kind: 'conductor', claude: {} }).env).toEqual({ OUROBOROS_HOOK_TOKEN: 'hook-t', OUROBOROS_CARD_API_TOKEN: 'api-t' })
-      expect(prepareLaunch({ ...p, nodeId: 'w1', kind: 'claude', claude: { boardTools: true } }).env).toMatchObject({ OUROBOROS_CARD_API_TOKEN: 'api-t' })
+      expect(prepareLaunch({ ...p, nodeId: 'w1', kind: 'claude', claude: { boardTools: true } }).env).toEqual({ OUROBOROS_HOOK_TOKEN: 'hook-t', OUROBOROS_CARD_API_TOKEN: 'api-t' })
+      expect(prepareLaunch({ ...p, nodeId: 'w2', kind: 'claude', claude: {} }).env).toEqual({ OUROBOROS_HOOK_TOKEN: 'hook-t', OUROBOROS_CARD_MAIL_TOKEN: 'mail-t' })
+      expect(readFileSync(join(tmpDir, 'w2.mcp.json'), 'utf8')).not.toContain('mail-t')
       expect(readFileSync(join(tmpDir, 'c1.mcp.json'), 'utf8')).not.toContain('api-t')
       // Codex / Gemini: the hook token always in a file, the API token only with board tools
       prepareLaunch({ ...p, nodeId: 'g1', kind: 'claude', engine: 'gemini', claude: {}, hookScriptPath: 'h.js', nodeBin: 'node' })
       expect(readFileSync(join(tmpDir, 'g1.token'), 'utf8')).toBe('hook-t')
       expect(existsSync(join(tmpDir, 'g1.api-token'))).toBe(false)
+      expect(readFileSync(join(tmpDir, 'g1.mail-token'), 'utf8')).toBe('mail-t')
       prepareLaunch({ ...p, nodeId: 'g2', kind: 'conductor', engine: 'gemini', claude: {}, hookScriptPath: 'h.js', nodeBin: 'node' })
       expect(readFileSync(join(tmpDir, 'g2.api-token'), 'utf8')).toBe('api-t')
-      for (const bad of ['../evil', 'a/b', 'external', '', 'x'.repeat(65)]) expect(() => prepareLaunch({ ...p, nodeId: bad, kind: 'claude', claude: {} }), bad).toThrow(/cannot be launched/)
+      for (const bad of ['../evil', 'a/b', 'external', 'owner', '', 'x'.repeat(65)]) expect(() => prepareLaunch({ ...p, nodeId: bad, kind: 'claude', claude: {} }), bad).toThrow(/cannot be launched/)
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }

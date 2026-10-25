@@ -121,6 +121,16 @@ const api: OuroborosApi = {
     update: (id, patch) => ipcRenderer.invoke(IPC.tasksUpdate, id, patch),
     onChange: (cb) => on(IPC.tasksChanged, cb)
   },
+  mail: {
+    list: () => ipcRenderer.invoke(IPC.mailList),
+    send: (to, body) => ipcRenderer.invoke(IPC.mailSend, to, body),
+    onChange: (cb) => on(IPC.mailChanged, cb)
+  },
+  gate: {
+    list: () => ipcRenderer.invoke(IPC.gateList),
+    resolve: (id, approve) => ipcRenderer.invoke(IPC.gateResolve, id, approve),
+    onChange: (cb) => on(IPC.gateChanged, cb)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

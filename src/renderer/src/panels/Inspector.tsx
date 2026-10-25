@@ -7,6 +7,7 @@ import type { RoleEntry } from '@shared/roles'
 import { ChangesPanel } from './ChangesPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
 import { ReplyView } from './ReplyView'
+import { MailPanel } from './MailPanel'
 
 /** A titled group of fields; the same grammar as the Settings dialog. */
 function Section({ title, first, children, hint }: { title: string; first?: boolean; hint?: string; children: ReactNode }) {
@@ -169,6 +170,12 @@ export function Inspector() {
           </label>
         )}
       </Section>
+
+      {isAgent && (
+        <Section title="Mail">
+          <MailPanel nodeId={nodeId} />
+        </Section>
+      )}
 
       {isProcess && (
         <Section title="Work">

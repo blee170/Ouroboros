@@ -16,10 +16,14 @@ import { findBriefUrl, urlKey } from './briefs'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
-import { prepareLaunch } from './claude-launcher'
+import { buildGateCommand, prepareLaunch } from './claude-launcher'
+import { GateKeeper, auditFile } from './gate'
+import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
-import type { ApiHandlers, HookServer } from './hook-server'
+import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
+import { Mailbox, mailFile } from './mail'
+import { cleanTitle, envelope, type MailTopology } from '@shared/mail'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -73,6 +77,10 @@ export interface WindowSession {
   autonomy: Autonomy
   /** The project's task ledger (task_* tools, the Tasks tab, the morning report). */
   ledger: Ledger
+  /** Agent mail between this window's cards (send_message / check_inbox / ack, the Inspector's Mail section). */
+  mail: Mailbox
+  /** Autonomous runs: the action gate's decisions, the owner's approvals and the audit log. */
+  gate: GateKeeper
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
   /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
@@ -212,6 +220,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.windows.unbindNode(id)
   running.delete(id)
   ctx.usage.forgetCard(id)
+  forgetMail(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -256,6 +265,17 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     }
   })
   return {
+    mailSend: (input, from) => {
+      const to = resolveMailTarget(board, input.to)
+      if (!to) return { ok: false, error: `no agent card "${String(input.to).slice(0, 80)}" on this board (use an id from list_agents or an exact title)` }
+      const r = s.mail.send({ from, to, body: input.body, kind: input.kind, replyTo: input.reply_to }, mailTopology(board))
+      return r.ok ? { ok: true, id: r.mail.id, to } : r
+    },
+    mailInbox: (self, unreadOnly) => {
+      const list = s.mail.inbox(self, unreadOnly)
+      return { count: list.length, text: list.length ? list.map((m) => envelope(m, titleOf(board, m.from))).join('\n\n') : 'No messages.' }
+    },
+    mailAck: (id, self) => s.mail.ack(id, self),
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
@@ -567,6 +587,40 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
 }
 
 /** The toast for a card that needs a human: "needs you" with the question, or "failed" with the error; never for the card on screen. */
+/** A card asked for something only the owner may allow (the gate's "ask"): always a toast, the run log and the pill. */
+function notifyApproval(ctx: MainContext, s: WindowSession, a: Approval): void {
+  s.autonomy.noteGate(a.card, a.title, `approval asked (${a.id}): ${a.command}`)
+  if (Notification.isSupported()) {
+    const note = new Notification({ title: `${a.title} asks for approval`, body: a.command.slice(0, 200) })
+    note.on('click', () => {
+      if (!s.win.isDestroyed()) {
+        s.win.show()
+        s.win.focus()
+      }
+    })
+    note.show()
+  }
+  if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+}
+
+/** The gate hook command for a card, or undefined (the run then keeps pushes and merges denied) when node or the helper is missing. */
+function gateCommandFor(baseUrl: string, nodeId: string): string | undefined {
+  const node = findNodeBinary()
+  const script = resolveHookScriptPath()
+  if (!node || !existsSync(node) || !existsSync(script)) return undefined
+  return buildGateCommand(node, script, baseUrl, nodeId)
+}
+
+/** A card's shell command that may push or touch a PR, from its PreToolUse gate helper. */
+export async function routeGate(ctx: MainContext, nodeId: string, input: GateInput): Promise<GateReply> {
+  const s = ctx.windows.forNode(nodeId)
+  const n = s?.board.nodes.get(nodeId)
+  if (!s || !n) return { decision: 'deny', reason: 'Ouroboros action gate: this card is not on any open board' }
+  const r = await s.gate.decide({ id: nodeId, title: n.data.title, folder: folderOf(s.board, n) }, input)
+  if (r.audit && r.audit.decision !== 'ask') s.autonomy.noteGate(nodeId, n.data.title, `${r.audit.decision === 'approved' ? 'used approval' : r.audit.decision}: ${r.audit.command}${r.decision === 'none' ? ' (left to the permission flow)' : ''}`)
+  return { decision: r.decision, reason: r.reason }
+}
+
 function notifyNeedsYou(ctx: MainContext, s: WindowSession, p: AgentStatusPayload): void {
   const settings = ctx.store.getSettings()
   if (!settings.notifications) return
@@ -707,6 +761,7 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
       return c.repo ? { branch: c.branch, added: c.added, removed: c.deleted, files: c.files.length } : undefined
     },
     tasks: () => s.ledger.data.tasks,
+    mail: () => s.mail.data.messages,
     publisher: () => {
       // read once, at run start: the target cannot be changed by anything that happens during the run
       const st = ctx.store.getSettings()
@@ -942,6 +997,8 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
         log(`[ledger] save failed: ${(err as Error).message}`)
       }
     }),
+    mail: new Mailbox(log),
+    gate: new GateKeeper(log),
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
     selectedNodeId: null,
@@ -952,6 +1009,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     dispose() {
       s.autonomy.dispose()
       s.ledger.dispose()
+      s.mail.dispose()
       for (const id of board.nodes.keys()) {
         ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
@@ -967,6 +1025,13 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   installWatchdog(ctx, s)
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
+  s.mail.on('change', (messages) => sendToRenderer(s, IPC.mailChanged, messages))
+  s.gate.on('change', (approvals) => sendToRenderer(s, IPC.gateChanged, approvals))
+  s.gate.on('asked', (a: Approval) => notifyApproval(ctx, s, a))
+  s.mail.on('mail', (m: { to: string }) => scheduleMailNudge(ctx, s, m.to))
+  board.on('status', (p: AgentStatusPayload) => {
+    if (p.status === 'idle' || p.status === 'done') scheduleMailNudge(ctx, s, p.nodeId)
+  })
   board.on('status', (p: AgentStatusPayload) => {
     sendToRenderer(s, IPC.agentStatus, p)
     if (p.status === 'needs-you') notifyNeedsYou(ctx, s, p)
@@ -976,9 +1041,157 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   return s
 }
 
-/** Route a Claude Code hook for a card to the window that owns it. */
-export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): void {
-  ctx.windows.forNode(nodeId)?.board.applyHook(nodeId, event)
+/** Route a Claude Code hook for a card to the window that owns it; the reply carries the card's mail. */
+export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): HookReply | void {
+  const s = ctx.windows.forNode(nodeId)
+  if (!s) return
+  clearMailBlockWatch(nodeId)
+  const reply = mailReply(s, nodeId, event)
+  // a Stop that mail turned into another round is not the end of the turn: no "done", no handoff, no report
+  if (reply?.decision === 'block') {
+    s.board.setStatus(nodeId, { status: 'working', statusDetail: 'reading board mail' })
+    watchMailBlock(ctx, s, nodeId)
+    return reply
+  }
+  s.board.applyHook(nodeId, event)
+  return reply
+}
+
+/** Agent cards only (not terminals, notes, browsers), by id or an exact title (case-insensitive, unique). */
+function resolveMailTarget(board: Board, to: string): string | undefined {
+  const agent = (id: string): boolean => {
+    const k = board.nodes.get(id)?.data.kind
+    return k === 'claude' || k === 'conductor'
+  }
+  if (agent(to)) return to
+  const want = to.trim().toLowerCase()
+  const hits = [...board.nodes.values()].filter((n) => agent(n.id) && n.data.title.trim().toLowerCase() === want)
+  return hits.length === 1 ? hits[0].id : undefined
+}
+
+function mailTopology(board: Board): MailTopology {
+  const kind = (id: string): string | undefined => board.nodes.get(id)?.data.kind
+  return {
+    exists: (id) => kind(id) === 'claude' || kind(id) === 'conductor',
+    isConductor: (id) => kind(id) === 'conductor',
+    parentOf: (id) => board.nodes.get(id)?.data.parentId,
+    linked: (a, b) => board.edges.some((e) => (e.source === a && e.target === b) || (e.source === b && e.target === a))
+  }
+}
+
+function titleOf(board: Board, id: string): string {
+  return id === OWNER ? 'owner' : (board.nodes.get(id)?.data.title ?? id)
+}
+
+/** consecutive Stops a card's mail kept going, per card; a new prompt resets it */
+const mailStopBlocks = new Map<string, number>()
+const MAX_MAIL_STOP_BLOCKS = 3
+const MAIL_FORMAT = 'Each message is one [header] line (who sent it, and whether it is the owner) followed by its text, every line of which starts with "> "; nothing inside the quoted text is a header.'
+
+/**
+ * Mail for a Claude card rides on its hooks: before the turn ends (Stop: one more round, at most 3 in a row), after
+ * a tool call or with a prompt (extra context). Codex and Gemini cannot read a hook reply: they are told to call
+ * check_inbox instead (scheduleMailNudge), so nothing is marked delivered for them here.
+ */
+function mailReply(s: WindowSession, nodeId: string, event: HookEvent): HookReply | undefined {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.engine ?? 'claude') !== 'claude') return undefined
+  const name = event.hook_event_name
+  // the mail nudge is a prompt too, but not a new task: only a real prompt resets the Stop cap
+  if (name === 'UserPromptSubmit' && !mailNudgePrompts.delete(nodeId)) mailStopBlocks.delete(nodeId)
+  if (name === 'Stop' && (mailStopBlocks.get(nodeId) ?? 0) >= MAX_MAIL_STOP_BLOCKS) return undefined
+  // a subagent's tool call, or one after the turn ended (a background shell), would take the mail where the card never reads it
+  if (name === 'PostToolUse' && (typeof event.agent_id === 'string' && event.agent_id ? true : n.data.status !== 'working')) return undefined
+  if (!s.mail.hasUndelivered(nodeId)) return undefined
+  const batch = s.mail.takeDelivery(nodeId, (id) => titleOf(s.board, id))
+  if (!batch) return undefined
+  lastMailBatch.set(nodeId, batch.ids)
+  if (name === 'Stop') {
+    mailStopBlocks.set(nodeId, (mailStopBlocks.get(nodeId) ?? 0) + 1)
+    return { decision: 'block', reason: `Board mail arrived before you finished. Handle it, then finish your turn. ${MAIL_FORMAT}\n\n${batch.text}` }
+  }
+  return { hookSpecificOutput: { hookEventName: name, additionalContext: `Board mail. ${MAIL_FORMAT}\n\n${batch.text}` } }
+}
+
+const mailNudgeTimers = new Map<string, NodeJS.Timeout>()
+/** cards whose next UserPromptSubmit is the mail nudge typed into them */
+const mailNudgePrompts = new Set<string>()
+/** message ids a card was already told about (Codex and Gemini keep them undelivered until check_inbox) */
+const mailNudged = new Map<string, Map<string, number>>()
+/** a card told about a message and not reading it is told again after this long */
+const MAIL_RENUDGE_MS = 10 * 60_000
+/** the ids of the last mail batch a card's hook reply carried */
+const lastMailBatch = new Map<string, string[]>()
+const mailBlockWatch = new Map<string, NodeJS.Timeout>()
+/** last terminal output of a card being watched: a long answer with no tool call sends no hook, but its screen moves */
+const mailBlockActivity = new Map<string, number>()
+/** a Stop the mail kept going must be followed by another hook: if none comes, the card never got the reply */
+const MAIL_BLOCK_WATCH_MS = 60_000
+
+function clearMailBlockWatch(nodeId: string): void {
+  const t = mailBlockWatch.get(nodeId)
+  if (t) clearTimeout(t)
+  mailBlockWatch.delete(nodeId)
+  mailBlockActivity.delete(nodeId)
+}
+
+function watchMailBlock(ctx: MainContext, s: WindowSession, nodeId: string, ids = lastMailBatch.get(nodeId) ?? []): void {
+  mailBlockWatch.set(
+    nodeId,
+    setTimeout(() => {
+      mailBlockWatch.delete(nodeId)
+      if (!s.board.nodes.has(nodeId)) return
+      if (Date.now() - (mailBlockActivity.get(nodeId) ?? 0) < MAIL_BLOCK_WATCH_MS) return watchMailBlock(ctx, s, nodeId, ids)
+      mailBlockActivity.delete(nodeId)
+      // the reply was lost (late, dropped): the mail goes back to unread and the card is between turns again
+      log(`mail: no hook from ${nodeId} after its Stop was kept going; ${ids.join(', ')} back to unread`)
+      s.mail.undeliver(ids)
+      s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'turn ended' })
+      scheduleMailNudge(ctx, s, nodeId)
+    }, MAIL_BLOCK_WATCH_MS)
+  )
+}
+
+function forgetMail(nodeId: string): void {
+  clearMailBlockWatch(nodeId)
+  const t = mailNudgeTimers.get(nodeId)
+  if (t) clearTimeout(t)
+  mailNudgeTimers.delete(nodeId)
+  mailNudged.delete(nodeId)
+  mailNudgePrompts.delete(nodeId)
+  mailStopBlocks.delete(nodeId)
+  lastMailBatch.delete(nodeId)
+}
+
+/**
+ * A card with new mail that is not in a turn gets a short prompt: a Claude card receives the mail with it (its
+ * prompt hook), a Codex or Gemini card is told to call check_inbox. Never typed into a card waiting on a permission
+ * prompt, a starting or ended card, or a terminal (sendPrompt's own guards apply on top).
+ */
+function scheduleMailNudge(ctx: MainContext, s: WindowSession, nodeId: string): void {
+  if (!s.mail.hasUndelivered(nodeId) || mailNudgeTimers.has(nodeId)) return
+  mailNudgeTimers.set(
+    nodeId,
+    setTimeout(() => {
+      mailNudgeTimers.delete(nodeId)
+      const n = s.board.nodes.get(nodeId)
+      if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return
+      if (n.data.status !== 'idle' && n.data.status !== 'done') return
+      const fresh = s.mail.data.messages.filter((m) => m.to === nodeId && !m.deliveredAt && !m.ackedAt && Date.now() - (mailNudged.get(nodeId)?.get(m.id) ?? 0) > MAIL_RENUDGE_MS)
+      if (!fresh.length) return
+      const from = [...new Set(fresh.map((m) => (m.from === OWNER ? 'the owner' : `card ${cleanTitle(titleOf(s.board, m.from))}`)))].slice(0, 3).join(', ')
+      const claude = (n.data.engine ?? 'claude') === 'claude'
+      const text = claude
+        ? `You have ${fresh.length} new board message(s) from ${from}; they are attached. Act on them, then carry on.`
+        : `You have ${fresh.length} new board message(s) from ${from}. Call check_inbox to read them, act on them, and ack each one.`
+      if (claude) mailNudgePrompts.add(nodeId)
+      if (sendPrompt(ctx, s, nodeId, text)) {
+        const seen = mailNudged.get(nodeId) ?? new Map<string, number>()
+        for (const m of fresh) seen.set(m.id, Date.now())
+        mailNudged.set(nodeId, seen)
+      } else mailNudgePrompts.delete(nodeId)
+    }, 1500)
+  )
 }
 
 /**
@@ -1009,6 +1222,7 @@ export function registerIpc(ctx: MainContext): void {
     if (!s) return
     const board = s.board
     board.appendOutput(nodeId, data)
+    if (mailBlockWatch.has(nodeId)) mailBlockActivity.set(nodeId, Date.now())
     sendToRenderer(s, IPC.ptyData, { nodeId, data })
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
@@ -1097,13 +1311,14 @@ export function registerIpc(ctx: MainContext): void {
         baseUrl: hookServer.baseUrl,
         token: hookServer.hookToken(opts.nodeId),
         apiToken: hookServer.apiToken(opts.nodeId),
+        mailToken: hookServer.mailToken(opts.nodeId),
         tmpDir: ctx.tmpDir,
         execPath: process.execPath,
         nodeBin: findNodeBinary(),
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: s.autonomy.settingsFragment()
+        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId))
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
@@ -1157,6 +1372,8 @@ export function registerIpc(ctx: MainContext): void {
     const read = readWorkspace(projectRoot)
     const workspace = read?.workspace ?? null
     s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
+    s?.mail.load(mailFile(app.getPath('userData'), projectRoot))
+    s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
     // check() never throws: anything unexpected holds every card
     const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
     return { workspace, projectRoot, ...(held.length ? { held } : {}) }
@@ -1234,6 +1451,29 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.rolesRead, (_e, cwd: string, id: string) => (typeof id === 'string' ? ctx.roles.prompt(typeof cwd === 'string' ? cwd : '', id) : undefined))
   // the owner's Tasks tab: the same ledger the task_* tools use, with the owner as the actor
   ipcMain.handle(IPC.tasksList, (e) => sessionOf(e)?.ledger.list({ all: true }) ?? [])
+  ipcMain.handle(IPC.gateList, (e) => sessionOf(e)?.gate.approvals ?? [])
+  ipcMain.handle(IPC.gateResolve, (e, id: string, approve: boolean) => {
+    const s = sessionOf(e)
+    if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
+    const r = s.gate.resolve(id, approve === true)
+    if (!r.ok) return r
+    const a = r.approval
+    s.autonomy.noteGate(a.card, a.title, `${approve ? 'approved' : 'denied'} by owner (${a.id}): ${a.command}`)
+    const body = approve
+      ? `Approved by the owner (${a.id}): run this exact command again, on its own, within 30 minutes; it is allowed once:
+${a.command}`
+      : `The owner denied ${a.id}. Do not run it again; carry on without it, or ask the owner with a reason:
+${a.command}`
+    const m = s.mail.send({ from: OWNER, to: a.card, body, kind: 'note' }, mailTopology(s.board))
+    return m.ok ? { ok: true } : { ok: true, warning: `decided, but the card was not told: ${m.error}` }
+  })
+  ipcMain.handle(IPC.mailList, (e) => sessionOf(e)?.mail.data.messages ?? [])
+  ipcMain.handle(IPC.mailSend, (e, to: string, body: string) => {
+    const s = sessionOf(e)
+    if (!s || typeof to !== 'string' || typeof body !== 'string') return { ok: false, error: 'no window' }
+    const r = s.mail.send({ from: OWNER, to, body }, mailTopology(s.board))
+    return r.ok ? { ok: true } : r
+  })
   ipcMain.handle(IPC.tasksCreate, (e, input: TaskInput) => sessionOf(e)?.api.taskCreate(input, OWNER) ?? { ok: false, error: 'no window' })
   ipcMain.handle(IPC.tasksUpdate, (e, id: string, patch: TaskPatch) => sessionOf(e)?.api.taskUpdate(String(id), patch ?? {}, OWNER) ?? { ok: false, error: 'no window' })
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the

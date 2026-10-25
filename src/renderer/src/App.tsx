@@ -45,6 +45,8 @@ export default function App() {
       api.update.onStatus((p) => useBoard.getState().setUpdateStatus(p)),
       api.autonomy.onChange((p) => useBoard.getState().setAutonomy(p)),
       api.tasks.onChange((t) => useBoard.getState().setTasks(t)),
+      api.mail.onChange((m) => useBoard.getState().setMail(m)),
+      api.gate.onChange((a) => useBoard.getState().setApprovals(a)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),

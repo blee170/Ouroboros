@@ -276,7 +276,7 @@ describe('status line plumbing', () => {
   it('routes POST /hook/<id>/statusline to onStatusLine and never to the hook handler', async () => {
     const hooks: string[] = []
     const lines: Array<[string, unknown]> = []
-    const server = new HookServer({ onHook: (id) => hooks.push(id), onExternalHook: () => undefined, onStatusLine: (id, body) => lines.push([id, body]), resolveApi: () => undefined })
+    const server = new HookServer({ onHook: (id) => void hooks.push(id), onExternalHook: () => undefined, onStatusLine: (id, body) => lines.push([id, body]), resolveApi: () => undefined })
     const port = await server.start(0)
     try {
       const post = (path: string, body: string, token = ''): Promise<number> =>

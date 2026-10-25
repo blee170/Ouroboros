@@ -23,8 +23,8 @@ export interface EngineLaunchInput {
   baseUrl: string
   /** file holding the card's hook token (the hook helper reads it; it never goes on a command line) */
   tokenFile: string
-  /** file holding the card's API token, for the board MCP server (board tools only) */
-  apiTokenFile?: string
+  /** file holding the token the card's MCP server sends: its API token with board tools, else its mail token */
+  mcpTokenFile: string
   nodeBin: string
   /** nodeBin is the app binary: helper processes need ELECTRON_RUN_AS_NODE=1 in *their* env */
   electronAsNode?: boolean
@@ -91,11 +91,11 @@ export function buildCodexLaunch(input: EngineLaunchInput): EngineLaunch {
   const { claude, shell } = input
   const overrides: string[] = []
   overrides.push(`notify=${JSON.stringify([input.nodeBin, input.hookScriptPath, 'codex', '--url', input.baseUrl, '--node', input.nodeId, '--token-file', input.tokenFile])}`)
-  if (input.boardTools) {
-    overrides.push(`mcp_servers.ouroboros.command=${tomlString(input.nodeBin)}`)
-    overrides.push(`mcp_servers.ouroboros.args=${JSON.stringify([input.mcpScriptPath])}`)
-    overrides.push(`mcp_servers.ouroboros.env={OUROBOROS_URL=${tomlString(input.baseUrl)},OUROBOROS_TOKEN_FILE=${tomlString(input.apiTokenFile ?? '')},OUROBOROS_SELF_ID=${tomlString(input.nodeId)}}`)
-  }
+  // every card gets the board MCP server: the full tool set with board tools, otherwise the mail tools only
+  overrides.push(`mcp_servers.ouroboros.command=${tomlString(input.nodeBin)}`)
+  overrides.push(`mcp_servers.ouroboros.args=${JSON.stringify([input.mcpScriptPath])}`)
+  const tools = input.boardTools ? '' : `,OUROBOROS_TOOLS=${tomlString('mail')}`
+  overrides.push(`mcp_servers.ouroboros.env={OUROBOROS_URL=${tomlString(input.baseUrl)},OUROBOROS_TOKEN_FILE=${tomlString(input.mcpTokenFile)},OUROBOROS_SELF_ID=${tomlString(input.nodeId)}${tools}}`)
   const role = input.rolePrompt?.trim()
   // Inline instructions are only safe where the shell quotes them exactly (posix single quotes).
   // cmd.exe re-parses \" as quote toggles and `--%` expands %VAR% through the npm shim, so on
@@ -161,13 +161,11 @@ export function buildGeminiSettings(input: EngineLaunchInput): Record<string, un
     }
   }
   const mcpServers: Record<string, unknown> = {}
-  if (input.boardTools) {
-    mcpServers.ouroboros = {
-      command: input.nodeBin,
-      args: [input.mcpScriptPath],
-      env: { OUROBOROS_URL: input.baseUrl, OUROBOROS_TOKEN_FILE: input.apiTokenFile ?? '', OUROBOROS_SELF_ID: input.nodeId, ...asNode },
-      trust: true
-    }
+  mcpServers.ouroboros = {
+    command: input.nodeBin,
+    args: [input.mcpScriptPath],
+    env: { OUROBOROS_URL: input.baseUrl, OUROBOROS_TOKEN_FILE: input.mcpTokenFile, OUROBOROS_SELF_ID: input.nodeId, ...(input.boardTools ? {} : { OUROBOROS_TOOLS: 'mail' }), ...asNode },
+    trust: true
   }
   for (const [name, spec] of Object.entries(input.claude.mcpServers ?? {})) mcpServers[name] = spec
   if (Object.keys(mcpServers).length) settings.mcpServers = mcpServers

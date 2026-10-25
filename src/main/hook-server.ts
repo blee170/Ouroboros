@@ -11,8 +11,19 @@ export type CheckpointApiResult = ({ ok: boolean; error?: string } & Record<stri
 /** a /api/tasks caller with no x-ouroboros-self header (a raw curl): attributed to nobody, never to the owner */
 const UNKNOWN_CARD = 'unknown card'
 
+/** What a card's hook gets back: Claude Code reads it (Stop may block the turn's end, others add context). */
+export type HookReply = Record<string, unknown>
+
+/** Events whose reply carries mail to a Claude card; the server waits for main to build it (synchronous, no I/O). */
+const REPLY_EVENTS = new Set(['Stop', 'UserPromptSubmit', 'PostToolUse'])
+
 export interface ApiHandlers {
   listAgents(): unknown
+  /** Queue a message from `from` (the caller's own card id) to another card. */
+  mailSend(input: { to: string; body: string; kind?: string; reply_to?: string }, from: string): { ok: true; id: string; to: string } | { ok: false; error: string }
+  /** The caller's inbox (marked delivered); unreadOnly = not yet acknowledged. */
+  mailInbox(self: string, unreadOnly: boolean): { text: string; count: number }
+  mailAck(id: string, self: string): { ok: boolean; error?: string }
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
   listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
@@ -79,11 +90,25 @@ export interface ApiHandlers {
   }
 }
 
+export interface GateInput {
+  command: string
+  cwd?: string
+  tool?: string
+}
+/** allow / deny decides the tool call; none leaves it to the normal permission flow */
+export interface GateReply {
+  decision: 'allow' | 'deny' | 'none'
+  reason: string
+}
+
 export interface HookServerDeps {
-  onHook(nodeId: string, event: HookEvent): void
+  /** A card's hook event; for Stop / UserPromptSubmit / PostToolUse the return value is the reply (mail for the card). */
+  onHook(nodeId: string, event: HookEvent): HookReply | void
   onExternalHook(event: HookEvent): void
   /** A Claude card's status-line JSON (its `statusLine` command POSTs it on every API response). */
   onStatusLine?(nodeId: string, body: unknown): void
+  /** Autonomous run: a card's shell command that may push, open or merge a PR (its PreToolUse gate helper asks). */
+  onGate?(nodeId: string, input: GateInput): Promise<GateReply>
   /** API scoped to the window that owns `selfId` (the caller's own card id); unscoped = current window. */
   resolveApi(selfId?: string): ApiHandlers | undefined
   /** The token the global hook in the owner's Claude Code settings sends with `/hook/external` (persisted across launches). */
@@ -178,6 +203,11 @@ export class HookServer {
     return createHmac('sha256', this.secret).update(`api\0${nodeId}`).digest('hex')
   }
 
+  /** A card's mail token (a third domain): every agent card has one; it reaches only /api/mail, as that card. */
+  mailToken(nodeId: string): string {
+    return createHmac('sha256', this.secret).update(`mail\0${nodeId}`).digest('hex')
+  }
+
   private refuse(res: http.ServerResponse, status: number, error: string, route: string): void {
     const key = `${status} ${route}`
     if (!this.refusedLogged.has(key) && this.refusedLogged.size < 200) {
@@ -248,6 +278,24 @@ export class HookServer {
       return
     }
 
+    // --- Action gate (PreToolUse command hook during an Autonomous run) -------
+    const gate = path.startsWith('/hook/') && path.endsWith('/gate') ? [path, path.slice('/hook/'.length, -'/gate'.length)] : null
+    if (method === 'POST' && gate) {
+      const target = decodeURIComponent(gate[1])
+      const token = headerOf(req, TOKEN_HEADER)
+      if (target === 'external' || !same(token, this.hookToken(target))) return this.refuse(res, 401, token ? 'wrong token' : 'no token', `/hook/${target.slice(0, 64)}/gate`)
+      const body = (await readJson(req)) as Partial<GateInput> | undefined
+      if (!body || typeof body.command !== 'string') return send(res, 400, { decision: 'deny', reason: 'no command' })
+      // no handler (or it throws): the helper gets an error and blocks the call, it never fails open
+      if (!this.deps.onGate) return send(res, 503, { decision: 'deny', reason: 'gate not available' })
+      try {
+        send(res, 200, await this.deps.onGate(target, { command: body.command, cwd: typeof body.cwd === 'string' ? body.cwd : undefined, tool: typeof body.tool === 'string' ? body.tool : undefined }))
+      } catch (e) {
+        send(res, 500, { decision: 'deny', reason: `gate error: ${(e as Error).message}` })
+      }
+      return
+    }
+
     // --- Claude Code hooks ---------------------------------------------------
     if (method === 'POST' && path.startsWith('/hook/')) {
       const target = decodeURIComponent(path.slice('/hook/'.length))
@@ -255,12 +303,46 @@ export class HookServer {
       // a card's events only with that card's token: a forged Stop would type its "reply" into the Conductor
       if (!same(token, target === 'external' ? this.deps.externalToken : this.hookToken(target))) return this.refuse(res, 401, token ? 'wrong token' : 'no token', `/hook/${target.slice(0, 64)}`)
       const body = (await readJson(req)) as HookEvent
+      const valid = Boolean(body) && typeof body === 'object' && typeof body.hook_event_name === 'string'
+      // a card's Stop / prompt / tool-result hook carries its mail back: main answers synchronously (no I/O)
+      if (valid && target !== 'external' && REPLY_EVENTS.has(body.hook_event_name)) {
+        let reply: HookReply | void = undefined
+        try {
+          reply = this.deps.onHook(target, body)
+        } finally {
+          send(res, 200, reply ?? {})
+        }
+        return
+      }
       // Respond immediately so Claude Code is never blocked by our processing.
       send(res, 200, {})
-      if (!body || typeof body !== 'object' || typeof body.hook_event_name !== 'string') return
+      if (!valid) return
       if (target === 'external') this.deps.onExternalHook(body)
       else this.deps.onHook(target, body)
       return
+    }
+
+    // --- Agent mail (every agent card) ----------------------------------------
+    if (path === '/api/mail' || path.startsWith('/api/mail/')) {
+      const token = headerOf(req, TOKEN_HEADER)
+      const claimed = headerOf(req, 'x-ouroboros-self') || undefined
+      // the sender is who its token says, always a card: mail token, the board API token, or the master token naming one
+      if (!claimed || !(same(token, this.mailToken(claimed)) || same(token, this.apiToken(claimed)) || same(token, this.token))) return this.refuse(res, 401, 'unauthorized', `/api/mail as ${String(claimed ?? '(nobody)').slice(0, 64)}`)
+      const api = this.deps.resolveApi(claimed)
+      if (!api) return send(res, 503, { error: 'no window open' })
+      if (method === 'POST' && path === '/api/mail') {
+        const body = (await readJson(req, 64_000)) as { to?: unknown; body?: unknown; kind?: unknown; reply_to?: unknown }
+        if (typeof body?.to !== 'string' || typeof body.body !== 'string') return send(res, 400, { error: 'to and body required' })
+        const r = api.mailSend({ to: body.to, body: body.body, kind: typeof body.kind === 'string' ? body.kind : undefined, reply_to: typeof body.reply_to === 'string' ? body.reply_to : undefined }, claimed)
+        return send(res, r.ok ? 200 : 400, r)
+      }
+      if (method === 'GET' && path === '/api/mail') return send(res, 200, api.mailInbox(claimed, url.searchParams.get('unread') !== '0'))
+      const ack = /^\/api\/mail\/([^/]+)\/ack$/.exec(path)
+      if (method === 'POST' && ack) {
+        const r = api.mailAck(decodeURIComponent(ack[1]), claimed)
+        return send(res, r.ok ? 200 : 404, r)
+      }
+      return send(res, 404, { error: 'not found' })
     }
 
     // --- JSON API (MCP server, tests) --------------------------------------

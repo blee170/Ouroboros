@@ -56,16 +56,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setNotionToken('')
     setMsg(r.hasToken ? 'Notion token saved (encrypted). Paste the Reports database URL and press Test.' : 'Notion token cleared.')
   }
-  const saveNotionDb = (value: string): void => {
+  const saveNotionDb = (value: string, field: 'notionDatabaseId' | 'notionTasksDatabaseId' | 'notionUpdatesDatabaseId' = 'notionDatabaseId'): void => {
     const id = notionDatabaseId(value)
     const raw = value.trim()
-    void setSettings({ notionDatabaseId: id ?? (raw || undefined) })
+    void setSettings({ [field]: id ?? (raw || undefined) })
     if (raw && !id) setMsg('That does not look like a Notion database URL or id (32 hex characters expected).')
   }
-  const testNotion = async (): Promise<void> => {
+  const testNotion = async (which: 'reports' | 'tasks' | 'updates' = 'reports'): Promise<void> => {
     setMsg('Asking Notion…')
-    const r = await window.ouroboros.notion.test()
-    setMsg(r.ok ? `Notion: found database "${r.title}". Reports will be published there.` : `Notion: ${r.error}`)
+    const r = await window.ouroboros.notion.test(which)
+    const what = which === 'tasks' ? 'Tasks will be kept in sync there' : which === 'updates' ? 'Release notes will go there on the next new version' : 'Reports will be published there'
+    setMsg(r.ok ? `Notion: found database "${r.title}". ${what}.` : `Notion: ${r.error}`)
   }
   const saveToken = async (): Promise<void> => {
     const r = await window.ouroboros.update.setToken(token)
@@ -220,7 +221,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <section className="settings-section">
           <h4>Notion</h4>
           <label className="check">
-            <input type="checkbox" checked={settings.notionPublish === true} onChange={(e) => void setSettings({ notionPublish: e.target.checked })} /> Publish the morning report of every autonomous run to Notion
+            <input type="checkbox" checked={settings.notionPublish === true} onChange={(e) => void setSettings({ notionPublish: e.target.checked })} /> Publish to Notion: morning reports, the task list and release notes
           </label>
           <div className="hint">
             One row per run in your <em>Ouroboros → Reports</em> database, the report as the page. Needs an internal integration (notion.so/profile/integrations → New integration, read + insert content) and the Reports database shared with it (⋯ → Connections). The note on the canvas and the report file are written first; a failed publish is a toast and a line in the run log, never a lost report.
@@ -243,6 +244,26 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="hint">Test fetches the database with the saved token (stored encrypted, sent only to api.notion.com).</div>
+          </label>
+          <label className="field">
+            <span>Tasks database</span>
+            <div className="ctl">
+              <input className="text" placeholder="optional: the Tasks database URL" defaultValue={settings.notionTasksDatabaseId ?? ''} onBlur={(e) => saveNotionDb(e.target.value, 'notionTasksDatabaseId')} />
+              <button className="btn" onClick={() => void testNotion('tasks')}>
+                Test
+              </button>
+            </div>
+            <div className="hint">Every task of the open project's ledger as a row (Task ID, State, Owner, Result, Reason), updated a few seconds after it changes. Rows deleted in Notion come back at the task's next change.</div>
+          </label>
+          <label className="field">
+            <span>Updates database</span>
+            <div className="ctl">
+              <input className="text" placeholder="optional: the Updates database URL" defaultValue={settings.notionUpdatesDatabaseId ?? ''} onBlur={(e) => saveNotionDb(e.target.value, 'notionUpdatesDatabaseId')} />
+              <button className="btn" onClick={() => void testNotion('updates')}>
+                Test
+              </button>
+            </div>
+            <div className="hint">On the first start of each new version, its release notes (from the changelog) as one page.</div>
           </label>
         </section>
 

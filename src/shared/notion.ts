@@ -197,3 +197,56 @@ export function reportProperties(meta: ReportMeta): Record<string, unknown> {
     Status: { status: { name: NOTION_STATUS_NEW } }
   }
 }
+
+/** The properties a synced task row sets, as the Tasks database must have them. */
+export const TASK_SCHEMA: Record<string, string> = { Name: 'title', 'Task ID': 'rich_text', Project: 'select', State: 'select', Owner: 'rich_text', Result: 'rich_text', Reason: 'rich_text', Updated: 'date' }
+
+/** The properties a release-notes row sets, as the Updates database must have them. */
+export const UPDATE_SCHEMA: Record<string, string> = { Name: 'title', Date: 'date', Highlights: 'rich_text' }
+
+/** A select option name: no commas, at most 100 characters. */
+const selectName = (s: string, fallback: string): string => s.replace(/,/g, ' ').trim().slice(0, 100) || fallback
+
+/** What a Tasks row says about one ledger task; `owner` is the claiming card's title, already resolved. */
+export interface TaskRow {
+  id: string
+  title: string
+  state: string
+  owner?: string
+  result?: string
+  reason?: string
+  updatedAt: number
+}
+
+/** The Tasks database properties for one task. */
+export function taskProperties(task: TaskRow, project: string): Record<string, unknown> {
+  const text = (s: string | undefined): NotionRichText[] => (s ? richText(s.slice(0, NOTION_TEXT_MAX)) : [])
+  return {
+    Name: { title: richText(task.title.slice(0, NOTION_TEXT_MAX)) },
+    'Task ID': { rich_text: text(task.id) },
+    Project: { select: { name: selectName(project, 'no-project') } },
+    State: { select: { name: selectName(task.state, 'todo') } },
+    Owner: { rich_text: text(task.owner) },
+    Result: { rich_text: text(task.result) },
+    Reason: { rich_text: text(task.reason) },
+    Updated: { date: { start: new Date(task.updatedAt).toISOString() } }
+  }
+}
+
+/** The query that finds a task's row: same Task ID in the same Project. */
+export function taskQuery(taskId: string, project: string): Record<string, unknown> {
+  return {
+    filter: { and: [{ property: 'Task ID', rich_text: { equals: taskId } }, { property: 'Project', select: { equals: selectName(project, 'no-project') } }] },
+    page_size: 1
+  }
+}
+
+/** The Updates database properties for one version. */
+export function updateProperties(version: string, date: string | undefined, highlights: string, now = Date.now()): Record<string, unknown> {
+  const start = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : new Date(now).toISOString().slice(0, 10)
+  return {
+    Name: { title: richText(version.slice(0, 100)) },
+    Date: { date: { start } },
+    Highlights: { rich_text: highlights ? richText(highlights.slice(0, NOTION_TEXT_MAX)) : [] }
+  }
+}

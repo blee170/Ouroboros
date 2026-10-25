@@ -288,6 +288,9 @@ export function filterTasks(tasks: Task[], f: TaskFilter = {}): Task[] {
   })
 }
 
+/** A stored time as a usable epoch-ms number: anything a Date cannot hold (1e300, NaN) is 0. */
+const validTime = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 8.64e15 ? v : 0)
+
 export interface TaskCounts {
   todo: number
   doing: number
@@ -347,8 +350,8 @@ export function sanitizeLedger(raw: unknown): LedgerData {
       deps: Array.isArray(x.deps) ? (x.deps as unknown[]).filter((d): d is string => typeof d === 'string' && ID_RE.test(d) && d !== id) : [],
       createdBy: cleanLine(x.createdBy, 80) || OWNER,
       updatedBy: cleanLine(x.updatedBy, 80) || undefined,
-      createdAt: typeof x.createdAt === 'number' ? x.createdAt : 0,
-      updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : 0
+      createdAt: validTime(x.createdAt),
+      updatedAt: validTime(x.updatedAt)
     }
     const detail = cleanText(x.detail, DETAIL_MAX)
     if (detail) t.detail = detail

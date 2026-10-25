@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
-import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
@@ -31,8 +31,11 @@ import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
 import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
-import { publishReport, testNotion } from './notion'
-import { notionDatabaseId } from '@shared/notion'
+import { publishReport, publishUpdate, testNotion, type NotionTarget } from './notion'
+import { notionDatabaseId, TASK_SCHEMA, UPDATE_SCHEMA } from '@shared/notion'
+import { NotionMap, TaskSync } from './notion-sync'
+import { changelogSection } from '@shared/changelog'
+import changelog from '../../CHANGELOG.md?raw'
 
 /** Dispatched cards are retired this long after their report reached the card that made them. */
 const DEFAULT_RETIRE_MINUTES = 5
@@ -77,6 +80,8 @@ export interface WindowSession {
   api: ApiHandlers
   /** This window's Autonomous mode run (off until the owner starts one). */
   autonomy: Autonomy
+  /** The ledger mirrored into the owner's Notion Tasks database (idle unless that is set up). */
+  taskSync?: TaskSync
   /** The project's task ledger (task_* tools, the Tasks tab, the morning report). */
   ledger: Ledger
   /** Agent mail between this window's cards (send_message / check_inbox / ack, the Inspector's Mail section). */
@@ -879,6 +884,53 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
   }
 }
 
+let notionMapInstance: NotionMap | undefined
+/** One page map for the app: windows on different projects share the file, keyed by project. */
+function notionMap(): NotionMap {
+  notionMapInstance ??= new NotionMap(join(app.getPath('userData'), 'notion-map.json'))
+  return notionMapInstance
+}
+
+let notionWarned = false
+/** A failed task sync or release-notes publish: a log line always, one toast per session. */
+function notionFailed(error: string): void {
+  log(`[notion] ${error}`)
+  if (notionWarned || !Notification.isSupported()) return
+  notionWarned = true
+  new Notification({ title: 'Notion sync failed', body: `${error.slice(0, 180)}. Further failures go to the log only this session.` }).show()
+}
+
+const NOTION_FIELD: Record<NotionDatabaseKind, 'notionDatabaseId' | 'notionTasksDatabaseId' | 'notionUpdatesDatabaseId'> = { reports: 'notionDatabaseId', tasks: 'notionTasksDatabaseId', updates: 'notionUpdatesDatabaseId' }
+const NOTION_LABEL: Record<NotionDatabaseKind, string> = { reports: 'Reports', tasks: 'Tasks', updates: 'Updates' }
+
+/** Where tasks or release notes go: undefined when that is off (switch off, or its database empty); an error when it is on but cannot run. */
+function notionTarget(ctx: MainContext, which: 'tasks' | 'updates'): NotionTarget | { error: string } | undefined {
+  const st = ctx.store.getSettings()
+  if (!st.notionPublish || !st[NOTION_FIELD[which]]) return undefined
+  const databaseId = notionDatabaseId(st[NOTION_FIELD[which]])
+  if (!databaseId) return { error: `the ${NOTION_LABEL[which]} database field in Settings → Notion is not a Notion database URL or id` }
+  const token = decryptToken(st.notionTokenEnc)
+  if (!token) return { error: st.notionTokenEnc ? 'the saved Notion token could not be decrypted; paste it again in Settings → Notion' : 'no Notion token in Settings → Notion' }
+  return { token, databaseId }
+}
+
+/**
+ * On the first start of a new version: that version's CHANGELOG section as a page in the Updates database.
+ * A version with no section (a dev build) publishes nothing; a failure is retried at the next start.
+ */
+export async function publishReleaseNotes(ctx: MainContext, version: string): Promise<void> {
+  if (ctx.store.getSettings().notionLastUpdate === version) return
+  const target = notionTarget(ctx, 'updates')
+  if (!target) return
+  if ('error' in target) return notionFailed(target.error)
+  const section = changelogSection(changelog, version)
+  if (!section) return log(`[notion] no CHANGELOG section for ${version}; no release notes published`)
+  const r = await publishUpdate(target, version, section.date, section.highlights, section.body)
+  if (!r.ok) return notionFailed(`release notes for ${version}: ${r.error}`)
+  ctx.store.setSettings({ notionLastUpdate: version })
+  log(`[notion] release notes for ${version} published${r.partial ? ` (${r.partial})` : ''}`)
+}
+
 /** The browser card already showing `url` (its live page, else the URL it was created with), if any. */
 function browserShowing(ctx: MainContext, board: Board, url: string): string | undefined {
   const key = urlKey(url)
@@ -1111,6 +1163,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     },
     dispose() {
       s.autonomy.dispose()
+      s.taskSync?.dispose()
       s.ledger.dispose()
       s.mail.dispose()
       for (const id of board.nodes.keys()) {
@@ -1128,6 +1181,17 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   installWatchdog(ctx, s)
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
+  s.taskSync = new TaskSync({
+    target: () => notionTarget(ctx, 'tasks'),
+    project: () => basename(board.projectRoot || '') || 'no-project',
+    ownerTitle: (id) => board.nodes.get(id)?.data.title,
+    map: notionMap(),
+    log,
+    failed: notionFailed
+  })
+  s.ledger.on('change', (tasks) => {
+    if (board.projectRoot) s.taskSync?.schedule(tasks)
+  })
   s.mail.on('change', (messages) => sendToRenderer(s, IPC.mailChanged, messages))
   s.gate.on('change', (approvals) => sendToRenderer(s, IPC.gateChanged, approvals))
   s.gate.on('asked', (a: Approval) => notifyApproval(ctx, s, a))
@@ -1479,6 +1543,9 @@ export function registerIpc(ctx: MainContext): void {
     s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
     // check() never throws: anything unexpected holds every card
     const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
+    // tasks from a board this app never wrote (a cloned repo) or one changed behind its back go to Notion only once they change here
+    if (s && workspace && (!known || held.length)) s.taskSync?.hold(s.ledger.data.tasks)
+    else s?.taskSync?.hold([])
     return { workspace, projectRoot, ...(held.length ? { held } : {}) }
   })
   ipcMain.handle(IPC.workspaceTrust, (e, nodeIds: string[], revert: boolean) => {
@@ -1753,12 +1820,15 @@ export function registerIpc(ctx: MainContext): void {
     const st = store.getSettings()
     return { hasToken: Boolean(decryptToken(st.notionTokenEnc)), databaseId: st.notionDatabaseId }
   })
-  ipcMain.handle(IPC.notionTest, () => {
+  ipcMain.handle(IPC.notionTest, (_e, which: NotionDatabaseKind = 'reports') => {
+    if (typeof which !== 'string' || !Object.hasOwn(NOTION_FIELD, which)) return { ok: false, error: 'unknown database' }
     const st = store.getSettings()
     const token = decryptToken(st.notionTokenEnc)
-    const databaseId = notionDatabaseId(st.notionDatabaseId)
+    const databaseId = notionDatabaseId(st[NOTION_FIELD[which]])
     if (!token) return { ok: false, error: st.notionTokenEnc ? 'the saved token could not be decrypted; paste it again' : 'no token saved' }
-    if (!databaseId) return { ok: false, error: 'no database id (paste the Reports database URL)' }
+    if (!databaseId) return { ok: false, error: `no database id (paste the ${NOTION_LABEL[which]} database URL)` }
+    if (which === 'tasks') return testNotion({ token, databaseId }, TASK_SCHEMA, 'a task row')
+    if (which === 'updates') return testNotion({ token, databaseId }, UPDATE_SCHEMA, 'a release-notes page')
     return testNotion({ token, databaseId })
   })
 }

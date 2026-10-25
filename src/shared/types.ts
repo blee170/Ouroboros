@@ -243,6 +243,12 @@ export interface AppSettings {
   notionTokenEnc?: string
   /** The Reports database (dashed id; the Settings field also takes its URL). */
   notionDatabaseId?: string
+  /** The Tasks database the ledger is mirrored into (empty: tasks are not synced). */
+  notionTasksDatabaseId?: string
+  /** The Updates database a release-notes page goes into on the first start of each version (empty: none). */
+  notionUpdatesDatabaseId?: string
+  /** The version whose release notes were last published, so each goes up once. */
+  notionLastUpdate?: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

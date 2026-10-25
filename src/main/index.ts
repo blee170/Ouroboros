@@ -17,7 +17,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -207,6 +207,8 @@ async function main(): Promise<void> {
 
   createWindow(ctx, initialProjectArg())
   createTray(ctx)
+  // a dev build has no section of its own in the CHANGELOG and must not publish the installed version's notes
+  if (app.isPackaged) void publishReleaseNotes(ctx, app.getVersion()).catch((err) => log(`[notion] release notes: ${(err as Error).message}`))
 
   app.on('second-instance', (_e, argv, cwd) => {
     // `Ouroboros.exe <folder>` while running: open that folder in its own window.

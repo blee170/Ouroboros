@@ -299,6 +299,8 @@ export interface WorkspaceLoadResult {
 }
 
 /** The API exposed to the renderer through contextBridge. */
+export type NotionDatabaseKind = 'reports' | 'tasks' | 'updates'
+
 export interface OuroborosApi {
   pty: {
     spawn(opts: PtySpawnOptions): Promise<{ ok: boolean; error?: string }>
@@ -506,8 +508,8 @@ export interface OuroborosApi {
     setToken(token: string): Promise<{ ok: boolean; hasToken: boolean }>
     /** Whether a token is saved, and the database id as stored. */
     status(): Promise<{ hasToken: boolean; databaseId?: string }>
-    /** Fetch the Reports database with the saved token: its title, or why not. */
-    test(): Promise<{ ok: true; title: string } | { ok: false; error: string }>
+    /** Fetch one of the databases (Reports by default) with the saved token: its title, or why not. */
+    test(which?: NotionDatabaseKind): Promise<{ ok: true; title: string } | { ok: false; error: string }>
   }
 }
 

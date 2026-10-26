@@ -10,6 +10,8 @@ const STARTING_GRACE_MS = 60_000
 export interface NodeMeta {
   id: string
   data: NodeData
+  /** the card's centre on the canvas, as the renderer last synced it */
+  pos?: { x: number; y: number }
 }
 
 export interface ExternalSession {
@@ -68,7 +70,8 @@ export class Board extends EventEmitter {
         data.topic = prev.data.topic
         data.sessionId = data.sessionId ?? prev.data.sessionId
       }
-      next.set(n.id, { id: n.id, data })
+      const pos = n.pos && Number.isFinite(n.pos.x) && Number.isFinite(n.pos.y) ? { x: n.pos.x, y: n.pos.y } : prev?.pos
+      next.set(n.id, { id: n.id, data, pos })
       if (data.sessionId) this.sessionToNode.set(data.sessionId, n.id)
     }
     for (const id of this.nodes.keys()) {

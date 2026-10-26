@@ -78,11 +78,13 @@ export function forgetDataSources(): void {
   dataSources.clear()
 }
 
-type DatabaseInfo = { ok: true; title: string; dataSourceId: string } | { ok: false; error: string; status?: number }
+type DatabaseInfo = { ok: true; title: string; dataSourceId: string; databaseId: string } | { ok: false; error: string; status?: number }
 
 /** The database's title and data source (rows are created in and queried from the data source since 2025-09-03). */
 async function databaseInfo(target: NotionTarget): Promise<DatabaseInfo> {
   const r = await call(target, 'GET', `/databases/${target.databaseId}`)
+  // the id in Settings may be the data source's (Notion's "Copy link to data source", collection://…): use it as one
+  if (!r.ok && r.status === 404) return (await dataSourceInfo(target)) ?? r
   if (!r.ok) return r
   const title = Array.isArray(r.json.title) ? (r.json.title as Array<{ plain_text?: string }>).map((t) => t?.plain_text ?? '').join('') : ''
   const list = Array.isArray(r.json.data_sources) ? (r.json.data_sources as Array<{ id?: unknown } | null>) : []
@@ -90,7 +92,19 @@ async function databaseInfo(target: NotionTarget): Promise<DatabaseInfo> {
   // a broken database, not a passing failure: task sync waits for the next change instead of retrying
   if (!dataSourceId) return { ok: false, error: `Notion returned no data source for database "${title || target.databaseId}"`, status: 400 }
   dataSources.set(target.databaseId, dataSourceId)
-  return { ok: true, title, dataSourceId }
+  return { ok: true, title, dataSourceId, databaseId: target.databaseId }
+}
+
+/** The id in Settings read as a data source: its title and the database it belongs to, or undefined when it is not one. */
+async function dataSourceInfo(target: NotionTarget): Promise<DatabaseInfo | undefined> {
+  const r = await call(target, 'GET', `/data_sources/${target.databaseId}`)
+  if (!r.ok) return undefined
+  const parent = (r.json.parent ?? {}) as { database_id?: unknown }
+  const databaseId = safeId(parent.database_id)
+  if (!databaseId) return undefined
+  const title = Array.isArray(r.json.title) ? (r.json.title as Array<{ plain_text?: string }>).map((t) => t?.plain_text ?? '').join('') : ''
+  dataSources.set(target.databaseId, target.databaseId)
+  return { ok: true, title, dataSourceId: target.databaseId, databaseId }
 }
 
 async function dataSourceOf(target: NotionTarget): Promise<{ ok: true; id: string } | { ok: false; error: string; status?: number }> {
@@ -216,7 +230,7 @@ export async function ensureViews(target: NotionTarget, specs: ViewSpec[], readG
   let cursor: string | undefined
   let read = 0
   for (let page = 0; page < 5; page++) {
-    const list = await call(target, 'GET', `/views?database_id=${encodeURIComponent(target.databaseId)}${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`)
+    const list = await call(target, 'GET', `/views?database_id=${encodeURIComponent(info.databaseId)}${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`)
     if (!list.ok) return { ok: false, error: list.error }
     const ids = Array.isArray(list.json.results) ? (list.json.results as Array<{ id?: unknown } | null>).map((v) => safeId(v?.id)).filter((v): v is string => Boolean(v)) : []
     for (const id of ids) {
@@ -237,7 +251,7 @@ export async function ensureViews(target: NotionTarget, specs: ViewSpec[], readG
       out.existing.push(spec.name)
       continue
     }
-    const body = viewBody(spec, target.databaseId, info.dataSourceId, props)
+    const body = viewBody(spec, info.databaseId, info.dataSourceId, props)
     if (!body.ok) {
       out.failed.push(body.error)
       continue

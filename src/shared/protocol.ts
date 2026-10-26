@@ -166,7 +166,8 @@ export interface ClaudeLaunchOptions {
 
 export interface BoardSyncPayload {
   projectRoot: string
-  nodes: Array<Pick<WorkspaceNode, 'id'> & { data: NodeData }>
+  /** pos: the card's centre on the canvas (the phone page draws the board's map from it) */
+  nodes: Array<Pick<WorkspaceNode, 'id'> & { data: NodeData; pos?: { x: number; y: number } }>
   edges: WorkspaceEdge[]
 }
 

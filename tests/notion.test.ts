@@ -190,6 +190,29 @@ describe('publishReport', () => {
     expect(calls[1].url).toBe(`https://api.notion.com/v1/data_sources/${DS}`)
     expect(scrub('secret_abc ntn_def x')).toBe('[token] [token] x')
   })
+  it('takes a data source id where the database id goes (Notion\'s collection:// link), views on its database', async () => {
+    forgetDataSources()
+    const props = Object.fromEntries(Object.entries(REPORT_SCHEMA).map(([k, type]) => [k, { type }]))
+    const { fetch, calls } = fakeFetch((c) =>
+      c.url.endsWith(`/databases/${DS}`) ? json(404, {}) : c.url.endsWith(`/data_sources/${DS}`) ? json(200, { title: [{ plain_text: 'Reports' }], parent: { type: 'database_id', database_id: DB }, properties: props }) : json(200, { results: [] })
+    )
+    expect(await testNotion({ token: TOKEN, databaseId: DS, fetch })).toEqual({ ok: true, title: 'Reports' })
+    expect(calls.map((c) => c.url.replace('https://api.notion.com/v1', ''))).toEqual([`/databases/${DS}`, `/data_sources/${DS}`, `/data_sources/${DS}`])
+    // rows go into it straight away
+    const r = await publishReport({ token: TOKEN, databaseId: DS, markdown: '# x', meta, fetch: fakeFetch(() => json(200, { id: '11111111-2222-3333-4444-555555555555', url: 'u' })).fetch })
+    expect(r.ok).toBe(true)
+    // an id that is neither keeps the 404 that tells the owner to share the database
+    const none = fakeFetch(() => json(404, {}))
+    forgetDataSources()
+    const t = await testNotion({ token: TOKEN, databaseId: DS, fetch: none.fetch })
+    expect(t.ok === false && t.error).toMatch(/share the database/)
+  })
+  it('lists views on the database a data source id belongs to', async () => {
+    forgetDataSources()
+    const { fetch, calls } = fakeFetch((c) => (c.url.endsWith(`/databases/${DS}`) ? json(404, {}) : c.url.endsWith(`/data_sources/${DS}`) ? json(200, { title: [], parent: { database_id: DB }, properties: {} }) : json(200, { results: [] })))
+    await ensureViews({ token: TOKEN, databaseId: DS, fetch }, [], 0)
+    expect(calls.some((c) => c.url.includes(`/views?database_id=${DB}`))).toBe(true)
+  })
 })
 
 describe('data sources and views (Notion-Version 2026-03-11)', () => {

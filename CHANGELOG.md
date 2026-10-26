@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Notion said 404 for a database id copied from its data source.** Notion's *Copy link to data source* (`collection://…`) gives the id of the table inside a database, not of the database, and Test, reports, task sync, release notes and *Add views* asked Notion for a database by that id and got "could not find it". Settings → Notion now takes either: when there is no database by that id, it is read as a data source, rows go into it, and views are added on the database it belongs to. An id that is neither still says to share the database with the integration.
+
+### Verified (Notion ids)
+- Unit tests: a data source id passes Test and takes a report, views are listed on its database, an unknown id keeps the 404 advice. **Not verified live** with the owner's integration (its sharing is unknown).
+
 ## [0.15.0] — 2026-10-27
 
 ### Added

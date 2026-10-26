@@ -82,7 +82,7 @@ interface BoardState {
   /** the action gate's requests to the owner (autonomous runs) */
   approvals: Approval[]
   /** What the right panel shows. */
-  rpanelTab: 'inspector' | 'tasks'
+  rpanelTab: 'inspector' | 'tasks' | 'today'
   /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
   updateStatus: UpdateStatus | null
   /** Unread results and reviewed turns (shared/attention): runtime only. */
@@ -106,7 +106,7 @@ interface BoardState {
   /** The owner's call on held cards: trust the change as it is, or put the values the app last wrote back. Either way they launch. */
   resolveHeld(ids: string[], revert: boolean): Promise<void>
   /** Show a tab of the right panel (opening the panel when it is closed). */
-  showRpanel(tab: 'inspector' | 'tasks'): void
+  showRpanel(tab: 'inspector' | 'tasks' | 'today'): void
   setUpdateStatus(p: UpdateStatus): void
   setAccountUsage(s: UsageSnapshot): void
   setUsageOpen(open: boolean): void

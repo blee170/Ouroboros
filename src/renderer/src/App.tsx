@@ -6,6 +6,7 @@ import { Toolbar } from './panels/Toolbar'
 import { Inspector } from './panels/Inspector'
 import { HeldDialog } from './panels/HeldDialog'
 import { TasksPanel } from './panels/TasksPanel'
+import { TodayPanel, needsCount } from './panels/TodayPanel'
 import { Sidebar } from './panels/Sidebar'
 import { StatusBar } from './panels/StatusBar'
 import { Welcome } from './panels/Welcome'
@@ -20,6 +21,7 @@ export default function App() {
   const rpanelTab = useBoard((s) => s.rpanelTab)
   const showRpanel = useBoard((s) => s.showRpanel)
   const openTasks = useBoard((s) => s.tasks.filter((t) => t.state === 'blocked' || t.state === 'doing' || t.state === 'todo').length)
+  const needs = useBoard(needsCount)
 
   useEffect(() => {
     const name = projectRoot.replace(/[\\/]+$/, '').split(/[\\/]/).pop()
@@ -112,12 +114,15 @@ export default function App() {
                   <button className={`rtab${rpanelTab === 'tasks' ? ' on' : ''}`} onClick={() => showRpanel('tasks')} aria-pressed={rpanelTab === 'tasks'} title="The task ledger: what the Conductor planned, who is on it, what is blocked">
                     Tasks{openTasks > 0 && <span className="rtab-n">{openTasks}</span>}
                   </button>
+                  <button className={`rtab${rpanelTab === 'today' ? ' on' : ''}`} onClick={() => showRpanel('today')} aria-pressed={rpanelTab === 'today'} title="What waits on you, ranked, and what happened today">
+                    Today{needs > 0 && <span className="rtab-n needs">{needs}</span>}
+                  </button>
                 </h2>
                 <button className="ghost" onClick={toggleInspector} title="Close the panel" aria-label="Close panel">
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <div className="rpanel-body">{rpanelTab === 'tasks' ? <TasksPanel /> : <Inspector />}</div>
+              <div className="rpanel-body">{rpanelTab === 'tasks' ? <TasksPanel /> : rpanelTab === 'today' ? <TodayPanel /> : <Inspector />}</div>
             </aside>
           )}
         </div>

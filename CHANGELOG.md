@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Today tab.** The right panel has a third tab, *Today*, with a badge counting what waits on you. **Needs you** lists it in one ranked place: action-gate approvals (with *Deny* / *Approve once* inline), cards stopped on a permission prompt, cards held because the board file changed outside the app, decisions (a reply ending in `OWNER: DECIDE — …` that you have not looked at yet, a task blocked with *APPROVAL NEEDED*), failed turns (until you look at the card), then other blocked tasks; one question is listed once (a reply decision that is also a blocked task shows as the task), and sessions started outside the app are left out; each row says how long it has waited and opens its card (or the Tasks tab). Below it: the autonomous run (running since, until, dispatches, parked; or how today's last run ended, with *Open report*), reports handed over (`OWNER: REPORT — …`) not looked at yet, cards working now and since when, and tasks finished since midnight.
+
+### Verified
+- Unit tests for the ranking and the Today view (prefix stripped, a reply decision drops once the card is looked at or works again, blocked tasks link only to live cards, done since local midnight); built-app probe with a temp profile: empty state, a decision ranked above a blocked task, the badge count, done today, a task row opening the Tasks tab.
+
 ## [0.10.0] — 2026-10-26
 
 ### Added

@@ -58,7 +58,10 @@ describe('WSL launch', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'ouro-wsl-'))
     const p = prepareLaunch({ nodeId: 'n1', kind: 'claude', claude: {}, shell: 'powershell.exe', baseUrl: 'http://127.0.0.1:47821', token: 't', apiToken: 'a', mailToken: 'm', tmpDir: tmp, execPath: 'C:\\Ouroboros\\Ouroboros.exe', nodeBin: 'C:\\Program Files\\nodejs\\node.exe', mcpScriptPath: 'C:\\app\\mcp.js', wsl: { distro: 'Ubuntu', cwd: 'C:\\p' } })
     const settings = JSON.parse(readFileSync(p.settingsPath!, 'utf8'))
-    expect(settings.sandbox).toEqual({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false })
+    expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false })
+    // sandboxed commands: no interop, no Windows credentials, and not the files the owner's tools run later
+    expect(settings.sandbox.filesystem.denyRead).toEqual(expect.arrayContaining(['/run/WSL', '/mnt/c/Windows']))
+    expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining(['/mnt/c/p/.git/hooks', '/mnt/c/p/.ouroboros.json', '/mnt/c/p/.claude/settings.json']))
     expect(settings.statusLine.command).toMatch(/^curl -s/)
     const mcp = JSON.parse(readFileSync(p.mcpConfigPath!, 'utf8'))
     expect(mcp.mcpServers.ouroboros.command).toBe('/mnt/c/Program Files/nodejs/node.exe')
@@ -67,5 +70,14 @@ describe('WSL launch', () => {
   })
   it('points the gate at the Windows node through interop', () => {
     expect(buildGateCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\app\\agent-hook.js', 'http://127.0.0.1:1', 'n1', true)).toBe('"/mnt/c/Program Files/nodejs/node.exe" "C:/app/agent-hook.js" gate --url http://127.0.0.1:1 --node n1')
+  })
+})
+
+describe('wslSandboxSettings', () => {
+  it("denies the owner's Windows credentials by home path", async () => {
+    const { wslSandboxSettings } = await import('@shared/wsl')
+    const s = wslSandboxSettings('D:/work/repo', 'C:/Users/brian') as { sandbox: { filesystem: { denyRead: string[]; denyWrite: string[] } } }
+    expect(s.sandbox.filesystem.denyRead).toEqual(expect.arrayContaining(['/mnt/c/Users/brian/.ssh', '/mnt/c/Users/brian/.git-credentials', '/mnt/c/Users/brian/AppData/Roaming/GitHub CLI']))
+    expect(s.sandbox.filesystem.denyWrite[0]).toBe('/mnt/d/work/repo/.git/hooks')
   })
 })

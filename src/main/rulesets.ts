@@ -12,7 +12,7 @@ export type GhRunner = (args: string[], input?: string) => Promise<string>
 export const runGh: GhRunner = (args, input) =>
   new Promise((resolve, reject) => {
     const child = execFile('gh', args, { windowsHide: true, timeout: 20_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new Error(((stderr || '').trim() || err.message).split('\n')[0]))
+      if (err) reject(new Error((err as { killed?: boolean }).killed ? 'gh did not answer within 20 s' : ((stderr || '').trim() || err.message).split('\n')[0]))
       else resolve(stdout)
     })
     if (input !== undefined) child.stdin?.end(input)
@@ -52,7 +52,7 @@ export async function readProtection(projectRoot: string, gh: GhRunner = runGh):
     const sets = JSON.parse(await gh(['api', `repos/${slug}/rulesets?per_page=100`])) as { name?: string }[]
     return { ok: true, repo: slug, branch, private: repo.private === true, rules, ours: Array.isArray(sets) && sets.some((s) => s?.name === RULESET_NAME) }
   } catch (err) {
-    return { ok: false, error: plain(err) }
+    return { ok: false, error: err instanceof SyntaxError ? 'gh answered with something that is not JSON' : plain(err) }
   }
 }
 

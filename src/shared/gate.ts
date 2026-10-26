@@ -128,7 +128,7 @@ function strip(ws: string[]): string[] {
   return ws.slice(i)
 }
 
-const prog = (w: string | undefined): string => (w ?? '').replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase()
+const prog = (w: string | undefined): string => (w ?? '').replace(/^.*[\\/]/, '').replace(/\.(exe|cmd|bat)$/i, '').toLowerCase()
 
 /**
  * True when the shell would run or rewrite something the parser cannot see: `$` (variables, `$(…)`, `$'…'`),
@@ -303,6 +303,11 @@ export function classify(command: string): { actions: GateAction[]; segments: nu
     }
     // `supabase …` or `npx [-y] supabase …`: only `db reset` is decided here
     const sb = p === 'supabase' ? ws.slice(1) : p === 'npx' && prog(ws.find((w, i) => i > 0 && !w.startsWith('-'))) === 'supabase' ? ws.slice(ws.findIndex((w, i) => i > 0 && !w.startsWith('-')) + 1) : undefined
+    // any other way of running it (npx supabase@latest, pnpm dlx, bunx, npm exec, yarn …) cannot be checked: refused
+    if (!sb && ws.some((w) => /^supabase(@|$)/i.test(prog(w))) && ws.includes('db') && ws.includes('reset')) {
+      refuse('db-reset', 'supabase db reset is checked only as supabase db reset or npx supabase db reset during a run: run it that way')
+      continue
+    }
     if (sb) {
       if (sb[0] === 'db' && sb[1] === 'reset') {
         if (hasShellMagic(seg)) refuse('db-reset', 'a supabase db reset written with shell expansion, escapes or substitution cannot be checked during a run: write it plainly')

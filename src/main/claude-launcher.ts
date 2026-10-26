@@ -3,7 +3,8 @@ import { dirname, join } from 'node:path'
 import type { AgentEngine, ClaudeOptions } from '@shared/types'
 import { buildCodexLaunch, buildGeminiLaunch, buildGrokLaunch } from './agent-launcher'
 import { shellKind, type ShellKind } from './pty-manager'
-import { WSL_SANDBOX_SETTINGS, toWslPath } from '@shared/wsl'
+import { homedir } from 'node:os'
+import { toWslPath, wslSandboxSettings } from '@shared/wsl'
 
 const HOOK_EVENTS_WITH_MATCHER = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']
 const HOOK_EVENTS = [
@@ -269,7 +270,7 @@ export function prepareLaunch(params: {
   const wsl = params.wsl
   let settings = mergeSettings(buildHookSettings(params.baseUrl, params.nodeId), params.settingsExtra ?? {})
   if (wsl) {
-    settings = { ...settings, ...WSL_SANDBOX_SETTINGS }
+    settings = { ...settings, ...wslSandboxSettings(wsl.cwd, homedir()) }
     if (settings.statusLine) settings.statusLine = { type: 'command', command: buildStatusLineCommand(params.baseUrl, params.nodeId, 'linux') }
   }
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2))

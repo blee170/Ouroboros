@@ -85,6 +85,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   }
   const checkProtection = async (): Promise<void> => {
     setProtection(null)
+    setConfirmProtect(false)
     setProtection(await window.ouroboros.github.protection())
   }
   const protectMain = async (): Promise<void> => {
@@ -95,6 +96,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setMsg(r.ok ? (r.added ? `GitHub: ${r.repo} ${r.branch} is now protected.` : `GitHub: ${r.repo} ${r.branch} was already protected; nothing sent.`) : `GitHub: ${r.error}`)
   }
   const saveCardToken = async (): Promise<void> => {
+    if (cardToken && !cardToken.trim()) {
+      setCardToken('')
+      setMsg('Card token: nothing to save (the field held only spaces).')
+      return
+    }
     const r = await window.ouroboros.github.setCardToken(cardToken)
     setCardToken('')
     setCardTokenStatus(r)
@@ -372,7 +378,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
               {protection?.ok && !protectedFully(protection) && !confirmProtect && (
                 <button className="btn" onClick={() => setConfirmProtect(true)}>
-                  Protect…
+                  Protect {protection.repo}…
                 </button>
               )}
               {confirmProtect && (
@@ -392,7 +398,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 : protection.ok
                   ? `${protection.repo} · ${protection.branch}${protection.private ? ' (private)' : ''}: ${PROTECT_RULES.map((r) => `${protection.rules[r] ? '✓' : '✗'} ${r === 'pull_request' ? 'pull request required' : r === 'non_fast_forward' ? 'no force push' : 'no deletion'}`).join(' · ')}`
                   : protection.error}
-              {confirmProtect && ' Adds one ruleset, "Ouroboros · protect main", on the default branch: a pull request is required (0 approvals, so you can merge your own), force pushes and deletion are refused, and nobody bypasses it, you included: pushing straight to main stops working, merging a pull request does not. Change or remove it on GitHub under Settings → Rules.'}
+              {confirmProtect && ' Adds one ruleset, "Ouroboros · protect main", on the default branch: a pull request is required (0 approvals, so you can merge your own), force pushes and deletion are refused, and nobody bypasses it, you included: pushing straight to main stops working, merging a pull request does not. It does not stop a pull request being merged by anyone who can push, a card token included: during autonomous runs the action gate asks you before gh pr merge, but a merge through the API (curl) is not seen. Change or remove it on GitHub under Settings → Rules.'}
             </div>
           </label>
           <label className="field">
@@ -407,7 +413,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="hint">
-              A fine-grained token only for agent cards: make one on GitHub (Settings → Developer settings → Fine-grained tokens) for the repositories cards work in, with an expiry, Contents and Pull requests read and write, nothing else. With it saved, agent cards started from then on use it for gh and git push instead of your sign-in, so a card can push its branches and open pull requests and the ruleset above stops it at main. Stored encrypted. Your terminal cards keep your own sign-in.
+              A fine-grained token only for agent cards: make one on GitHub (Settings → Developer settings → Fine-grained tokens) for the repositories cards work in, with an expiry, Contents and Pull requests read and write, nothing else. With it saved, agent cards started from then on use it for gh and git push instead of your sign-in, so a card can push its branches and open pull requests and the ruleset above stops it at main. Stored encrypted. Your terminal cards keep your own sign-in, and without a saved token agent cards use it too. Only https remotes use the token: a git@github.com remote pushes with your SSH key.
             </div>
           </label>
         </section>

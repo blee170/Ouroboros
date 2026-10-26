@@ -56,13 +56,13 @@ export interface ProtectionView {
   repo: string
   branch: string
   private: boolean
-  /** each recommended rule: active on the default branch (from any ruleset or classic protection) */
+  /** each recommended rule: active on the default branch through a ruleset (classic branch protection is not read) */
   rules: Record<ProtectRule, boolean>
   /** a ruleset by this app's name already exists (it may be disabled or changed by hand) */
   ours: boolean
 }
 
-/** Pure: which recommended rules the active branch rules cover (GET /repos/{o}/{r}/rules/branches/{branch}). */
+/** Pure: which recommended rules the branch's active ruleset rules cover (GET /repos/{o}/{r}/rules/branches/{branch}; rulesets only). */
 export function activeRules(list: unknown): Record<ProtectRule, boolean> {
   const types = new Set(Array.isArray(list) ? list.map((r) => (r && typeof r === 'object' ? (r as { type?: unknown }).type : undefined)).filter((t): t is string => typeof t === 'string') : [])
   return { pull_request: types.has('pull_request'), non_fast_forward: types.has('non_fast_forward'), deletion: types.has('deletion') }

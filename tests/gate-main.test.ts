@@ -112,7 +112,7 @@ describe('run settings with the gate', () => {
     const gated = autonomySettingsFragment('"node" "hook.js" gate --url http://127.0.0.1:1 --node w1')
     for (const r of ['Bash(git push*)', 'PowerShell(git push*)', 'Bash(git * push*)', 'Bash(gh pr merge*)', 'Bash(gh * pr merge*)']) expect(gated.permissions.deny).not.toContain(r)
     expect(gated.permissions.deny).toContain('Bash(git merge*)')
-    expect(gated.permissions.deny.length).toBe(WORKER_DENY_RULES.length - 12 + 30)
+    expect(gated.permissions.deny.length).toBe(WORKER_DENY_RULES.length - 16 + 38)
     // the backstop: what the gate always refuses stays denied in case the hook cannot run
     for (const r of ['Bash(git push --force*)', 'PowerShell(git push origin main*)', 'Bash(git push origin :*)', 'Bash(git send-pack*)']) expect(gated.permissions.deny).toContain(r)
     expect(gated.hooks?.PreToolUse).toEqual([{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: '"node" "hook.js" gate --url http://127.0.0.1:1 --node w1', timeout: 15 }] }])

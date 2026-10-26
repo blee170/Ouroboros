@@ -144,3 +144,13 @@ describe('supabase db reset (Type 1 (f): local stack only)', () => {
     expect(mayBeGated('npx supabase db reset')).toBe(true)
   })
 })
+
+describe('supabase db reset through shims and other runners', () => {
+  it('reads .cmd shims and refuses runners it cannot check', () => {
+    expect(decide('supabase.cmd db reset').decision).toBe('auto')
+    expect(decide('supabase.cmd db reset --linked').decision).toBe('never')
+    expect(decide('npx.cmd supabase db reset --db-url x').decision).toBe('never')
+    for (const bad of ['npx supabase@latest db reset --linked', 'pnpm dlx supabase db reset', 'bunx supabase db reset --linked', 'npm exec supabase -- db reset', 'yarn supabase db reset'])
+      expect(decide(bad).decision, bad).toBe('never')
+  })
+})

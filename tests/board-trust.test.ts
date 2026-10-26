@@ -141,3 +141,10 @@ describe('BoardTrust with the board file', () => {
     expect(open(true, new BoardTrust(recFile()))).toEqual(['b'])
   })
 })
+
+describe('the WSL switch', () => {
+  it('is a privilege field: turning the sandbox off outside the app holds the card', () => {
+    expect(privilegeView({ kind: 'claude', claude: { wsl: true } })['claude.wsl']).toBe('true')
+    expect(privilegeView({ kind: 'claude', claude: {} })['claude.wsl'] ?? null).toBeNull()
+  })
+})

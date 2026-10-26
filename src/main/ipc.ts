@@ -1852,7 +1852,7 @@ export function registerIpc(ctx: MainContext): void {
     return r
   })
   ipcMain.handle(IPC.githubSetCardToken, (_e, token: string) => {
-    const enc = encryptToken(String(token ?? '').replace(/s+/g, ''))
+    const enc = encryptToken(String(token ?? '').replace(/\s+/g, ''))
     ctx.store.setSettings({ cardGithubTokenEnc: enc || undefined })
     return { hasToken: Boolean(enc) }
   })

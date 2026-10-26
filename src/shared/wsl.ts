@@ -69,6 +69,20 @@ export function readPreflight(distro: string | undefined, out: string | undefine
 export const WSL_SANDBOX_SETTINGS = { sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false } } as const
 
 /**
+ * Pure: the WSL card's sandbox settings with paths. Sandboxed commands may not read Windows' own programs or the WSL
+ * interop socket (a cmd.exe started from Linux runs as the owner, outside the sandbox), nor the owner's credentials
+ * under the Windows home; and may not write the files the owner's own tools run later outside the sandbox (git hooks,
+ * Claude settings, the board file). Claude itself, its hooks and its MCP servers are not sandboxed and still use interop.
+ */
+export function wslSandboxSettings(cwd: string, winHome: string): Record<string, unknown> {
+  const home = toWslPath(winHome)
+  const dir = toWslPath(cwd)
+  const denyRead = ['/run/WSL', '/mnt/c/Windows', ...(home ? ['.ssh', '.git-credentials', '.config/gh', 'AppData/Roaming/GitHub CLI', '.aws', '.azure', '.docker', '.claude', 'AppData/Roaming/Ouroboros'].map((p) => `${home}/${p}`) : [])]
+  const denyWrite = dir ? ['.git/hooks', '.git/config', '.claude/settings.json', '.claude/settings.local.json', '.mcp.json', '.ouroboros.json'].map((p) => `${dir}/${p}`) : []
+  return { sandbox: { ...WSL_SANDBOX_SETTINGS.sandbox, filesystem: { denyRead, denyWrite } } }
+}
+
+/**
  * Pure: WSLENV for the card. Windows passes only the variables WSLENV names into Linux, and Linux passes only those
  * on to the Windows programs it starts (the MCP server, the gate helper), so every name the card and those helpers need
  * is listed; nothing else of the owner's environment crosses.

@@ -37,7 +37,7 @@ import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
 import { cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
-import { aiTitleOf, stepOf } from '@shared/doing'
+import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -741,6 +741,31 @@ function notifyDecision(s: WindowSession, d: Decision): void {
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
 }
 
+const ASK_TOOL = 'mcp__ouroboros__ask_owner'
+/** answers handed to a waiting ask_owner call, per card, until its PostToolUse shows the card got the result */
+const handedAnswers = new Map<string, NodeJS.Timeout>()
+const HANDED_TAKE_MS = 10_000
+
+/**
+ * A call the owner interrupted (Esc) still waits in the board MCP server, which Claude Code does not tell, so an
+ * answer handed to it can reach nobody. When the card's PostToolUse for ask_owner does not follow, the answer goes
+ * again as a board message.
+ */
+function watchHandedAnswer(s: WindowSession, d: Decision): void {
+  // only Claude cards report PostToolUse; the others would get every answer twice
+  if ((s.board.nodes.get(d.card)?.data.engine ?? 'claude') !== 'claude') return
+  clearTimeout(handedAnswers.get(d.card))
+  handedAnswers.set(
+    d.card,
+    setTimeout(() => {
+      handedAnswers.delete(d.card)
+      if (!s.board.nodes.has(d.card)) return
+      log(`decision: ${d.card} did not take the answer to ${d.id} (its call was interrupted); sent as a board message`)
+      s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
+    }, HANDED_TAKE_MS)
+  )
+}
+
 /** The owner's answer to a card's question: back as the waiting tool call's result, else as a board message from the owner. */
 function answerDecision(s: WindowSession, id: string, answer: unknown, note: unknown, by: string): { ok: boolean; error?: string; warning?: string } {
   if (typeof answer !== 'string' || (note !== undefined && typeof note !== 'string')) return { ok: false, error: 'bad answer' }
@@ -748,7 +773,10 @@ function answerDecision(s: WindowSession, id: string, answer: unknown, note: unk
   if (!r.ok) return r
   const d = r.decision
   s.autonomy.noteDecision(d.card, d.title, `answered (${d.id}) by ${by}: ${d.answer}${d.note ? ` — ${d.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`)
-  if (r.waited) return { ok: true }
+  if (r.waited) {
+    watchHandedAnswer(s, d)
+    return { ok: true }
+  }
   const m = s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
   return m.ok ? { ok: true } : { ok: true, warning: `answered, but the card was not told: ${m.error}` }
 }
@@ -1501,6 +1529,10 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   if (!s) return
   noteActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
+  if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
+    clearTimeout(handedAnswers.get(nodeId))
+    handedAnswers.delete(nodeId)
+  }
   const reply = mailReply(s, nodeId, event)
   // a Stop that mail turned into another round is not the end of the turn: no "done", no handoff, no report
   if (reply?.decision === 'block') {
@@ -1735,6 +1767,40 @@ export function routeExternalHook(ctx: MainContext, event: HookEvent): void {
   target?.board.applyExternalHook(event)
 }
 
+/** working Claude cards the owner just pressed Esc (or Ctrl+C) in, with their output since */
+const interruptWatch = new Map<string, { until: number; out: string }>()
+const INTERRUPT_WATCH_MS = 5000
+
+function watchInterrupt(ctx: MainContext, nodeId: string): void {
+  const n = ctx.windows.forNode(nodeId)?.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude' || n.data.status !== 'working') return
+  // a second press keeps what the first one's watch already saw
+  interruptWatch.set(nodeId, { until: Date.now() + INTERRUPT_WATCH_MS, out: interruptWatch.get(nodeId)?.out ?? '' })
+}
+
+/**
+ * Claude Code runs no hook when a turn is interrupted: without this the card would show working until its next
+ * prompt, and mail would wait for a turn end that never comes. Its interrupt line, seen within a few seconds of the
+ * key, ends the turn on the board.
+ */
+function checkInterrupt(s: WindowSession, nodeId: string, data: string): void {
+  const w = interruptWatch.get(nodeId)
+  if (!w) return
+  if (Date.now() > w.until) return void interruptWatch.delete(nodeId)
+  w.out = (w.out + data).slice(-4000)
+  if (!showsInterrupt(w.out)) return
+  interruptWatch.delete(nodeId)
+  const n = s.board.nodes.get(nodeId)
+  if (!n || n.data.status !== 'working') return
+  if (n.data.doing) {
+    n.data.doing = undefined
+    sendToRenderer(s, IPC.boardActivity, { nodeId, doing: null })
+  }
+  log(`interrupt: ${nodeId} turn interrupted by the owner`)
+  s.board.endRoleTurn(nodeId)
+  s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'interrupted' })
+}
+
 const HELD_ERROR = 'held: the board file was changed outside Ouroboros. Review the change in the banner above the board.'
 
 /** Process-wide IPC handlers; each one resolves the calling window's session from the sender. */
@@ -1748,6 +1814,7 @@ export function registerIpc(ctx: MainContext): void {
     const board = s.board
     board.appendOutput(nodeId, data)
     if (mailBlockWatch.has(nodeId)) mailBlockActivity.set(nodeId, Date.now())
+    checkInterrupt(s, nodeId, data)
     sendToRenderer(s, IPC.ptyData, { nodeId, data })
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
@@ -1813,7 +1880,10 @@ export function registerIpc(ctx: MainContext): void {
     const s = sessionOf(e)
     if (s) s.selectedNodeId = typeof nodeId === 'string' ? nodeId : null
   })
-  ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => void ptys.write(nodeId, data))
+  ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => {
+    if (typeof data === 'string' && isInterruptKey(data)) watchInterrupt(ctx, nodeId)
+    void ptys.write(nodeId, data)
+  })
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
   ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
     ptys.kill(nodeId)

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { aiTitleOf, cleanLine, shownDetail, stepOf } from '../src/shared/doing'
+import { aiTitleOf, cleanLine, isInterruptKey, showsInterrupt, shownDetail, stepOf } from '../src/shared/doing'
 import { transcriptPath } from '../src/main/claude-history'
 import type { HookEvent } from '../src/shared/types'
 
@@ -63,5 +63,18 @@ describe('transcriptPath', () => {
     for (const bad of [join(config, 'projects', '..', 'settings.jsonl'), join(config, 'projects', 'C--repo', 'abc.json'), join(tmpdir(), 'other', 'abc.jsonl'), 'projects/abc.jsonl', join(config, 'projects'), 7, undefined]) {
       expect(transcriptPath(bad, config)).toBeUndefined()
     }
+  })
+})
+
+describe('interrupts', () => {
+  it('takes Esc or Ctrl+C on its own as the interrupt key', () => {
+    expect(isInterruptKey('\x1b')).toBe(true)
+    expect(isInterruptKey('\x03')).toBe(true)
+    for (const k of ['\x1b[A', 'q', '\x1b\x1b', '\r']) expect(isInterruptKey(k)).toBe(false)
+  })
+  it("sees Claude Code's interrupt line through cursor moves and colour codes", () => {
+    expect(showsInterrupt('  \x1b[2m⎿\x1b[22m  \x1b[31mInterrupted\x1b[39m\x1b[1C·\x1b[1CWhat\x1b[1Cshould Claude do instead?')).toBe(true)
+    expect(showsInterrupt('⎿  Interrupted by user')).toBe(true)
+    expect(showsInterrupt('Inter') || showsInterrupt('The build was not interrupted')).toBe(false)
   })
 })

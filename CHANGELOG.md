@@ -4,6 +4,16 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Esc during a card's question.** Pressing Esc (or Ctrl+C) while a Claude card waited on `ask_owner` left the call waiting in the board's MCP server, which Claude Code does not tell, so an answer you gave in the next 45 seconds went nowhere. When the card does not take an answer within 10 seconds, it now gets it again as a board message from you.
+- **A card you interrupted stayed "working".** Claude Code runs no hook when a turn is interrupted, so the card showed working until its next prompt and board mail waited for a turn end that never came. The card now goes idle ("interrupted") when its interrupt line shows within 5 seconds of the key, and mail wakes it as usual.
+
+### Verified
+- Live, with a real Claude Code 2.1.310 card on this machine (built app, temporary profile and project): an idle card woken by an owner message through its inbox, nothing typed into its terminal; `ask_owner` answered within the wait (the call returned the answer and note) and after it (the call returned `pending`, the late answer arrived as a message and woke the card); Esc during the wait, then an answer (the card went idle and got the answer by message); a message to a working card used in its reply. `~/.claude/settings.json` unchanged before and after. Unit tests for the interrupt key and line.
+- **Not verified live**: Codex and Gemini cards calling `ask_owner`; the inbox on macOS and Linux.
+
 ## [0.13.0] — 2026-10-26
 
 ### Added

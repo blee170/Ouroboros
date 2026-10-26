@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Changed
+- **Settings is a section list instead of one long scroll.** The dialog is wider, with the sections listed on the left in four groups (General: Engines, Window & sessions, Announcements · Voice & phone: Voice input, Phone · Integrations: GitHub, Notion, Obsidian, Grok Bot · Advanced: WSL2 cards, Updates, About) and one section shown at a time. A search box above the list keeps only the sections whose text, hints or placeholders contain what you type and shows them together; Esc clears the search first, then closes. The status line ("Token saved", "Notion: found database…") and Close now stay at the bottom whatever section is open. Reopening Settings returns to the section used last. Every setting and what it does is unchanged, and a half-typed key survives switching sections.
+
+### Verified (settings)
+- Typecheck, build and the vitest suite; built-app probe (temporary profile) at 1480×920 and 900×600: each of the 12 sections opens alone, the dialog and its footer stay on screen, no field label or section name wraps or is cut, no sideways scroll; search for "token" lists Window & sessions, GitHub, Notion and Updates, a placeholder ("ntn_") finds Notion, no match says so; Esc clears then closes; reopening lands on the last section.
+
 ## [0.14.0] — 2026-10-26
 
 ### Added

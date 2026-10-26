@@ -852,13 +852,22 @@ export function createPhone(ctx: MainContext): PhoneServer {
           last: (n.data.lastAssistantMessage ?? '').slice(-PHONE_LIMITS.replyChars),
           permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission'),
           promptAt: n.data.lastEventAt,
-          promptable: n.data.status !== 'needs-you' && ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id)
+          promptable: n.data.status !== 'needs-you' && ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id),
+          // where it sits on the canvas, for the phone's map
+          x: n.pos?.x,
+          y: n.pos?.y
         }))
         .sort((a, b) => rank(a.status) - rank(b.status) || Number(b.conductor) - Number(a.conductor))
       // every window's requests, each id scoped to its window (each window counts A1, A2 … on its own)
       const approvals = ctx.windows.all().flatMap((w) => w.gate.pending().map((a) => ({ id: `${w.id}-${a.id}`, title: a.title, command: a.command, createdAt: a.createdAt, project: basename(w.board.projectRoot || '') })))
       const decisions = ctx.windows.all().flatMap((w) => w.decisions.pending().map((d) => ({ id: `${w.id}-${d.id}`, title: d.title, question: d.question, answers: answersOf(d), createdAt: d.createdAt, project: basename(w.board.projectRoot || '') })))
-      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, approvals, decisions }
+      // how the agent cards are connected: handoff lines, and the card that dispatched each one
+      const shown = new Set(cards.map((c) => c.id))
+      const edges = [
+        ...s.board.edges.filter((e) => shown.has(e.source) && shown.has(e.target)).map((e) => ({ from: e.source, to: e.target, kind: 'handoff', firedAt: e.data.lastFiredAt })),
+        ...[...s.board.nodes.values()].filter((n) => n.data.parentId && shown.has(n.id) && shown.has(n.data.parentId)).map((n) => ({ from: n.data.parentId as string, to: n.id, kind: 'dispatch' }))
+      ]
+      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, edges, approvals, decisions }
     },
     prompt: (id, text) => {
       const s = ctx.windows.forNode(id)

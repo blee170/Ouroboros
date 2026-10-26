@@ -6,8 +6,33 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Changed
+- **The phone page looks like an app now.** It uses the desktop's greys with frosted-glass panels, the real Ouroboros logo in the header, on the pairing screen and as the home-screen icon, a floating tab bar (Board · Inbox · Report) with a badge for what waits on you, and bottom sheets for cards and confirmations.
+- **Board has three views, and the phone remembers your pick:**
+  - **List:** cards grouped Needs you / Working / Idle.
+  - **Graph:** the canvas layout, turned to fit a tall screen.
+  - **Orbit:** a turning globe of the cards, the Conductor facing you, with a status bar.
+- **Graph and Orbit details:**
+  - Cards are dots: grey when idle, the status colour when working or waiting on you.
+  - Zoom in (pinch, wheel or +, up to 5×) and the dots become lit spheres with their names.
+  - Lines show handoffs and dispatches. A working line carries moving lights, and a handoff fired in the last minute glows.
+  - In Orbit, tap a dot to see its name, status and links; tap it again to open the card.
+- The phone's board data now includes each card's canvas position and the links between cards (handoff edges and Conductor dispatches, only between cards the phone already sees).
+
 ### Fixed
+- **Phone page:**
+  - A board change that arrived while you were typing a note, or touching the map, was never drawn until the board changed again.
+  - The Orbit view could spin faster each time the phone came back from the background.
+  - A mouse drag released outside the map froze the board.
 - **Notion said 404 for a database id copied from its data source.** Notion's *Copy link to data source* (`collection://…`) gives the id of the table inside a database, not of the database, and Test, reports, task sync, release notes and *Add views* asked Notion for a database by that id and got "could not find it". Settings → Notion now takes either: when there is no database by that id, it is read as a data source, rows go into it, and views are added on the database it belongs to. An id that is neither still says to share the database with the integration.
+
+### Verified (phone page)
+- The real page assets were served with the production CSP from a local preview server with a fake board, at 375×812.
+  - Checked: List, Graph and Orbit, zoom, tap-to-pick then tap-to-open in Orbit, the card sheet, Inbox.
+  - No console errors.
+- Typecheck, build, and the vitest suite pass.
+- An adversarial review (security + failure hunt) was run.
+- **Not verified** on a real phone over Tailscale.
 
 ### Verified (Notion ids)
 - Unit tests: a data source id passes Test and takes a report, views are listed on its database, an unknown id keeps the 404 advice. **Not verified live** with the owner's integration (its sharing is unknown).

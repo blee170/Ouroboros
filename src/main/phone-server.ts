@@ -5,6 +5,7 @@ import { dirname } from 'node:path'
 import { networkInterfaces } from 'node:os'
 import { ANSWER_KEYS, FailureLimiter, PHONE_LIMITS, bindRefusal, cleanDeviceName, pairingUrl, sourceAllowed, type PhoneDevice, type PhoneSettingsView } from '@shared/phone'
 import { PHONE_CSS, PHONE_HTML, PHONE_JS, PHONE_MANIFEST } from './phone-page'
+import { PHONE_ICON_PNG } from './phone-icon'
 
 /** What the phone sees and may do; injected so the server runs without Electron in tests. */
 export interface PhoneHandlers {
@@ -230,6 +231,7 @@ export class PhoneServer {
     if (method === 'GET' && (path === '/m' || path === '/m/')) return this.asset(res, 'text/html; charset=utf-8', PHONE_HTML)
     if (method === 'GET' && path === '/m/app.js') return this.asset(res, 'text/javascript; charset=utf-8', PHONE_JS)
     if (method === 'GET' && path === '/m/app.css') return this.asset(res, 'text/css; charset=utf-8', PHONE_CSS)
+    if (method === 'GET' && path === '/m/icon.png') return this.asset(res, 'image/png', PHONE_ICON_PNG)
     if (method === 'GET' && path === '/m/manifest.json') return this.asset(res, 'application/manifest+json', PHONE_MANIFEST)
     if (!path.startsWith('/m/api/')) return void res.writeHead(404).end()
     if (this.failures.blocked(ip)) return json(res, 429, { error: 'too many failed attempts; wait a minute' })
@@ -307,7 +309,7 @@ export class PhoneServer {
     return json(res, 404, { error: 'not found' })
   }
 
-  private asset(res: http.ServerResponse, type: string, body: string): void {
+  private asset(res: http.ServerResponse, type: string, body: string | Buffer): void {
     res.writeHead(200, { 'content-type': type, 'content-security-policy': CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' }).end(body)
   }
 }

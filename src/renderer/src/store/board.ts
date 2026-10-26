@@ -164,7 +164,7 @@ function scheduleSync(get: () => BoardState): void {
     const s = get()
     api().board.sync({
       projectRoot: s.projectRoot,
-      nodes: s.nodes.filter((n) => n.data.kind !== 'external').map((n) => ({ id: n.id, data: n.data })),
+      nodes: s.nodes.filter((n) => n.data.kind !== 'external').map((n) => ({ id: n.id, data: n.data, pos: { x: Math.round(n.position.x + (n.width ?? n.measured?.width ?? 0) / 2), y: Math.round(n.position.y + (n.height ?? n.measured?.height ?? 0) / 2) } })),
       edges: s.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { mode: e.data?.mode ?? 'auto', template: e.data?.template ?? DEFAULT_HANDOFF_TEMPLATE, condition: e.data?.condition, lastFiredAt: e.data?.lastFiredAt } }))
     })
   }, 150)

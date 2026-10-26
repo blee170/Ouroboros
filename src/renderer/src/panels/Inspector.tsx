@@ -286,6 +286,11 @@ export function Inspector() {
               <input type="checkbox" checked={Boolean(claude.boardTools)} onChange={(e) => setClaude({ boardTools: e.target.checked })} /> Board & browser tools (ouroboros MCP: list_agents, send_prompt, browser_*)
             </label>
           )}
+          {(d.engine ?? 'claude') === 'claude' && (
+            <label className="check" title="Starts claude inside WSL2 with Claude Code's sandbox on (native Windows has none). Settings → WSL2 checks what the distro needs. Applies on the next launch.">
+              <input type="checkbox" checked={Boolean(claude.wsl)} onChange={(e) => setClaude({ wsl: e.target.checked || undefined })} /> Run in WSL2 with the sandbox (experimental)
+            </label>
+          )}
           <label className="field">
             <span>Resume session</span>
             <div className="ctl">

@@ -11,6 +11,7 @@ import type { Approval } from './gate'
 import type { GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { ProtectionView } from './rulesets'
+import type { WslCheck } from './wsl'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -59,6 +60,7 @@ export const IPC = {
   githubProtect: 'github:protect',
   githubSetCardToken: 'github:setCardToken',
   githubCardTokenStatus: 'github:cardTokenStatus',
+  wslCheck: 'wsl:check',
   phoneStatus: 'phone:status',
   phoneInterfaces: 'phone:interfaces',
   phoneConfigure: 'phone:configure',
@@ -526,6 +528,10 @@ export interface OuroborosApi {
     setCardToken(token: string): Promise<GitHubCardTokenStatus>
     /** Whether a card token is saved and, when asked to check, whose it is and when it expires. */
     cardTokenStatus(check?: boolean): Promise<GitHubCardTokenStatus>
+  }
+  wsl: {
+    /** Whether WSL cards can run here: the distro, what is missing (with what to do) and small notes. */
+    check(): Promise<WslCheck>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

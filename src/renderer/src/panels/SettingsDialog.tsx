@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
 import type { AppInfo, GitHubCardTokenStatus, GitHubProtectionResult, UpdateStatus } from '@shared/protocol'
+import type { WslCheck } from '@shared/wsl'
 import { PROTECT_RULES, protectedFully } from '@shared/rulesets'
 import { EnginesPanel } from './EnginesPanel'
 import { PhoneSettings } from './PhoneSettings'
@@ -37,6 +38,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [confirmProtect, setConfirmProtect] = useState(false)
   const [cardToken, setCardToken] = useState('')
   const [cardTokenStatus, setCardTokenStatus] = useState<GitHubCardTokenStatus>({ hasToken: false })
+  const [wslCheck, setWslCheck] = useState<WslCheck | 'checking' | null>(null)
   useEscape(onClose)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
@@ -103,6 +105,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     const r = await window.ouroboros.github.cardTokenStatus(true)
     setCardTokenStatus(r)
     setMsg(r.error ? `Card token: ${r.error}` : `Card token: belongs to ${r.login}${r.expiresAt ? `, expires ${r.expiresAt}` : ', no expiry'}.`)
+  }
+  const checkWsl = async (): Promise<void> => {
+    setWslCheck('checking')
+    setWslCheck(await window.ouroboros.wsl.check())
   }
   const testGrokBot = async (): Promise<void> => {
     setMsg('Asking Grok Bot…')
@@ -403,6 +409,30 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <div className="hint">
               A fine-grained token only for agent cards: make one on GitHub (Settings → Developer settings → Fine-grained tokens) for the repositories cards work in, with an expiry, Contents and Pull requests read and write, nothing else. With it saved, agent cards started from then on use it for gh and git push instead of your sign-in, so a card can push its branches and open pull requests and the ruleset above stops it at main. Stored encrypted. Your terminal cards keep your own sign-in.
             </div>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h4>WSL2 cards (experimental)</h4>
+          <div className="hint">
+            A Claude card with <em>Run in WSL2 with the sandbox</em> ticked (Inspector) starts claude inside a Linux distribution with Claude Code's sandbox on: its shell commands can write only in the card's folder and reach only the network you allow. Native Windows has no such sandbox. The card's folder is reached through /mnt/c, which is slower than a Linux folder.
+          </div>
+          <label className="field">
+            <span>Distribution</span>
+            <div className="ctl">
+              <input className="text" placeholder="first one found (not Docker Desktop's)" defaultValue={settings.wslDistro ?? ''} onBlur={(e) => void setSettings({ wslDistro: e.target.value.trim() || undefined })} />
+              <button className="btn" disabled={wslCheck === 'checking'} onClick={() => void checkWsl()}>
+                {wslCheck === 'checking' ? 'Checking…' : 'Check'}
+              </button>
+            </div>
+            {wslCheck && wslCheck !== 'checking' && (
+              <div className="hint">
+                {wslCheck.ok ? `${wslCheck.distro}: ready for WSL cards.` : `${wslCheck.distro ? `${wslCheck.distro}: ` : ''}not ready yet.`}
+                {[...wslCheck.missing, ...wslCheck.notes].map((m) => (
+                  <div key={m}>• {m}</div>
+                ))}
+              </div>
+            )}
           </label>
         </section>
 

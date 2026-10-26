@@ -17,6 +17,8 @@ import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
 import { applyProtection, checkCardToken, readProtection } from './rulesets'
+import { wslPreflight } from './wsl'
+import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
 import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
@@ -804,11 +806,16 @@ ${a.command}`
 }
 
 /** The gate hook command for a card, or undefined (the run then keeps pushes and merges denied) when node or the helper is missing. */
-function gateCommandFor(baseUrl: string, nodeId: string): string | undefined {
+function gateCommandFor(baseUrl: string, nodeId: string, wsl = false): string | undefined {
   const node = findNodeBinary()
   const script = resolveHookScriptPath()
   if (!node || !existsSync(node) || !existsSync(script)) return undefined
-  return buildGateCommand(node, script, baseUrl, nodeId)
+  return buildGateCommand(node, script, baseUrl, nodeId, wsl)
+}
+
+/** The hook server's port, for the WSL probe. */
+function portOf(baseUrl: string): number {
+  return Number(new URL(baseUrl).port) || 80
 }
 
 /** A card's shell command that may push or touch a PR, from its PreToolUse gate helper. */
@@ -1634,6 +1641,15 @@ export function registerIpc(ctx: MainContext): void {
       const engine = opts.engine ?? 'claude'
       // during an autonomous run only Claude (deny rules, gate) and Codex (its sandbox, forced below) launch: 'auto' would mean yolo elsewhere
       if (s.autonomy.on && !engineJoinsRun(engine)) return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
+      // a WSL card (experimental): Claude only, and only once the distro can run it sandboxed and reach the app
+      let wsl: { distro: string; cwd: string } | undefined
+      if (opts.claude.wsl) {
+        if (engine !== 'claude') return { ok: false, error: `Run in WSL2 is for Claude cards only (this card runs ${engine}).` }
+        const check = await wslPreflight(store.getSettings().wslDistro, portOf(hookServer.baseUrl))
+        if (!check.ok || !check.distro) return { ok: false, error: `WSL2 card not started. Missing: ${check.missing.join(' ')}` }
+        for (const n of check.notes) log(`wsl launch ${opts.nodeId}: ${n}`)
+        wsl = { distro: check.distro, cwd: opts.cwd }
+      }
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -1651,8 +1667,9 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId)),
-        autonomous: s.autonomy.on
+        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))),
+        autonomous: s.autonomy.on,
+        wsl
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
@@ -1675,6 +1692,8 @@ export function registerIpc(ctx: MainContext): void {
         for (let i = omitEnv.length - 1; i >= 0; i--) if (ours.has(omitEnv[i])) omitEnv.splice(i, 1)
         omitEnv.push(...gh.omit)
       }
+      // only what WSLENV names crosses into Linux (and from there into the Windows helpers): the card's own variables
+      if (wsl) launchEnv.WSLENV = wslEnvNames([...Object.keys(launchEnv), ...WSL_HELPER_ENV], process.env.WSLENV)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: launchEnv, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
@@ -1845,6 +1864,7 @@ export function registerIpc(ctx: MainContext): void {
     const r = await checkCardToken(token)
     return r.ok ? { hasToken: true, login: r.login, expiresAt: r.expiresAt } : { hasToken: true, error: r.error }
   })
+  ipcMain.handle(IPC.wslCheck, () => wslPreflight(ctx.store.getSettings().wslDistro, portOf(hookServer.baseUrl)))
   ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
   ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())
   ipcMain.handle(IPC.phoneConfigure, async (_e, view: PhoneSettingsView) => {

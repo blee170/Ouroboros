@@ -157,6 +157,9 @@ const api: OuroborosApi = {
     setCardToken: (token) => ipcRenderer.invoke(IPC.githubSetCardToken, token),
     cardTokenStatus: (check) => ipcRenderer.invoke(IPC.githubCardTokenStatus, check === true)
   },
+  wsl: {
+    check: () => ipcRenderer.invoke(IPC.wslCheck)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

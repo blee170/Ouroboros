@@ -283,10 +283,12 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .task-reason.warn { color: var(--warn); }
 .rtab-n.needs { background: var(--needs); }
 .today-kind { flex: none; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 5px; border-radius: 4px; line-height: 16px; color: var(--muted); background: var(--panel-2); }
-.today-kind.k-approval, .today-kind.k-permission, .today-kind.k-decision { color: var(--bg); background: var(--needs); }
+.today-kind.k-approval, .today-kind.k-handoff, .today-kind.k-permission, .today-kind.k-decision { color: var(--bg); background: var(--needs); }
 .today-kind.k-held, .today-kind.k-failed { color: var(--bg); background: var(--danger); }
 .today-ago { flex: none; white-space: nowrap; }
 .today-actions { padding: 0 2px 4px; gap: 6px; }
+.today-handoff { display: flex; flex-direction: column; gap: 4px; margin: 2px 2px 6px; padding: 6px 8px; background: var(--panel-2); border-radius: var(--r-sm); }
+.today-handoff pre { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 11px; background: var(--bg); padding: 4px 6px; border-radius: 4px; }
 .task-details { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 6px 26px; }
 .task-details label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
 .task-details textarea.text { width: 100%; font-size: 12px; resize: vertical; }

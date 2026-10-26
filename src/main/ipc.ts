@@ -15,6 +15,8 @@ import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/stat
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
+import { sendToGrokBot } from './grokbot'
+import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
@@ -94,6 +96,8 @@ export interface WindowSession {
   mail: Mailbox
   /** Autonomous runs: the action gate's decisions, the owner's approvals and the audit log. */
   gate: GateKeeper
+  /** Tasks cards asked to hand to Grok Bot (the last 50): each waits for the owner to send or discard it. */
+  grokBot: GrokHandoff[]
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
   hasNode(nodeId: string): boolean
   /** The card selected on the canvas, as the renderer reports it: no toast or voice for the card the owner is looking at. */
@@ -294,6 +298,32 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
+    grokBotHandoff: (self, input) => {
+      const n = board.nodes.get(self)
+      if (!n) return { ok: false, error: 'unknown card' }
+      // the agent cards that have the tool, and that board mail can tell the outcome to
+      if (n.data.kind !== 'claude' && n.data.kind !== 'conductor') return { ok: false, error: 'only agent cards can hand tasks to Grok Bot' }
+      const last = s.grokBot.at(-1)
+      const r = newHandoff({ card: self, title: n.data.title, task: input.task, context: input.context }, s.grokBot, `G${last ? Number(last.id.slice(1)) + 1 : 1}`, Date.now())
+      if (!r.ok) return r
+      s.grokBot = [...s.grokBot.slice(-49), r.handoff]
+      grokBotChanged(s)
+      log(`[grok-bot] ${r.handoff.id} from ${n.data.title} waits for the owner`)
+      // one notification per card a minute: a card that keeps asking is listed, not shouted
+      const now = Date.now()
+      if (Notification.isSupported() && now - (grokNotified.get(self) ?? 0) >= 60_000) {
+        grokNotified.set(self, now)
+        const note = new Notification({ title: `${n.data.title} wants to hand a task to Grok Bot`, body: `${r.handoff.task.split('\n')[0].slice(0, 140)} — Send or Discard in the Today tab` })
+        note.on('click', () => {
+          if (!s.win.isDestroyed()) {
+            s.win.show()
+            s.win.focus()
+          }
+        })
+        note.show()
+      }
+      return { ok: true, id: r.handoff.id, note: 'The owner was asked to send it; nothing has left this machine yet. You will get a board message when they decide. Carry on with other work.' }
+    },
     setNote: (nodeId, note) => {
       const n = board.nodes.get(nodeId)
       if (!n || n.data.kind !== 'note') return false
@@ -704,6 +734,60 @@ function phoneInterfaces(): Array<{ name: string; address: string; kind: 'tailsc
 }
 
 /** The owner's answer to a gate request (status bar or phone): decided, logged, and the card told by board mail. */
+function grokBotChanged(s: WindowSession): void {
+  sendToRenderer(s, IPC.grokBotChanged, s.grokBot)
+}
+
+/** sends in flight, by window and handoff id: a double click sends once */
+const grokSending = new Set<string>()
+/** card id → when the owner was last notified of one of its handoffs */
+const grokNotified = new Map<string, number>()
+
+/**
+ * The owner decided a Grok Bot handoff. Send: POST it to the routine's webhook; a failure leaves it waiting (fix the
+ * key, send again). Discard: it is dropped. The asking card is told by board mail once it is sent or discarded.
+ */
+async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string, send: boolean): Promise<{ ok: boolean; error?: string; warning?: string }> {
+  const h = s.grokBot.find((x) => x.id === id && x.state === 'pending')
+  if (!h) return { ok: false, error: 'that handoff is not waiting any more' }
+  const flight = `${s.id}:${id}`
+  if (grokSending.has(flight)) return { ok: false, error: 'already sending' }
+  const update = (patch: Partial<GrokHandoff>): void => {
+    s.grokBot = s.grokBot.map((x) => (x.id === id ? { ...x, ...patch } : x))
+    grokBotChanged(s)
+  }
+  const tell = (body: string): { ok: boolean; warning?: string } => {
+    const m = s.mail.send({ from: OWNER, to: h.card, body, kind: 'note' }, mailTopology(s.board))
+    return m.ok ? { ok: true } : { ok: true, warning: `decided, but the card was not told: ${m.error}` }
+  }
+  if (!send) {
+    // a send in flight may already have left: the outcome of that send decides, not a late Discard
+    if (grokSending.has(flight)) return { ok: false, error: 'it is being sent right now' }
+    update({ state: 'discarded', decidedAt: Date.now() })
+    log(`[grok-bot] ${id} discarded by the owner`)
+    return tell(`The owner did not send your Grok Bot handoff ${id}. Do not ask again for the same task; carry on without it:\n${h.task}`)
+  }
+  const st = ctx.store.getSettings()
+  const url = grokBotUrl(st.grokBotUrl)
+  const key = decryptToken(st.grokBotKeyEnc)
+  if (!url) return { ok: false, error: 'set the routine\'s webhook URL in Settings → Grok Bot first' }
+  if (!key) return { ok: false, error: st.grokBotKeyEnc ? 'the saved Grok Bot key could not be decrypted; paste it again in Settings → Grok Bot' : 'save the routine\'s key in Settings → Grok Bot first' }
+  grokSending.add(flight)
+  try {
+    const r = await sendToGrokBot({ url, key, payload: handoffPayload(h, basename(s.board.projectRoot || ''), Date.now()) })
+    if (!r.ok) {
+      update({ error: r.error })
+      log(`[grok-bot] ${id} not sent: ${r.error}`)
+      return { ok: false, error: r.error }
+    }
+    update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined })
+    log(`[grok-bot] ${id} sent by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
+    return tell(`The owner sent your handoff ${id} to Grok Bot${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`)
+  } finally {
+    grokSending.delete(flight)
+  }
+}
+
 function resolveApproval(s: WindowSession, id: string, approve: boolean): { ok: boolean; error?: string; warning?: string } {
   const r = s.gate.resolve(id, approve === true)
   if (!r.ok) return r
@@ -1213,6 +1297,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     }),
     mail: new Mailbox(log),
     gate: new GateKeeper(log),
+    grokBot: [],
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
     selectedNodeId: null,
@@ -1706,6 +1791,28 @@ export function registerIpc(ctx: MainContext): void {
     const s = sessionOf(e)
     if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
     return resolveApproval(s, id, approve === true)
+  })
+  ipcMain.handle(IPC.grokBotList, (e) => sessionOf(e)?.grokBot ?? [])
+  ipcMain.handle(IPC.grokBotResolve, (e, id: string, send: boolean) => {
+    const s = sessionOf(e)
+    if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
+    return resolveGrokHandoff(ctx, s, id, send === true)
+  })
+  ipcMain.handle(IPC.grokBotSetKey, (_e, key: string) => {
+    const enc = encryptToken(String(key ?? '').replace(/\s+/g, ''))
+    ctx.store.setSettings({ grokBotKeyEnc: enc || undefined })
+    return { ok: true, hasKey: Boolean(enc) }
+  })
+  ipcMain.handle(IPC.grokBotStatus, () => ({ hasKey: Boolean(decryptToken(ctx.store.getSettings().grokBotKeyEnc)) }))
+  ipcMain.handle(IPC.grokBotTest, async () => {
+    const st = ctx.store.getSettings()
+    const url = grokBotUrl(st.grokBotUrl)
+    const key = decryptToken(st.grokBotKeyEnc)
+    if (!url) return { ok: false, error: 'the webhook URL is not a Grok Bot routine webhook (https://api2.cursor.sh/automations/webhook/…)' }
+    if (!key) return { ok: false, error: 'no key saved' }
+    const r = await sendToGrokBot({ url, key, payload: { source: 'ouroboros', kind: 'test', note: 'Connection test from Ouroboros: no task, nothing to do.', sentAt: new Date().toISOString() } })
+    log(`[grok-bot] test: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
+    return r.ok ? r : { ok: false, error: r.error }
   })
   ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
   ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())

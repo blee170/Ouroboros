@@ -8,6 +8,7 @@ import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
 import { notionDatabaseId } from '@shared/notion'
+import { grokBotUrl } from '@shared/grokbot'
 import type { TtsKeyEngine } from '@shared/protocol'
 import { speak, voiceFor } from '@/lib/speak'
 import { Icon } from '@/lib/icons'
@@ -29,6 +30,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [ttsKey, setTtsKey] = useState('')
   const [notion, setNotion] = useState<{ hasToken: boolean }>({ hasToken: false })
   const [notionToken, setNotionToken] = useState('')
+  const [grokKey, setGrokKey] = useState('')
+  const [grokHasKey, setGrokHasKey] = useState(false)
   useEscape(onClose)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
@@ -37,6 +40,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     })
     void window.ouroboros.tts.keys().then(setTtsKeys)
     void window.ouroboros.notion.status().then((n) => setNotion({ hasToken: n.hasToken }))
+    void window.ouroboros.grokBot.status().then((g) => setGrokHasKey(g.hasKey))
     return window.ouroboros.update.onStatus(setUpd)
   }, [])
   const saveTtsKey = async (engine: TtsKeyEngine): Promise<void> => {
@@ -56,6 +60,25 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setNotion((n) => ({ ...n, hasToken: r.hasToken }))
     setNotionToken('')
     setMsg(r.hasToken ? 'Notion token saved (encrypted). Paste the Reports database URL and press Test.' : 'Notion token cleared.')
+  }
+  const saveGrokKey = async (): Promise<void> => {
+    const r = await window.ouroboros.grokBot.setKey(grokKey)
+    setGrokHasKey(r.hasKey)
+    setGrokKey('')
+    setMsg(r.hasKey ? 'Grok Bot key saved (encrypted).' : 'Grok Bot key cleared.')
+  }
+  const saveGrokUrl = (value: string): void => {
+    const v = value.trim()
+    if (v && !grokBotUrl(v)) {
+      setMsg('Grok Bot: that is not a routine webhook URL (https://api2.cursor.sh/automations/webhook/…); not saved.')
+      return
+    }
+    void setSettings({ grokBotUrl: v ? grokBotUrl(v) : undefined })
+  }
+  const testGrokBot = async (): Promise<void> => {
+    setMsg('Asking Grok Bot…')
+    const r = await window.ouroboros.grokBot.test()
+    setMsg(r.ok ? `Grok Bot: the routine started a test run${r.runUuid ? ` (${r.runUuid})` : ''}. Handoffs will go there.` : `Grok Bot: ${r.error}`)
   }
   const saveNotionDb = (value: string, field: 'notionDatabaseId' | 'notionTasksDatabaseId' | 'notionUpdatesDatabaseId' = 'notionDatabaseId'): void => {
     const id = notionDatabaseId(value)
@@ -301,6 +324,32 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="hint">Adds Ouroboros views to the databases above: Tasks as a board by state and a "Waiting on you" table, Reports as a calendar, Updates newest first. Views already there (by name) are left alone; the integration needs the insert and update content capabilities.</div>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h4>Grok Bot</h4>
+          <div className="hint">
+            Lets a card (usually the Conductor) hand a task to Grok Bot, xAI and Cursor's cloud teammate with its own browser and computer, through one of its routines. Make a routine whose instruction says what to do with a handoff (for example: "do the task in the JSON body, then put the result in my Notion Tasks database"), ask the Bot to add a webhook trigger, and copy its URL and key here. Every handoff waits for you in the Today tab: nothing is sent until you press <em>Send</em>.
+          </div>
+          <label className="field">
+            <span>Webhook URL</span>
+            <div className="ctl">
+              <input className="text" placeholder="https://api2.cursor.sh/automations/webhook/…" defaultValue={settings.grokBotUrl ?? ''} onBlur={(e) => saveGrokUrl(e.target.value)} />
+            </div>
+          </label>
+          <label className="field">
+            <span>Key</span>
+            <div className="ctl">
+              <input className="text" type="password" placeholder={grokHasKey ? '•••••• (saved)' : 'crsr_…'} value={grokKey} onChange={(e) => setGrokKey(e.target.value)} />
+              <button className="btn" onClick={() => void saveGrokKey()}>
+                {grokKey ? 'Save' : grokHasKey ? 'Clear' : 'Save'}
+              </button>
+              <button className="btn" onClick={() => void testGrokBot()} title="Starts one run of the routine with a test body">
+                Test
+              </button>
+            </div>
+            <div className="hint">Stored encrypted and sent only to api2.cursor.sh. Test starts one run of the routine with a body that says it is a test.</div>
           </label>
         </section>
 

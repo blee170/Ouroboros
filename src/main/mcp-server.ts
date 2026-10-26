@@ -315,6 +315,20 @@ server.registerTool(
   }
 )
 
+server.registerTool(
+  'handoff_to_grok_bot',
+  {
+    title: 'Hand a task to Grok Bot',
+    description:
+      "Ask the owner to send a task to Grok Bot (xAI's cloud teammate with its own browser and computer) through their routine's webhook. It waits for the owner: nothing leaves this machine until they press Send, and you get a board message either way (with Grok Bot's run id when sent). Use it for work that needs a cloud browser or long web research, not for code in this repo. Never put secrets, keys or private data in task or context. Results come back where the owner's routine puts them (often Notion), not as a reply here.",
+    inputSchema: {
+      task: z.string().max(4000).describe('what Grok Bot should do, self-contained, in plain words'),
+      context: z.string().max(12000).optional().describe('links, findings or constraints it needs; no secrets')
+    }
+  },
+  async ({ task, context }) => text(await api('POST', '/api/grok-bot', { task, context }))
+)
+
 const TASK_STATE = z.enum(['todo', 'doing', 'blocked', 'done', 'dropped'])
 const TASK_ID = z.string().max(8).describe('task id, e.g. T3')
 

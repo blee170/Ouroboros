@@ -5,6 +5,7 @@
 import { ownerMarker } from './announce'
 import type { HeldCard } from './board-trust'
 import type { Approval } from './gate'
+import type { GrokHandoff } from './grokbot'
 import type { Task } from './ledger'
 import { failureOf } from './status'
 import type { AgentStatus, NodeKind } from './types'
@@ -22,8 +23,8 @@ export interface TodayCard {
 }
 
 /** Most urgent first: a gate that blocks a card, a card stopped on a prompt, then decisions, then the rest. */
-export type NeedKind = 'approval' | 'permission' | 'held' | 'decision' | 'failed' | 'blocked'
-const RANK: Record<NeedKind, number> = { approval: 0, permission: 1, held: 2, decision: 3, failed: 4, blocked: 5 }
+export type NeedKind = 'approval' | 'handoff' | 'permission' | 'held' | 'decision' | 'failed' | 'blocked'
+const RANK: Record<NeedKind, number> = { approval: 0, handoff: 1, permission: 2, held: 3, decision: 4, failed: 5, blocked: 6 }
 
 export interface Need {
   key: string
@@ -36,13 +37,20 @@ export interface Need {
   cardId?: string
   taskId?: string
   approvalId?: string
+  /** a Grok Bot handoff waiting for Send / Discard */
+  handoffId?: string
 }
 
 const APPROVAL_RE = /^\s*APPROVAL NEEDED\s*[:—–-]?\s*/i
 const oneLine = (s: string | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim()
 
-export function needsYou(o: { cards: TodayCard[]; tasks: Task[]; approvals: Approval[]; held: HeldCard[] }): Need[] {
+export function needsYou(o: { cards: TodayCard[]; tasks: Task[]; approvals: Approval[]; held: HeldCard[]; handoffs?: GrokHandoff[] }): Need[] {
   const out: Need[] = []
+  for (const h of o.handoffs ?? []) {
+    if (h.state !== 'pending') continue
+    const text = oneLine(h.task).slice(0, 300)
+    out.push({ key: `g:${h.id}`, kind: 'handoff', title: `${h.title} → Grok Bot`, text: h.error ? `${text} (last try: ${oneLine(h.error)})` : text, at: h.createdAt, cardId: h.card, handoffId: h.id })
+  }
   for (const a of o.approvals) {
     if (a.state === 'pending') out.push({ key: `a:${a.id}`, kind: 'approval', title: a.title, text: oneLine(a.command), at: a.createdAt, cardId: a.card, approvalId: a.id })
   }

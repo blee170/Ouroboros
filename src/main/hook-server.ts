@@ -66,6 +66,8 @@ export interface ApiHandlers {
   tidy(opts: { olderThanMinutes?: number; includeOwn?: boolean; scope?: string; auto?: boolean }, dryRun: boolean): Promise<{ candidates: Array<{ id: string; title: string; reason: string }>; removed: number }>
   waitForAgents(ids: string[], statuses: string[], timeoutMs: number): Promise<unknown>
   setNote(nodeId: string, note: string): boolean
+  /** A card asks to hand a task to Grok Bot: it waits for the owner (nothing leaves the machine before they send it). */
+  grokBotHandoff(self: string, input: { task?: unknown; context?: unknown }): { ok: true; id: string; note: string } | { ok: false; error: string }
   /** The task ledger: text for task_list (one line per task) plus the raw tasks. */
   taskList(filter: TaskFilter): { text: string; tasks: Task[] }
   /** `by` is the card id, or OWNER for the Tasks tab (main's IPC handlers only; the HTTP side never attributes to the owner) */
@@ -478,6 +480,12 @@ export class HookServer {
           const r = api.taskUpdate(id, body, self || UNKNOWN_CARD)
           return send(res, r.ok ? 200 : r.error.startsWith('no task') ? 404 : 400, r)
         }
+      }
+      if (path === '/api/grok-bot' && method === 'POST') {
+        if (!self) return send(res, 403, { error: 'handoff_to_grok_bot needs the caller\'s card id' })
+        const body = (await readJson(req)) as { task?: unknown; context?: unknown } | null
+        const r = api.grokBotHandoff(self, body ?? {})
+        return send(res, r.ok ? 200 : 400, r)
       }
       const n = /^\/api\/notes\/([^/]+)$/.exec(path)
       if (n && method === 'POST') {

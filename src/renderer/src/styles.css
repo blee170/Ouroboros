@@ -333,6 +333,7 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 /* the header keeps its size in far mode: a taller header would shrink the terminal area and resize the PTY */
 .agent-node.far .terminal-host { visibility: hidden; }
 .card-summary .summary-title { font-size: 28px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-summary .summary-topic { font-size: 20px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: -6px; }
 .card-summary { position: absolute; inset: 0; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); overflow: hidden; }
 .card-summary .summary-status { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-summary .summary-text { font-size: 22px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; flex: 1; min-height: 0; -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); mask-image: linear-gradient(to bottom, #000 80%, transparent); }

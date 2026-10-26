@@ -126,6 +126,7 @@ export const IPC = {
   boardRemoveEdge: 'board:removeEdge',
   boardSetNote: 'board:setNote',
   boardUpdateNode: 'board:updateNode',
+  boardActivity: 'board:activity',
   externalSession: 'external:session',
   announce: 'announce'
 } as const
@@ -169,6 +170,13 @@ export interface AgentStatusPayload {
   sessionId?: string
   lastAssistantMessage?: string
   at: number
+}
+
+/** What a Claude card is doing: `doing` null clears the step; a field left out is unchanged. */
+export interface ActivityPayload {
+  nodeId: string
+  doing?: string | null
+  topic?: string
 }
 
 export interface HookEventPayload {
@@ -355,6 +363,7 @@ export interface OuroborosApi {
     /** The selected card: main holds back the toast and the voice for the card the owner is looking at. */
     setSelected(nodeId: string | null): void
     onAgentStatus(cb: (p: AgentStatusPayload) => void): () => void
+    onActivity(cb: (p: ActivityPayload) => void): () => void
     onHookEvent(cb: (p: HookEventPayload) => void): () => void
     onHandoffFired(cb: (p: HandoffFiredPayload) => void): () => void
     onAddNode(cb: (node: AddNodePayload) => void): () => void

@@ -20,7 +20,7 @@ export function todayCards(s: Pick<BoardState, 'nodes' | 'attention' | 'workingS
   return s.nodes
     // an outside session cannot be answered from the board, so it is not "waiting on you" here
     .filter((n) => n.data.kind !== 'note' && n.data.kind !== 'browser' && n.data.kind !== 'external')
-    .map((n) => ({ id: n.id, title: n.data.title, kind: n.data.kind, status: n.data.status, statusDetail: n.data.statusDetail, lastAssistantMessage: n.data.lastAssistantMessage, unreadAt: s.attention.unread[n.id], workingSince: s.workingSince[n.id] }))
+    .map((n) => ({ id: n.id, title: n.data.title, kind: n.data.kind, status: n.data.status, statusDetail: n.data.statusDetail, topic: n.data.topic, doing: n.data.doing, lastAssistantMessage: n.data.lastAssistantMessage, unreadAt: s.attention.unread[n.id], workingSince: s.workingSince[n.id] }))
 }
 
 /** How many things wait on the owner: the Today tab's badge. */
@@ -223,7 +223,7 @@ export function TodayPanel() {
               <div className="task-line">
                 <button className="task-toggle" onClick={() => jump(c.id)} title="Show the card">
                   <span className="task-title">
-                    <b>{c.title}</b> <span className="muted">{c.statusDetail}</span>
+                    <b>{c.title}</b> <span className="muted">{[c.topic, c.doing ?? c.statusDetail].filter(Boolean).join(' — ')}</span>
                   </span>
                 </button>
                 {c.workingSince !== undefined && <span className="muted small today-ago">since {hhmm(c.workingSince)}</span>}

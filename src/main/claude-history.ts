@@ -1,12 +1,20 @@
 import { closeSync, existsSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { ClaudeProjectHistory, ClaudeSessionInfo, FolderInfo, SessionUsage } from '@shared/protocol'
 
 const HEAD_BYTES = 64 * 1024
 
 export function claudeConfigDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+}
+
+/** A session transcript under the Claude Code config dir (a hook payload names it; nothing outside is read), else undefined. */
+export function transcriptPath(p: unknown, configDir = claudeConfigDir()): string | undefined {
+  if (typeof p !== 'string' || !p.endsWith('.jsonl') || !isAbsolute(p)) return undefined
+  const full = resolve(p)
+  const rel = relative(join(configDir, 'projects'), full)
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? full : undefined
 }
 
 function textOf(content: unknown): string | undefined {

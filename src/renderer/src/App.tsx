@@ -51,6 +51,7 @@ export default function App() {
       api.gate.onChange((a) => useBoard.getState().setApprovals(a)),
       api.grokBot.onChange((h) => useBoard.getState().setGrokHandoffs(h)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
+      api.board.onActivity((p) => useBoard.getState().applyActivity(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),
       api.board.onAnnounce((p) => void speak(p)),

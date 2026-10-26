@@ -16,6 +16,9 @@ export interface TodayCard {
   kind: NodeKind
   status?: AgentStatus
   statusDetail?: string
+  /** Claude cards: the conversation title and the current step (shared/doing.ts) */
+  topic?: string
+  doing?: string
   lastAssistantMessage?: string
   /** when its result arrived unseen (attention.unread), else undefined */
   unreadAt?: number

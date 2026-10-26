@@ -2,6 +2,7 @@ import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, glo
 import { transcribe } from './stt'
 import { voiceSettings, type VoiceSettings } from '@shared/voice'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
@@ -34,6 +35,7 @@ import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
 import { cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
+import { aiTitleOf, stepOf } from '@shared/doing'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -71,7 +73,7 @@ function liveCards(board: Board): Set<string> {
   return new Set(board.snapshot().filter((a) => a.status === 'starting' || (a.ptyAlive && a.status !== 'ended')).map((a) => a.id))
 }
 import { createWorktree, removeWorktree } from './worktree'
-import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
+import { listClaudeSessions, listSubfolders, readSessionUsage, transcriptPath } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
 import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
 import { normalizePath, type SessionRegistry } from './windows'
@@ -281,6 +283,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.usage.forgetCard(id)
   forgetMail(id)
   inboxes.delete(id)
+  transcripts.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -1425,6 +1428,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
 export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): HookReply | void {
   const s = ctx.windows.forNode(nodeId)
   if (!s) return
+  noteActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
   const reply = mailReply(s, nodeId, event)
   // a Stop that mail turned into another round is not the end of the turn: no "done", no handoff, no report
@@ -1435,6 +1439,68 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   }
   s.board.applyHook(nodeId, event)
   return reply
+}
+
+/** Claude cards' transcripts and how far the topic reader got. */
+const transcripts = new Map<string, { path: string; offset: number; reading?: boolean }>()
+const TOPIC_READ_CAP = 256 * 1024
+/** Events that end a step: the turn ended, a new prompt came in, the session (re)started or ended. */
+const STEP_ENDS = new Set(['Stop', 'StopFailure', 'UserPromptSubmit', 'SessionStart', 'SessionEnd'])
+
+/** What a Claude card is doing (the step its tool call announces) and its topic (the conversation title), for the board. */
+function noteActivity(s: WindowSession, nodeId: string, event: HookEvent): void {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return
+  const path = transcriptPath(event.transcript_path)
+  if (path && transcripts.get(nodeId)?.path !== path) transcripts.set(nodeId, { path, offset: 0 })
+  const step = stepOf(event)
+  if (step !== undefined) {
+    if (step !== n.data.doing) {
+      n.data.doing = step
+      sendToRenderer(s, IPC.boardActivity, { nodeId, doing: step })
+    }
+    return
+  }
+  if (!STEP_ENDS.has(event.hook_event_name)) return
+  if (n.data.doing) {
+    n.data.doing = undefined
+    sendToRenderer(s, IPC.boardActivity, { nodeId, doing: null })
+  }
+  if (event.hook_event_name === 'Stop' || event.hook_event_name === 'UserPromptSubmit') void readTopic(s, nodeId)
+}
+
+/** Read what the transcript gained since the last read (at most its last 256 KB) for a newer conversation title. */
+async function readTopic(s: WindowSession, nodeId: string): Promise<void> {
+  const t = transcripts.get(nodeId)
+  if (!t || t.reading) return
+  t.reading = true
+  try {
+    const fh = await open(t.path, 'r')
+    try {
+      const { size } = await fh.stat()
+      if (size < t.offset) t.offset = 0
+      const start = Math.max(t.offset, size - TOPIC_READ_CAP)
+      if (size <= start) return
+      const buf = Buffer.alloc(size - start)
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start)
+      // up to the last full line; a line still being written is read next time
+      const end = buf.subarray(0, bytesRead).lastIndexOf(10) + 1
+      if (end === 0) return
+      t.offset = start + end
+      const title = aiTitleOf(buf.subarray(0, end).toString('utf8'))
+      const n = s.board.nodes.get(nodeId)
+      if (title && n && title !== n.data.topic) {
+        n.data.topic = title
+        sendToRenderer(s, IPC.boardActivity, { nodeId, topic: title })
+      }
+    } finally {
+      await fh.close()
+    }
+  } catch {
+    // the transcript moved or is unreadable: the card keeps its last topic
+  } finally {
+    t.reading = false
+  }
 }
 
 /** Agent cards only (not terminals, notes, browsers), by id or an exact title (case-insensitive, unique). */
@@ -1635,6 +1701,7 @@ export function registerIpc(ctx: MainContext): void {
   ptys.on('exit', (nodeId: string, code: number) => {
     running.delete(nodeId)
     inboxes.delete(nodeId)
+    transcripts.delete(nodeId)
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)

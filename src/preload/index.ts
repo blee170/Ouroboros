@@ -24,6 +24,7 @@ const api: OuroborosApi = {
     sync: (payload) => ipcRenderer.send(IPC.boardSync, payload),
     setSelected: (nodeId) => ipcRenderer.send(IPC.boardSelected, nodeId),
     onAgentStatus: (cb) => on(IPC.agentStatus, cb),
+    onActivity: (cb) => on(IPC.boardActivity, cb),
     onHookEvent: (cb) => on(IPC.hookEvent, cb),
     onHandoffFired: (cb) => on(IPC.handoffFired, cb),
     onAddNode: (cb) => on(IPC.boardAddNode, cb),

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type Viewport } from '@xyflow/react'
 import { nanoid } from 'nanoid'
-import type { AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, SessionUsage, UpdateStatus } from '@shared/protocol'
+import type { ActivityPayload, AgentStatusPayload, ExternalSessionPayload, HandoffFiredPayload, SessionUsage, UpdateStatus } from '@shared/protocol'
 import type { UsageSnapshot } from '@shared/usage'
 import type { AutonomyPublic } from '@shared/autonomy'
 import type { Task } from '@shared/ledger'
@@ -143,6 +143,8 @@ interface BoardState {
   setViewport(v: Viewport): void
   setSettings(patch: Partial<AppSettings>): Promise<void>
   applyStatus(p: AgentStatusPayload): void
+  /** Runtime only: no sync back to main, no save. */
+  applyActivity(p: ActivityPayload): void
   applyHandoffFired(p: HandoffFiredPayload): void
   applyExternal(p: ExternalSessionPayload): void
   pullExternal(id: string): void
@@ -456,6 +458,17 @@ export const useBoard = create<BoardState>((set, get) => ({
           ? { ...n, data: { ...n.data, status: shown, statusDetail: p.statusDetail ?? n.data.statusDetail, sessionId: p.sessionId ?? n.data.sessionId, lastAssistantMessage: p.lastAssistantMessage ?? n.data.lastAssistantMessage, lastEventAt: p.at } }
           : n
       )
+    })
+  },
+  applyActivity(p) {
+    set({
+      nodes: get().nodes.map((n) => {
+        if (n.id !== p.nodeId) return n
+        const data = { ...n.data }
+        if (p.doing !== undefined) data.doing = p.doing ?? undefined
+        if (p.topic !== undefined) data.topic = p.topic
+        return { ...n, data }
+      })
     })
   },
   applyHandoffFired(p) {

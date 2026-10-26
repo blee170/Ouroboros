@@ -170,6 +170,35 @@ export class Mic {
   }
 }
 
+/**
+ * The wake phrase was heard: two bright notes, louder than the take tones, so the owner knows without looking
+ * (alone: "speak now"; with a prompt: "got it, it is in the composer").
+ */
+export function wakeChime(): void {
+  try {
+    const ctx = new AudioContext()
+    const notes: Array<[number, number]> = [
+      [988, 0],
+      [1319, 0.13]
+    ]
+    for (const [freq, at] of notes) {
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.type = 'triangle'
+      o.frequency.setValueAtTime(freq, ctx.currentTime + at)
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + at)
+      g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + at + 0.015)
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.22)
+      o.connect(g).connect(ctx.destination)
+      o.start(ctx.currentTime + at)
+      o.stop(ctx.currentTime + at + 0.24)
+    }
+    setTimeout(() => void ctx.close().catch(() => {}), 600)
+  } catch {
+    /* no audio output: the composer's state line still says it */
+  }
+}
+
 /** A short rising (start) or falling (end) tone, so the owner knows when the app is listening. */
 export function chime(up: boolean): void {
   try {
@@ -179,7 +208,7 @@ export function chime(up: boolean): void {
     o.frequency.setValueAtTime(up ? 660 : 880, ctx.currentTime)
     o.frequency.linearRampToValueAtTime(up ? 880 : 660, ctx.currentTime + 0.12)
     g.gain.setValueAtTime(0.0001, ctx.currentTime)
-    g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.02)
+    g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02)
     g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18)
     o.connect(g).connect(ctx.destination)
     o.start()

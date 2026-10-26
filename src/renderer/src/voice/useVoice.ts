@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBoard } from '@/store/board'
 import { isNonSpeech, matchWake, voiceSettings, wavFromFloat32, VOICE_LIMITS } from '@shared/voice'
-import { Mic, chime } from './mic'
+import { Mic, chime, wakeChime } from './mic'
 
 export type VoiceState = 'off' | 'idle' | 'recording' | 'transcribing'
 
@@ -58,6 +58,8 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   }, [])
   /** a take asked for while a wake clip was being written down: it runs right after */
   const takeQueued = useRef(false)
+  /** the queued take comes from the wake phrase, whose chime already said "speak now" */
+  const wakeHeard = useRef(false)
 
   const toText = useCallback(async (samples: Float32Array): Promise<string | undefined> => {
     const r = await window.ouroboros.voice.transcribe(wavFromFloat32(samples, VOICE_LIMITS.sampleRate))
@@ -78,8 +80,13 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
           if (!text) return
           const w = matchWake(text, phraseRef.current)
           if (!w.matched) return
+          // heard: say so by ear right away (the take that follows skips its own start tone)
+          wakeChime()
           if (w.rest && !isNonSpeech(w.rest)) onTextRef.current(w.rest, true)
-          else takeQueued.current = true
+          else {
+            takeQueued.current = true
+            wakeHeard.current = true
+          }
         })
         .catch((err: Error) => setMessage(`Voice: ${err.message}`))
         .finally(() => {
@@ -101,8 +108,10 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
     busy.current = true
     try {
       setMessage('')
+      const afterWake = wakeHeard.current
+      wakeHeard.current = false
       const m = await openMic()
-      chime(true)
+      if (!afterWake) chime(true)
       setState('recording')
       const samples = await m.take()
       chime(false)

@@ -20,10 +20,14 @@ const REPLY_EVENTS = new Set(['Stop', 'UserPromptSubmit', 'PostToolUse'])
 export interface ApiHandlers {
   listAgents(): unknown
   /** Queue a message from `from` (the caller's own card id) to another card. */
-  mailSend(input: { to: string; body: string; kind?: string; reply_to?: string }, from: string): { ok: true; id: string; to: string } | { ok: false; error: string }
+  mailSend(input: { to: string; body: string; kind?: string; reply_to?: string }, from: string): { ok: true; id: string; to: string; delivery?: string } | { ok: false; error: string }
   /** The caller's inbox (marked delivered); unreadOnly = not yet acknowledged. */
   mailInbox(self: string, unreadOnly: boolean): { text: string; count: number }
   mailAck(id: string, self: string): { ok: boolean; error?: string }
+  /** The caller's Claude Code inbox (its MCP server's CLAUDE_CODE_MESSAGING_SOCKET and token): text for the card goes in there. */
+  registerInbox(self: string, socket: unknown, token: unknown): { ok: boolean; error?: string }
+  /** ask_owner: the caller's question to the owner; waits a while for the answer, else says it is pending. */
+  askOwner(self: string, input: { question?: unknown; choices?: unknown }, signal?: AbortSignal): Promise<{ ok: true; id: string; answered: boolean; text: string } | { ok: false; error: string }>
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
   listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
@@ -339,6 +343,21 @@ export class HookServer {
         return send(res, r.ok ? 200 : 400, r)
       }
       if (method === 'GET' && path === '/api/mail') return send(res, 200, api.mailInbox(claimed, url.searchParams.get('unread') !== '0'))
+      if (method === 'POST' && path === '/api/mail/inbox') {
+        const body = (await readJson(req, 4_000)) as { socket?: unknown; token?: unknown }
+        const r = api.registerInbox(claimed, body?.socket, body?.token)
+        return send(res, r.ok ? 200 : 400, r)
+      }
+      if (method === 'POST' && path === '/api/mail/ask') {
+        const body = (await readJson(req, 16_000)) as { question?: unknown; choices?: unknown }
+        // a caller that hangs up (a cancelled tool call, a restarted card) stops waiting: a later answer then goes by mail
+        const gone = new AbortController()
+        res.on('close', () => {
+          if (!res.writableEnded) gone.abort()
+        })
+        const r = await api.askOwner(claimed, { question: body?.question, choices: body?.choices }, gone.signal)
+        return send(res, r.ok ? 200 : 400, r)
+      }
       const ack = /^\/api\/mail\/([^/]+)\/ack$/.exec(path)
       if (method === 'POST' && ack) {
         const r = api.mailAck(decodeURIComponent(ack[1]), claimed)

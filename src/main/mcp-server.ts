@@ -41,9 +41,10 @@ function readTokenFile(file: string | undefined): string {
 }
 const SELF = process.env.OUROBOROS_SELF_ID ?? ''
 
-async function api(method: 'GET' | 'POST' | 'DELETE' | 'PATCH', path: string, body?: unknown): Promise<unknown> {
+async function api(method: 'GET' | 'POST' | 'DELETE' | 'PATCH', path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
   const res = await fetch(BASE + path, {
     method,
+    signal,
     // the caller's card id scopes every call to the window (board) that owns it
     headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN, ...(SELF ? { 'x-ouroboros-self': SELF } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body)
@@ -60,7 +61,7 @@ function text(value: unknown): { content: Array<{ type: 'text'; text: string }> 
 const server = new McpServer({ name: 'ouroboros', version: '0.1.0' })
 
 // a card without board tools runs this server for its mail only: every other tool is left unregistered
-const MAIL_TOOLS = new Set(['send_message', 'check_inbox', 'ack'])
+const MAIL_TOOLS = new Set(['send_message', 'check_inbox', 'ack', 'ask_owner'])
 if (process.env.OUROBOROS_TOOLS === 'mail') {
   const register = server.registerTool.bind(server)
   server.registerTool = ((name: string, ...rest: unknown[]) => (MAIL_TOOLS.has(name) ? (register as (...a: unknown[]) => unknown)(name, ...rest) : undefined)) as typeof server.registerTool
@@ -71,7 +72,7 @@ server.registerTool(
   {
     title: 'Message another card',
     description:
-      'Send a short message to another agent card on the board (by id from list_agents, or its exact title). Use it for status, questions, a finished piece of work (kind=worker_done) or something that needs a decision (kind=escalation) - not to hand out a new task. A worker may message its parent, the Conductor, or a card it shares a handoff line with; the Conductor may message anyone. Sending only queues it: the recipient gets it before it ends its turn, after its next tool call, or with a short prompt if it is idle. Reply to a message with reply_to.',
+      'Send a short message to another agent card on the board (by id from list_agents, or its exact title). Use it for status, questions, a finished piece of work (kind=worker_done) or something that needs a decision (kind=escalation) - not to hand out a new task. A worker may message its parent, the Conductor, or a card it shares a handoff line with; the Conductor may message anyone. The result says when the recipient sees it (an idle Claude card is woken with it; a working one gets it after its next tool call). Reply to a message with reply_to. Agents answering agents stop after 8 messages in a thread, or 12 between two cards in 10 minutes, without a word from the owner: then ask the owner instead of carrying on.',
     inputSchema: {
       to: z.string().min(1).max(200).describe('Recipient card id, or its exact title'),
       body: z.string().min(1).max(8000).describe('The message (plain text, at most 8000 characters)'),
@@ -82,6 +83,24 @@ server.registerTool(
   async ({ to, body, kind, reply_to }) => {
     const r = (await api('POST', '/api/mail', { to, body, kind, reply_to })) as { id: string; to: string }
     return text(`Sent ${r.id} to ${r.to}.`)
+  }
+)
+
+server.registerTool(
+  'ask_owner',
+  {
+    title: 'Ask the owner',
+    description:
+      'Ask the human owner a question only they can answer (a product or scope call, an approval, a choice between options), instead of guessing or stopping. The owner answers from the board or their phone with one of your choices (or Approve / Deny when you give none) and maybe a note. The call waits up to 45 seconds; if the owner answers by then you get the answer as the result, otherwise the result says "pending D<n>" and the answer arrives later as a board message headed [owner decision D<n>] - carry on with other work meanwhile and do not ask again. One open question per card. During an autonomous run the owner is away: the question waits for the morning report. Never ask for secrets.',
+    inputSchema: {
+      question: z.string().min(1).max(2000).describe('The question, with the context the owner needs to answer it from a phone (what, why, what you recommend)'),
+      choices: z.array(z.string().min(1).max(80)).min(2).max(4).optional().describe('2 to 4 short answers to pick from, your recommendation first; omit for Approve / Deny')
+    }
+  },
+  async ({ question, choices }, extra) => {
+    // a cancelled call (Esc) hangs up, so the app sends a later answer as a board message instead
+    const r = (await api('POST', '/api/mail/ask', { question, choices }, extra.signal)) as { text: string }
+    return text(r.text)
   }
 )
 
@@ -497,6 +516,13 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)
   log('connected')
+  // Claude Code gives the servers it starts its inbox: the board puts text for this card there instead of typing it
+  const inbox = process.env.CLAUDE_CODE_MESSAGING_SOCKET
+  if (inbox && SELF) {
+    api('POST', '/api/mail/inbox', { socket: inbox, token: process.env.CLAUDE_CODE_MESSAGING_TOKEN || undefined })
+      .then(() => log('inbox registered'))
+      .catch((err) => log(`inbox not registered: ${String(err)}`))
+  }
 }
 
 main().catch((err) => {

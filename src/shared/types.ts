@@ -116,6 +116,10 @@ export interface NodeData {
   /** When the process was seen exiting in this app run. */
   endedAt?: number
   ptyAlive?: boolean
+  /** Claude cards: the step its current tool call announces (shared/doing.ts), cleared when the turn ends. */
+  doing?: string
+  /** Claude cards: the title Claude Code gave the conversation. */
+  topic?: string
   [key: string]: unknown
 }
 

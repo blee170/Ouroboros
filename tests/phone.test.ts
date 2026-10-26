@@ -58,6 +58,7 @@ describe('the phone server', () => {
     prompt: (id, text) => (prompts.push([id, text]), { ok: true }),
     answer: (id, key) => (answers.push([id, key]), { ok: true }),
     resolveApproval: (id) => (id === '1-A1' ? { ok: true } : { ok: false, error: 'no approval' }),
+    answerDecision: (id, answer, _note, device) => (id === '1-D1' && answer === 'Approve' && device ? { ok: true } : { ok: false, error: 'no such question' }),
     latestReport: () => '# report',
     note: (l) => notes.push(l)
   }
@@ -126,6 +127,11 @@ describe('the phone server', () => {
     expect((await call('/m/api/approvals/1-A1', { token, body: { approve: true } })).status).toBe(200)
     expect((await call('/m/api/approvals/1-A2', { token, body: { approve: true } })).status).toBe(409)
     expect(notes.some((n) => n.includes('approved 1-A1'))).toBe(true)
+    expect((await call('/m/api/decisions/1-D1', { token, body: { answer: 'Approve', note: 'go' } })).status).toBe(200)
+    expect((await call('/m/api/decisions/1-D1', { token, body: { answer: 7 } })).status).toBe(400)
+    expect((await call('/m/api/decisions/1-D2', { token, body: { answer: 'Approve' } })).status).toBe(409)
+    expect((await call('/m/api/decisions/D1', { token, body: { answer: 'Approve' } })).status).toBe(404)
+    expect(notes.some((n) => n.includes('answered 1-D1: Approve'))).toBe(true)
     // revoked: refused
     devices.revoke(devices.list[0].id)
     expect((await call('/m/api/board', { token })).status).toBe(401)

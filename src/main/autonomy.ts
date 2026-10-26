@@ -329,6 +329,11 @@ export class Autonomy {
     if (this.on) this.record({ kind: 'gate', card, title, detail })
   }
 
+  /** A card's question to the owner (ask_owner) and its answer, for the run log and the report's Decisions (ignored outside a run). */
+  noteDecision(card: string, title: string, detail: string): void {
+    if (this.on) this.record({ kind: 'decision', card, title, detail })
+  }
+
   /** Something done from the phone (a prompt, an answer, an approval), for the run log and the report. */
   notePhone(detail: string): void {
     if (this.on) this.record({ kind: 'phone', detail })

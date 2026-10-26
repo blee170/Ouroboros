@@ -7,8 +7,11 @@ const api = {
   mailSend: (input: unknown, from: string) => (sent.push([input, from]), { ok: true, id: 'M1', to: 'chief' }),
   mailInbox: (self: string) => ({ count: 1, text: `inbox of ${self}` }),
   mailAck: (id: string) => (id === 'M1' ? { ok: true } : { ok: false, error: 'no message' }),
+  registerInbox: (self: string, socket: unknown) => (inboxes.push([self, socket]), { ok: true }),
+  askOwner: async (self: string, input: { question?: unknown }) => (typeof input.question === 'string' ? { ok: true, id: 'D1', answered: false, text: `pending D1 for ${self}` } : { ok: false, error: 'question required' }),
   listAgents: () => []
 } as unknown as ApiHandlers
+const inboxes: Array<[string, unknown]> = []
 const server = new HookServer({
   onHook: (id, e) => (e.hook_event_name === 'Stop' && id === 'w1' ? { decision: 'block', reason: 'mail' } : undefined),
   onExternalHook: () => undefined,
@@ -48,6 +51,19 @@ describe('mail routes', () => {
     expect(await call('/api/mail?unread=1', { method: 'GET', headers: as('w1', server.mailToken('w1')) })).toMatchObject({ status: 200, body: { text: 'inbox of w1' } })
     expect((await call('/api/mail/M1/ack', { headers: as('w1', server.mailToken('w1')) })).status).toBe(200)
     expect((await call('/api/mail/M9/ack', { headers: as('w1', server.mailToken('w1')) })).status).toBe(404)
+  })
+
+  it('asks the owner as the card its token says', async () => {
+    const as = (id: string, token: string) => ({ 'x-ouroboros-self': id, 'x-ouroboros-token': token })
+    expect((await call('/api/mail/ask', { headers: as('w1', server.mailToken('w2')), body: { question: 'q' } })).status).toBe(401)
+    expect(await call('/api/mail/ask', { headers: as('w1', server.mailToken('w1')), body: { question: 'Ship it?' } })).toMatchObject({ status: 200, body: { id: 'D1', text: 'pending D1 for w1' } })
+    expect((await call('/api/mail/ask', { headers: as('w1', server.mailToken('w1')), body: {} })).status).toBe(400)
+  })
+
+  it("registers the caller's own inbox, as the card its token says", async () => {
+    expect((await call('/api/mail/inbox', { headers: { 'x-ouroboros-self': 'w1', 'x-ouroboros-token': server.mailToken('w2') }, body: { socket: 'x' } })).status).toBe(401)
+    expect((await call('/api/mail/inbox', { headers: { 'x-ouroboros-self': 'w1', 'x-ouroboros-token': server.mailToken('w1') }, body: { socket: 'p', token: 't' } })).status).toBe(200)
+    expect(inboxes).toEqual([['w1', 'p']])
   })
 
   it('a mail token reaches nothing else on the API', async () => {

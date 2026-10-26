@@ -24,6 +24,7 @@ const api: OuroborosApi = {
     sync: (payload) => ipcRenderer.send(IPC.boardSync, payload),
     setSelected: (nodeId) => ipcRenderer.send(IPC.boardSelected, nodeId),
     onAgentStatus: (cb) => on(IPC.agentStatus, cb),
+    onActivity: (cb) => on(IPC.boardActivity, cb),
     onHookEvent: (cb) => on(IPC.hookEvent, cb),
     onHandoffFired: (cb) => on(IPC.handoffFired, cb),
     onAddNode: (cb) => on(IPC.boardAddNode, cb),
@@ -137,6 +138,11 @@ const api: OuroborosApi = {
     configure: (view) => ipcRenderer.invoke(IPC.phoneConfigure, view),
     pair: () => ipcRenderer.invoke(IPC.phonePair),
     revoke: (id) => ipcRenderer.invoke(IPC.phoneRevoke, id)
+  },
+  decisions: {
+    list: () => ipcRenderer.invoke(IPC.decisionsList),
+    answer: (id, answer, note) => ipcRenderer.invoke(IPC.decisionsAnswer, id, answer, note),
+    onChange: (cb) => on(IPC.decisionsChanged, cb)
   },
   gate: {
     list: () => ipcRenderer.invoke(IPC.gateList),

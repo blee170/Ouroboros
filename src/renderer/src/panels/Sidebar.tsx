@@ -3,6 +3,7 @@ import { useReactFlow } from '@xyflow/react'
 import { useBoard, type BoardNode } from '@/store/board'
 import type { SkillEntry } from '@shared/protocol'
 import { STATUS_LABEL } from '@shared/status'
+import { shownDetail } from '@shared/doing'
 import { silentMinutes } from '@shared/attention'
 import { typePrompt } from '@/lib/typePrompt'
 import { ROSTER_GROUPS, groupRows } from '@/lib/rosterOrder'
@@ -232,7 +233,7 @@ export function Sidebar() {
 
   // the search narrows the rows; the hotkeys keep following the full order
   const q = query.trim().toLowerCase()
-  const visible = q ? rows.filter(({ node: n }) => `${n.data.title} ${n.data.statusDetail ?? ''}`.toLowerCase().includes(q)) : rows
+  const visible = q ? rows.filter(({ node: n }) => `${n.data.title} ${n.data.topic ?? ''} ${shownDetail(n.data) ?? ''}`.toLowerCase().includes(q)) : rows
   // the header counts are live (the status bar's are too); only the rows wait to move
   const count = (...statuses: string[]): number => ordered.filter((n) => statuses.includes(n.data.status ?? 'starting')).length
   const counts = [
@@ -264,7 +265,7 @@ export function Sidebar() {
           </span>
           <span className="detail">
             {STATUS_LABEL[st]}
-            {silent ? <span className="silent" title="Working, but no hook event for a while: a long tool call, or a stall"> · no update for {silent}m</span> : n.data.statusDetail ? ` · ${n.data.statusDetail}` : ''}
+            {silent ? <span className="silent" title="Working, but no hook event for a while: a long tool call, or a stall"> · no update for {silent}m</span> : shownDetail(n.data) ? ` · ${shownDetail(n.data)}` : ''}
           </span>
           {taskOf[n.id] && (
             <span className="task" title={`On task ${taskOf[n.id].id}: ${taskOf[n.id].title}`}>

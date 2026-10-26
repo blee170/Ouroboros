@@ -8,6 +8,7 @@ import type { UsageSnapshot } from './usage'
 import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
 import type { Approval } from './gate'
+import type { Decision } from './decisions'
 import type { GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { ProtectionView } from './rulesets'
@@ -50,6 +51,9 @@ export const IPC = {
   gateList: 'gate:list',
   gateResolve: 'gate:resolve',
   gateChanged: 'gate:changed',
+  decisionsList: 'decisions:list',
+  decisionsAnswer: 'decisions:answer',
+  decisionsChanged: 'decisions:changed',
   grokBotList: 'grokBot:list',
   grokBotResolve: 'grokBot:resolve',
   grokBotChanged: 'grokBot:changed',
@@ -126,6 +130,7 @@ export const IPC = {
   boardRemoveEdge: 'board:removeEdge',
   boardSetNote: 'board:setNote',
   boardUpdateNode: 'board:updateNode',
+  boardActivity: 'board:activity',
   externalSession: 'external:session',
   announce: 'announce'
 } as const
@@ -169,6 +174,13 @@ export interface AgentStatusPayload {
   sessionId?: string
   lastAssistantMessage?: string
   at: number
+}
+
+/** What a Claude card is doing: `doing` null clears the step; a field left out is unchanged. */
+export interface ActivityPayload {
+  nodeId: string
+  doing?: string | null
+  topic?: string
 }
 
 export interface HookEventPayload {
@@ -355,6 +367,7 @@ export interface OuroborosApi {
     /** The selected card: main holds back the toast and the voice for the card the owner is looking at. */
     setSelected(nodeId: string | null): void
     onAgentStatus(cb: (p: AgentStatusPayload) => void): () => void
+    onActivity(cb: (p: ActivityPayload) => void): () => void
     onHookEvent(cb: (p: HookEventPayload) => void): () => void
     onHandoffFired(cb: (p: HandoffFiredPayload) => void): () => void
     onAddNode(cb: (node: AddNodePayload) => void): () => void
@@ -506,6 +519,12 @@ export interface OuroborosApi {
     list(): Promise<Approval[]>
     resolve(id: string, approve: boolean): Promise<{ ok: boolean; error?: string; warning?: string }>
     onChange(cb: (approvals: Approval[]) => void): () => void
+  }
+  decisions: {
+    /** Questions cards asked the owner (ask_owner), pending and recently answered. */
+    list(): Promise<Decision[]>
+    answer(id: string, answer: string, note?: string): Promise<{ ok: boolean; error?: string; warning?: string }>
+    onChange(cb: (decisions: Decision[]) => void): () => void
   }
   grokBot: {
     /** Tasks cards asked to hand to Grok Bot, and what became of them. */

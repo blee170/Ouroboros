@@ -2,6 +2,7 @@ import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, glo
 import { transcribe } from './stt'
 import { voiceSettings, type VoiceSettings } from '@shared/voice'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
@@ -17,6 +18,7 @@ import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
 import { applyProtection, checkCardToken, readProtection } from './rulesets'
+import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
 import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
@@ -25,6 +27,8 @@ import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
 import { buildGateCommand, prepareLaunch } from './claude-launcher'
 import { GateKeeper, auditFile } from './gate'
+import { DecisionDesk } from './decisions'
+import { answersOf, askInput, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
 import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
 import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
@@ -32,7 +36,8 @@ import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
-import { cleanTitle, envelope, type MailTopology } from '@shared/mail'
+import { cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
+import { aiTitleOf, stepOf } from '@shared/doing'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -70,7 +75,7 @@ function liveCards(board: Board): Set<string> {
   return new Set(board.snapshot().filter((a) => a.status === 'starting' || (a.ptyAlive && a.status !== 'ended')).map((a) => a.id))
 }
 import { createWorktree, removeWorktree } from './worktree'
-import { listClaudeSessions, listSubfolders, readSessionUsage } from './claude-history'
+import { listClaudeSessions, listSubfolders, readSessionUsage, transcriptPath } from './claude-history'
 import { getChanges, getDiff, revertFile } from './git-changes'
 import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
 import { normalizePath, type SessionRegistry } from './windows'
@@ -99,6 +104,8 @@ export interface WindowSession {
   mail: Mailbox
   /** Autonomous runs: the action gate's decisions, the owner's approvals and the audit log. */
   gate: GateKeeper
+  /** Questions this window's cards asked the owner (ask_owner), answered in Today or on the phone. */
+  decisions: DecisionDesk
   /** Tasks cards asked to hand to Grok Bot (the last 50): each waits for the owner to send or discard it. */
   grokBot: GrokHandoff[]
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
@@ -175,7 +182,37 @@ function viewing(s: WindowSession, nodeId: string): boolean {
   return !s.win.isDestroyed() && s.win.isFocused() && s.selectedNodeId === nodeId
 }
 
-/** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
+/** Claude cards' inboxes, registered by their board MCP server (in memory only: the token never reaches a file or the log). */
+const inboxes = new Map<string, InboxAddress>()
+
+function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token: unknown): { ok: boolean; error?: string } {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return { ok: false, error: 'only Claude cards have an inbox' }
+  if (!validInbox(socket)) return { ok: false, error: 'not a Claude Code inbox path' }
+  if (token !== undefined && (typeof token !== 'string' || token.length > 512)) return { ok: false, error: 'bad inbox token' }
+  // one inbox per process: a card cannot move its prompts to a pipe of its own making later (a failed push clears it)
+  const had = inboxes.get(nodeId)
+  if (had && had.socket !== socket) return { ok: false, error: 'this card already has an inbox' }
+  inboxes.set(nodeId, { socket, ...(token ? { token } : {}) })
+  log(`inbox: ${nodeId} registered (text goes into its session, not its terminal)`)
+  return { ok: true }
+}
+
+/** Whether text for this card goes into its Claude Code inbox (the delivery state send_message reports). */
+export function hasInbox(nodeId: string): boolean {
+  return inboxes.has(nodeId)
+}
+
+function pastePrompt(ctx: MainContext, nodeId: string, text: string): void {
+  ctx.ptys.write(nodeId, toPastePayload(text))
+  setTimeout(() => ctx.ptys.write(nodeId, '\r'), 150)
+}
+
+/**
+ * Give an agent card a prompt: into its Claude Code inbox when it registered one (a running turn takes it between
+ * tool calls, an idle session starts a turn), else typed into its terminal (bracketed paste + Enter). An inbox that
+ * fails is dropped and the text typed instead. Command cards run their template.
+ */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
   // the CLI never started: the live process is the shell itself, and a prompt typed there would run as a command
@@ -193,8 +230,18 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
     ctx.ptys.write(nodeId, line + '\r')
     return true
   }
-  ctx.ptys.write(nodeId, toPastePayload(text))
-  setTimeout(() => ctx.ptys.write(nodeId, '\r'), 150)
+  const inbox = inboxes.get(nodeId)
+  if (inbox) {
+    void pushInbox(inbox, text).then((ok) => {
+      if (ok) return
+      if (inboxes.get(nodeId) === inbox) inboxes.delete(nodeId)
+      if (!ctx.ptys.isAlive(nodeId)) return log(`inbox: ${nodeId} did not take the prompt and its process has exited; the prompt is dropped`)
+      log(`inbox: ${nodeId} did not take the prompt; typed into the terminal instead`)
+      pastePrompt(ctx, nodeId, text)
+    })
+    return true
+  }
+  pastePrompt(ctx, nodeId, text)
   // Codex has no prompt-submitted hook; we know we just gave it work
   if (n && n.data.engine === 'codex' && n.data.status !== 'working') s.board.setStatus(nodeId, { status: 'working', statusDetail: 'prompt sent' })
   return true
@@ -243,6 +290,9 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   running.delete(id)
   ctx.usage.forgetCard(id)
   forgetMail(id)
+  inboxes.delete(id)
+  for (const d of s.decisions.withdraw(id)) s.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): the card was removed`)
+  transcripts.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -291,13 +341,31 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const to = resolveMailTarget(board, input.to)
       if (!to) return { ok: false, error: `no agent card "${String(input.to).slice(0, 80)}" on this board (use an id from list_agents or an exact title)` }
       const r = s.mail.send({ from, to, body: input.body, kind: input.kind, replyTo: input.reply_to }, mailTopology(board))
-      return r.ok ? { ok: true, id: r.mail.id, to } : r
+      if (!r.ok) return r
+      const n = board.nodes.get(to)?.data
+      return { ok: true, id: r.mail.id, to, delivery: deliveryNote(n && { status: n.status, statusDetail: n.statusDetail, engine: n.engine, running: Boolean(n.ptyAlive) }, hasInbox(to)) }
     },
     mailInbox: (self, unreadOnly) => {
       const list = s.mail.inbox(self, unreadOnly)
       return { count: list.length, text: list.length ? list.map((m) => envelope(m, titleOf(board, m.from))).join('\n\n') : 'No messages.' }
     },
     mailAck: (id, self) => s.mail.ack(id, self),
+    registerInbox: (self, socket, token) => registerInbox(s, self, socket, token),
+    askOwner: async (self, input, signal) => {
+      const n = board.nodes.get(self)
+      if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'only agent cards can ask the owner' }
+      const q = askInput(input)
+      if (!q.ok) return q
+      const r = s.decisions.ask({ id: self, title: n.data.title }, q.question, q.choices)
+      if (!r.ok) return r
+      const id = r.decision.id
+      s.autonomy.noteDecision(self, n.data.title, `asked (${id}): ${q.question.replace(/\s+/g, ' ').slice(0, 200)}${q.choices ? ` [${q.choices.join(' / ')}]` : ''}`)
+      // the owner is away during a run: no point holding the card's turn
+      const d = s.autonomy.on ? undefined : await s.decisions.wait(id, DECISION_LIMITS.waitMs, signal)
+      if (d && d.state === 'answered') return { ok: true, id, answered: true, text: decisionMessage(d) }
+      if (d) return { ok: true, id, answered: false, text: decisionMessage(d) }
+      return { ok: true, id, answered: false, text: pendingMessage(id, s.autonomy.on) }
+    },
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
@@ -652,13 +720,46 @@ function notifyApproval(ctx: MainContext, s: WindowSession, a: Approval): void {
   if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
 }
 
+/** The last desktop notification for a card's question: at most one a minute per card. */
+const decisionNotified = new Map<string, number>()
+
+/** A card asked the owner something (ask_owner): Today has the row; a toast and the taskbar flash, at most once a minute per card. */
+function notifyDecision(s: WindowSession, d: Decision): void {
+  const now = Date.now()
+  if (now - (decisionNotified.get(d.card) ?? 0) < DECISION_LIMITS.notifyGapMs) return
+  decisionNotified.set(d.card, now)
+  if (Notification.isSupported()) {
+    const note = new Notification({ title: `${d.title} asks you`, body: d.question.replace(/\s+/g, ' ').slice(0, 200) })
+    note.on('click', () => {
+      if (!s.win.isDestroyed()) {
+        s.win.show()
+        s.win.focus()
+      }
+    })
+    note.show()
+  }
+  if (!s.win.isDestroyed() && !s.win.isFocused()) s.win.flashFrame(true)
+}
+
+/** The owner's answer to a card's question: back as the waiting tool call's result, else as a board message from the owner. */
+function answerDecision(s: WindowSession, id: string, answer: unknown, note: unknown, by: string): { ok: boolean; error?: string; warning?: string } {
+  if (typeof answer !== 'string' || (note !== undefined && typeof note !== 'string')) return { ok: false, error: 'bad answer' }
+  const r = s.decisions.answer(id, answer, note as string | undefined, by)
+  if (!r.ok) return r
+  const d = r.decision
+  s.autonomy.noteDecision(d.card, d.title, `answered (${d.id}) by ${by}: ${d.answer}${d.note ? ` — ${d.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`)
+  if (r.waited) return { ok: true }
+  const m = s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
+  return m.ok ? { ok: true } : { ok: true, warning: `answered, but the card was not told: ${m.error}` }
+}
+
 /** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
 export function createPhone(ctx: MainContext): PhoneServer {
   const win = (): WindowSession | undefined => ctx.windows.current()
   const handlers: PhoneHandlers = {
     board: () => {
       const s = win()
-      if (!s) return { project: '', autonomous: false, cards: [], approvals: [] }
+      if (!s) return { project: '', autonomous: false, cards: [], approvals: [], decisions: [] }
       const rank = (st: string | undefined): number => (st === 'needs-you' ? 0 : st === 'working' ? 1 : 2)
       const cards = [...s.board.nodes.values()]
         .filter((n) => n.data.kind === 'claude' || n.data.kind === 'conductor')
@@ -676,7 +777,8 @@ export function createPhone(ctx: MainContext): PhoneServer {
         .sort((a, b) => rank(a.status) - rank(b.status) || Number(b.conductor) - Number(a.conductor))
       // every window's requests, each id scoped to its window (each window counts A1, A2 … on its own)
       const approvals = ctx.windows.all().flatMap((w) => w.gate.pending().map((a) => ({ id: `${w.id}-${a.id}`, title: a.title, command: a.command, createdAt: a.createdAt, project: basename(w.board.projectRoot || '') })))
-      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, approvals }
+      const decisions = ctx.windows.all().flatMap((w) => w.decisions.pending().map((d) => ({ id: `${w.id}-${d.id}`, title: d.title, question: d.question, answers: answersOf(d), createdAt: d.createdAt, project: basename(w.board.projectRoot || '') })))
+      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, approvals, decisions }
     },
     prompt: (id, text) => {
       const s = ctx.windows.forNode(id)
@@ -695,6 +797,11 @@ export function createPhone(ctx: MainContext): PhoneServer {
       // a raw keystroke, not a bracketed paste: the permission dialog reads keys
       ctx.ptys.write(id, ANSWER_KEYS[key])
       return { ok: true }
+    },
+    answerDecision: (scoped, answer, note, device) => {
+      const m = /^(\d+)-(D\d+)$/.exec(scoped)
+      const s = m ? ctx.windows.all().find((w) => String(w.id) === m[1]) : undefined
+      return s && m ? answerDecision(s, m[2], answer, note, `phone ${device}`) : { ok: false, error: 'that question is gone (its window was closed)' }
     },
     resolveApproval: (scoped, approve) => {
       const m = /^(\d+)-(A\d+)$/.exec(scoped)
@@ -1155,6 +1262,7 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
   const state = newWatchdogState()
   const timer = setInterval(() => {
     if (s.win.isDestroyed()) return clearInterval(timer)
+    s.decisions.sweep()
     const minutes = ctx.store.getSettings().stallMinutes ?? DEFAULT_STALL_MINUTES
     if (s.autonomy.on) {
       watchdogReports([], state, Date.now(), minutes) // a run starts the count over
@@ -1305,6 +1413,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     }),
     mail: new Mailbox(log),
     gate: new GateKeeper(log),
+    decisions: new DecisionDesk(),
     grokBot: [],
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
@@ -1367,6 +1476,12 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.mail.on('change', (messages) => sendToRenderer(s, IPC.mailChanged, messages))
   s.gate.on('change', (approvals) => sendToRenderer(s, IPC.gateChanged, approvals))
   s.gate.on('asked', (a: Approval) => notifyApproval(ctx, s, a))
+  s.decisions.on('change', (list: Decision[]) => sendToRenderer(s, IPC.decisionsChanged, list))
+  s.decisions.on('asked', (d: Decision) => notifyDecision(s, d))
+  s.decisions.on('expired', (d: Decision) => {
+    s.autonomy.noteDecision(d.card, d.title, `expired (${d.id})`)
+    s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
+  })
   s.mail.on('mail', (m: { to: string }) => scheduleMailNudge(ctx, s, m.to))
   board.on('status', (p: AgentStatusPayload) => {
     if (p.status === 'idle' || p.status === 'done') scheduleMailNudge(ctx, s, p.nodeId)
@@ -1384,6 +1499,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
 export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): HookReply | void {
   const s = ctx.windows.forNode(nodeId)
   if (!s) return
+  noteActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
   const reply = mailReply(s, nodeId, event)
   // a Stop that mail turned into another round is not the end of the turn: no "done", no handoff, no report
@@ -1394,6 +1510,76 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   }
   s.board.applyHook(nodeId, event)
   return reply
+}
+
+/** Claude cards' transcripts and how far the topic reader got. */
+const transcripts = new Map<string, { path: string; offset: number; reading?: boolean; again?: boolean }>()
+const TOPIC_READ_CAP = 256 * 1024
+/** Events that end a step: the turn ended, a new prompt came in, the session (re)started or ended. */
+const STEP_ENDS = new Set(['Stop', 'StopFailure', 'UserPromptSubmit', 'SessionStart', 'SessionEnd'])
+
+/** What a Claude card is doing (the step its tool call announces) and its topic (the conversation title), for the board. */
+function noteActivity(s: WindowSession, nodeId: string, event: HookEvent): void {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return
+  const path = transcriptPath(event.transcript_path)
+  if (path && transcripts.get(nodeId)?.path !== path) transcripts.set(nodeId, { path, offset: 0 })
+  const step = stepOf(event)
+  if (step !== undefined) {
+    if (step !== n.data.doing) {
+      n.data.doing = step
+      sendToRenderer(s, IPC.boardActivity, { nodeId, doing: step })
+    }
+    return
+  }
+  if (!STEP_ENDS.has(event.hook_event_name)) return
+  if (n.data.doing) {
+    n.data.doing = undefined
+    sendToRenderer(s, IPC.boardActivity, { nodeId, doing: null })
+  }
+  if (event.hook_event_name === 'Stop' || event.hook_event_name === 'UserPromptSubmit') void readTopic(s, nodeId)
+}
+
+/** Read what the transcript gained since the last read (at most its last 256 KB) for a newer conversation title. */
+async function readTopic(s: WindowSession, nodeId: string): Promise<void> {
+  const t = transcripts.get(nodeId)
+  if (!t) return
+  if (t.reading) {
+    t.again = true
+    return
+  }
+  t.reading = true
+  try {
+    const fh = await open(t.path, 'r')
+    try {
+      const { size } = await fh.stat()
+      if (size < t.offset) t.offset = 0
+      const start = Math.max(t.offset, size - TOPIC_READ_CAP)
+      if (size <= start) return
+      const buf = Buffer.alloc(size - start)
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start)
+      // up to the last full line; a line still being written is read next time
+      const end = buf.subarray(0, bytesRead).lastIndexOf(10) + 1
+      if (end === 0) return
+      t.offset = start + end
+      const title = aiTitleOf(buf.subarray(0, end).toString('utf8'))
+      const n = s.board.nodes.get(nodeId)
+      if (title && n && title !== n.data.topic) {
+        n.data.topic = title
+        sendToRenderer(s, IPC.boardActivity, { nodeId, topic: title })
+      }
+    } finally {
+      await fh.close()
+    }
+  } catch {
+    // the transcript moved or is unreadable: the card keeps its last topic
+  } finally {
+    t.reading = false
+    if (t.again) {
+      t.again = false
+      void readTopic(s, nodeId)
+    }
+  }
 }
 
 /** Agent cards only (not terminals, notes, browsers), by id or an exact title (case-insensitive, unique). */
@@ -1593,9 +1779,16 @@ export function registerIpc(ctx: MainContext): void {
   })
   ptys.on('exit', (nodeId: string, code: number) => {
     running.delete(nodeId)
+    inboxes.delete(nodeId)
+    transcripts.delete(nodeId)
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
+    const ended = s?.board.nodes.get(nodeId)
+    if (s && ended?.data.doing) {
+      ended.data.doing = undefined
+      sendToRenderer(s, IPC.boardActivity, { nodeId, doing: null })
+    }
     if (!s) return
     s.board.setPtyAlive(nodeId, false)
     if (s.board.nodes.has(nodeId)) s.board.setStatus(nodeId, { status: 'ended', statusDetail: `exited (${code})` })
@@ -1737,6 +1930,7 @@ export function registerIpc(ctx: MainContext): void {
     s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
     s?.mail.load(mailFile(app.getPath('userData'), projectRoot))
     s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
+    for (const d of s?.decisions.load() ?? []) s?.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): another project was opened`)
     // check() never throws: anything unexpected holds every card
     const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
     // tasks from a board this app never wrote (a cloned repo) or one changed behind its back go to Notion only once they change here
@@ -1822,6 +2016,12 @@ export function registerIpc(ctx: MainContext): void {
     const s = sessionOf(e)
     if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
     return resolveApproval(s, id, approve === true)
+  })
+  ipcMain.handle(IPC.decisionsList, (e) => sessionOf(e)?.decisions.decisions ?? [])
+  ipcMain.handle(IPC.decisionsAnswer, (e, id: string, answer: string, note?: string) => {
+    const s = sessionOf(e)
+    if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
+    return answerDecision(s, id, answer, note, 'owner')
   })
   ipcMain.handle(IPC.grokBotList, (e) => sessionOf(e)?.grokBot ?? [])
   ipcMain.handle(IPC.grokBotResolve, (e, id: string, send: boolean) => {

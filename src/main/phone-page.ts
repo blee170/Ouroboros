@@ -19,6 +19,7 @@ export const PHONE_HTML = `<!doctype html>
   <section id="pair" hidden>
     <p>Open Ouroboros on your PC: Settings → Phone → <b>Pair a phone</b>, and scan the code with this phone's camera.</p>
   </section>
+  <section id="questions" hidden><h2>Questions</h2><div id="question-list"></div></section>
   <section id="approvals" hidden><h2>Approvals</h2><div id="approval-list"></div></section>
   <section id="cards"><div id="card-list"></div></section>
   <section id="report-box" hidden><h2>Morning report</h2><pre id="report"></pre></section>
@@ -145,6 +146,26 @@ function renderApproval(a) {
   box.appendChild(row)
   return box
 }
+function renderQuestion(q) {
+  var box = el('div', 'card needs')
+  var head = el('div', 'head')
+  head.appendChild(el('span', 'title', q.title))
+  head.appendChild(el('span', 'muted', (q.project ? q.project + ' · ' : '') + q.id))
+  box.appendChild(head)
+  box.appendChild(el('div', 'last', q.question))
+  var note = el('input', '')
+  note.placeholder = 'Note (optional)'
+  note.maxLength = 1000
+  box.appendChild(note)
+  var row = el('div', 'row')
+  q.answers.forEach(function (a, i) {
+    var b = el('button', i === 0 ? 'primary' : '', a)
+    b.addEventListener('click', function () { send('decisions/' + encodeURIComponent(q.id), { answer: a, note: note.value.trim() || undefined }) })
+    row.appendChild(b)
+  })
+  box.appendChild(row)
+  return box
+}
 function send(path, body) {
   return api('POST', path, body).then(function () { tick(); return true }).catch(function (e) { alert(e.message); return false })
 }
@@ -153,8 +174,15 @@ function render(board) {
   $('cards').hidden = !token()
   $('forget').hidden = !token()
   $('report-btn').hidden = !token()
-  if (!board) { $('approvals').hidden = true; $('card-list').textContent = ''; return }
+  if (!board) { $('approvals').hidden = true; $('questions').hidden = true; $('card-list').textContent = ''; return }
   $('state').textContent = board.project ? board.project + (board.autonomous ? ' · autonomous' : '') : ''
+  var qs = $('question-list')
+  var typing = document.activeElement && document.activeElement.tagName === 'INPUT' && qs.contains(document.activeElement)
+  if (!typing) {
+    qs.textContent = ''
+    ;(board.decisions || []).forEach(function (q) { qs.appendChild(renderQuestion(q)) })
+  }
+  $('questions').hidden = !(board.decisions || []).length
   var list = $('approval-list')
   list.textContent = ''
   board.approvals.forEach(function (a) { list.appendChild(renderApproval(a)) })

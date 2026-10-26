@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { setDragShield } from '@/lib/dragShield'
 import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow/react'
 import { STATUS_LABEL } from '@shared/status'
+import { shownDetail } from '@shared/doing'
 import type { BoardNode } from '@/store/board'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
@@ -41,6 +42,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     return () => subs.forEach((d) => d.dispose())
   }, [handle])
   const status = data.status ?? 'starting'
+  const detail = shownDetail(data)
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
@@ -111,9 +113,9 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span>{data.title}</span>
           </span>
         )}
-        <span className="status-text" title={data.statusDetail}>
+        <span className="status-text" title={[data.topic, detail].filter(Boolean).join('\n') || undefined}>
           {STATUS_LABEL[status]}
-          {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+          {detail ? ` · ${detail}` : ''}
         </span>
         <span className="spacer" />
         {unreadMail > 0 && (
@@ -153,11 +155,12 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         {far && (
           <div className="card-summary">
             <div className="summary-title">{data.title}</div>
+            {data.topic && <div className="summary-topic">{data.topic}</div>}
             <div className="summary-status">
               <StateGlyph status={status} size={22} />
               <span>
                 {STATUS_LABEL[status]}
-                {data.statusDetail ? ` · ${data.statusDetail}` : ''}
+                {detail ? ` · ${detail}` : ''}
               </span>
             </div>
             {summary && <div className="summary-text">{summary}</div>}

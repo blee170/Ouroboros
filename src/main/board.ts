@@ -58,6 +58,9 @@ export class Board extends EventEmitter {
         data.lastEventAt = prev.data.lastEventAt ?? data.lastEventAt
         data.lastStopAt = prev.data.lastStopAt ?? data.lastStopAt
         data.endedAt = prev.data.endedAt ?? data.endedAt
+        // main sets these from hooks; the renderer's copy may lag behind
+        data.doing = prev.data.doing
+        data.topic = prev.data.topic
         data.sessionId = data.sessionId ?? prev.data.sessionId
       }
       next.set(n.id, { id: n.id, data })

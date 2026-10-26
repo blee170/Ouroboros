@@ -143,6 +143,14 @@ const api: OuroborosApi = {
     resolve: (id, approve) => ipcRenderer.invoke(IPC.gateResolve, id, approve),
     onChange: (cb) => on(IPC.gateChanged, cb)
   },
+  grokBot: {
+    list: () => ipcRenderer.invoke(IPC.grokBotList),
+    resolve: (id, send) => ipcRenderer.invoke(IPC.grokBotResolve, id, send),
+    onChange: (cb) => on(IPC.grokBotChanged, cb),
+    setKey: (key) => ipcRenderer.invoke(IPC.grokBotSetKey, key),
+    status: () => ipcRenderer.invoke(IPC.grokBotStatus),
+    test: () => ipcRenderer.invoke(IPC.grokBotTest)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

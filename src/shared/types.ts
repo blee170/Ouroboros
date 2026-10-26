@@ -252,6 +252,10 @@ export interface AppSettings {
   notionUpdatesDatabaseId?: string
   /** The version whose release notes were last published, so each goes up once. */
   notionLastUpdate?: string
+  /** A Grok Bot routine's webhook (https://api2.cursor.sh/automations/webhook/…): cards may hand tasks to it, each sent only when the owner says so. */
+  grokBotUrl?: string
+  /** That routine's key (crsr_…), stored encrypted (same scheme as notionTokenEnc). */
+  grokBotKeyEnc?: string
   /** Mirror the open project's tasks, morning reports and board into the Obsidian vault below (default off). */
   obsidianExport?: boolean
   /** The Obsidian vault folder; the export writes only under its `Ouroboros/<project>/` folder. */

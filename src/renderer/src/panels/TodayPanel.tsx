@@ -6,6 +6,7 @@ import { needsYou, todayView, type Need, type NeedKind, type TodayCard } from '@
 
 const KIND_LABEL: Record<NeedKind, string> = {
   approval: 'approve',
+  handoff: 'grok bot',
   permission: 'prompt',
   held: 'held',
   decision: 'decide',
@@ -23,7 +24,7 @@ export function todayCards(s: Pick<BoardState, 'nodes' | 'attention' | 'workingS
 }
 
 /** How many things wait on the owner: the Today tab's badge. */
-export const needsCount = (s: BoardState): number => needsYou({ cards: todayCards(s), tasks: s.tasks, approvals: s.approvals, held: s.held }).length
+export const needsCount = (s: BoardState): number => needsYou({ cards: todayCards(s), tasks: s.tasks, approvals: s.approvals, held: s.held, handoffs: s.grokHandoffs }).length
 
 const hhmm = (t: number): string => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -36,6 +37,7 @@ export function TodayPanel() {
   const nodes = useBoard((s) => s.nodes)
   const tasks = useBoard((s) => s.tasks)
   const approvals = useBoard((s) => s.approvals)
+  const handoffs = useBoard((s) => s.grokHandoffs)
   const held = useBoard((s) => s.held)
   const attention = useBoard((s) => s.attention)
   const workingSince = useBoard((s) => s.workingSince)
@@ -51,7 +53,10 @@ export function TodayPanel() {
   }, [])
 
   const cards = useMemo(() => todayCards({ nodes, attention, workingSince }), [nodes, attention, workingSince])
-  const needs = useMemo(() => needsYou({ cards, tasks, approvals, held }), [cards, tasks, approvals, held])
+  const needs = useMemo(() => needsYou({ cards, tasks, approvals, held, handoffs }), [cards, tasks, approvals, held, handoffs])
+  const [sending, setSending] = useState<ReadonlySet<string>>(new Set())
+  const [reviewing, setReviewing] = useState<string | null>(null)
+  const routineTail = useBoard((s) => (s.settings.grokBotUrl ?? '').split('/').pop()?.slice(-8) || '(not set)')
   const today = useMemo(() => todayView({ cards, tasks, now }), [cards, tasks, now])
 
   const jump = (id: string | undefined): void => {
@@ -66,6 +71,19 @@ export function TodayPanel() {
   const resolve = async (id: string, approve: boolean): Promise<void> => {
     const r = await window.ouroboros.gate.resolve(id, approve)
     setError(r.ok ? (r.warning ?? '') : (r.error ?? 'failed'))
+  }
+  const decideHandoff = async (id: string, send: boolean): Promise<void> => {
+    setSending((prev) => new Set(prev).add(id))
+    try {
+      const r = await window.ouroboros.grokBot.resolve(id, send)
+      setError(r.ok ? (r.warning ?? '') : (r.error ?? 'failed'))
+    } finally {
+      setSending((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
   }
   const openReport = async (path: string): Promise<void> => {
     const r = await window.ouroboros.shell.openPath(path)
@@ -90,6 +108,47 @@ export function TodayPanel() {
                 </button>
                 {n.at !== undefined && <span className="muted small today-ago">{agoText(n.at, now)}</span>}
               </div>
+              {n.handoffId && (() => {
+                const h = handoffs.find((x) => x.id === n.handoffId)
+                if (!h) return null
+                const open = reviewing === h.id
+                const busy = sending.has(h.id)
+                return (
+                  <>
+                    {open && (
+                      <div className="today-handoff">
+                        <div className="muted small">
+                          Everything below leaves this machine, to Grok Bot routine <code>…{routineTail}</code>:
+                        </div>
+                        <div className="small">
+                          <b>Task</b>
+                        </div>
+                        <pre>{h.task}</pre>
+                        {h.context && (
+                          <>
+                            <div className="small">
+                              <b>Context</b> <span className="muted">({h.context.length} characters)</span>
+                            </div>
+                            <pre>{h.context}</pre>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <div className="row today-actions">
+                      <button className="btn small" onClick={() => setReviewing(open ? null : h.id)} aria-expanded={open}>
+                        {open ? 'Hide' : `Review${h.context ? ' task and context' : ''}`}
+                      </button>
+                      <span className="spacer" />
+                      <button className="btn small" disabled={busy} onClick={() => void decideHandoff(h.id, false)}>
+                        Discard
+                      </button>
+                      <button className="btn small primary" disabled={busy || !open} title={open ? 'Send exactly what is shown above' : 'Review what would be sent first'} onClick={() => void decideHandoff(h.id, true)}>
+                        {busy ? 'Sending…' : 'Send to Grok Bot'}
+                      </button>
+                    </div>
+                  </>
+                )
+              })()}
               {n.approvalId && (
                 <div className="row today-actions">
                   <span className="spacer" />

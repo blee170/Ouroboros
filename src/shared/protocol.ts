@@ -8,6 +8,7 @@ import type { UsageSnapshot } from './usage'
 import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
 import type { Approval } from './gate'
+import type { GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 
 /** IPC channel names shared by main, preload and renderer. */
@@ -47,6 +48,12 @@ export const IPC = {
   gateList: 'gate:list',
   gateResolve: 'gate:resolve',
   gateChanged: 'gate:changed',
+  grokBotList: 'grokBot:list',
+  grokBotResolve: 'grokBot:resolve',
+  grokBotChanged: 'grokBot:changed',
+  grokBotSetKey: 'grokBot:setKey',
+  grokBotStatus: 'grokBot:status',
+  grokBotTest: 'grokBot:test',
   phoneStatus: 'phone:status',
   phoneInterfaces: 'phone:interfaces',
   phoneConfigure: 'phone:configure',
@@ -481,6 +488,18 @@ export interface OuroborosApi {
     list(): Promise<Approval[]>
     resolve(id: string, approve: boolean): Promise<{ ok: boolean; error?: string; warning?: string }>
     onChange(cb: (approvals: Approval[]) => void): () => void
+  }
+  grokBot: {
+    /** Tasks cards asked to hand to Grok Bot, and what became of them. */
+    list(): Promise<GrokHandoff[]>
+    /** Send it to the routine's webhook, or discard it; the asking card is told by board mail. */
+    resolve(id: string, send: boolean): Promise<{ ok: boolean; error?: string; warning?: string }>
+    onChange(cb: (handoffs: GrokHandoff[]) => void): () => void
+    /** Store (encrypted) the routine's key; empty string clears it. */
+    setKey(key: string): Promise<{ ok: boolean; hasKey: boolean }>
+    status(): Promise<{ hasKey: boolean }>
+    /** POST a test body ({ source: "ouroboros", kind: "test" }) to the saved webhook: whether a run started. */
+    test(): Promise<{ ok: true; runUuid?: string } | { ok: false; error: string }>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

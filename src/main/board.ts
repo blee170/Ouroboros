@@ -44,6 +44,11 @@ export class Board extends EventEmitter {
     return this.roleTurn.has(nodeId)
   }
 
+  /** The role turn ended without its Stop (the owner interrupted it). */
+  endRoleTurn(nodeId: string): void {
+    this.roleTurn.delete(nodeId)
+  }
+
   sync(payload: BoardSyncPayload): void {
     this.projectRoot = payload.projectRoot
     const next = new Map<string, NodeMeta>()

@@ -4,6 +4,23 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **What a task needs from you, in plain words, with a button.** A card that blocks a task on you now says what it needs (`task_update owner_action`), written for someone who does not code, and the Tasks and Today tabs show it as a guide instead of a one-line reason. **Needs your OK** (a card does it once you say yes): the request and what the card will do, *Approve* (the task goes back to its card, which is messaged `APPROVED BY OWNER` and, if idle, woken to carry on) or *Not now* (it stays blocked, on hold, and the card is told not to). **Only you can do this** (production database or migration, money, accounts, secrets): numbered steps naming the window and the button, the exact text to paste with a *Copy* button, how to check it worked, a box to paste what you saw, and *Done, I did it* (the task is done and the card is messaged with what you pasted, to check it and carry on); there is no Approve on these. A note goes with any answer. Older tasks with only an `APPROVAL NEEDED:` reason get *Approve*, *I did it myself* and *Not now*. You no longer need to type `APPROVED BY OWNER` to the Conductor. Text boxes in an open task grow with what they hold. Your answer goes to the card that asked, even if another card touches the task later; an answer to a request that changed after you read it is refused (read it again); long runs of blank lines and blank-looking characters are taken out of the text to copy, so nothing hides below a harmless start; what you paste back goes in full only to that card (the task keeps one line). An approval covers what the task asked and nothing else; the action gates and Claude Code's own checks still apply.
+
+### Verified (owner actions)
+- Unit tests (input checks and limits, invisible characters, blocked-only, the asker kept, dropped on claim or a new reason, the board file, task_list, Today, the three messages); built-app probe with a stand-in `claude`: a guide per waiting task in Tasks and Today, Copy puts the exact SQL on the clipboard, Approve sends the task back to its card (doing) with an `APPROVED BY OWNER` message that wakes the idle card through its inbox, Done marks it done and messages the pasted output, Not now holds it and tells the card, a do task cannot be approved, a changed request is refused.
+- **Not verified live**: a real Conductor acting on the approval message and writing good owner actions on its own.
+
+### Fixed
+- **Esc during a card's question.** Pressing Esc (or Ctrl+C) while a Claude card waited on `ask_owner` left the call waiting in the board's MCP server, which Claude Code does not tell, so an answer you gave in the next 45 seconds went nowhere. When the card does not take an answer within 10 seconds, it now gets it again as a board message from you.
+- **A card you interrupted stayed "working".** Claude Code runs no hook when a turn is interrupted, so the card showed working until its next prompt and board mail waited for a turn end that never came. The card now goes idle ("interrupted") when its interrupt line shows within 5 seconds of the key, and mail wakes it as usual.
+
+### Verified
+- Live, with a real Claude Code 2.1.310 card on this machine (built app, temporary profile and project): an idle card woken by an owner message through its inbox, nothing typed into its terminal; `ask_owner` answered within the wait (the call returned the answer and note) and after it (the call returned `pending`, the late answer arrived as a message and woke the card); Esc during the wait, then an answer (the card went idle and got the answer by message); a message to a working card used in its reply. `~/.claude/settings.json` unchanged before and after. Unit tests for the interrupt key and line.
+- **Not verified live**: Codex and Gemini cards calling `ask_owner`; the inbox on macOS and Linux.
+
 ## [0.13.0] — 2026-10-26
 
 ### Added

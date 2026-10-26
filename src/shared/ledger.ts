@@ -6,6 +6,7 @@
  * Rules kept here, not in prompts: done needs a result, blocked needs a reason, a claim waits for its
  * dependencies, two live cards cannot own one task, dependency graphs have no cycles.
  */
+import { ownerActionInput, type OwnerAction } from './owner-action'
 
 export type TaskState = 'todo' | 'doing' | 'blocked' | 'done' | 'dropped'
 export const TASK_STATES: readonly TaskState[] = ['todo', 'doing', 'blocked', 'done', 'dropped']
@@ -28,6 +29,8 @@ export interface Task {
   reason?: string
   /** What was done, required for done. */
   result?: string
+  /** blocked: what the owner is asked, in plain words (kept only while blocked) */
+  ownerAction?: OwnerAction
   /** Card id, or `owner` for the human. */
   createdBy: string
   /** who last changed it: a card id, or `owner` for the Tasks tab (the owner's own edits are the trust signal) */
@@ -58,6 +61,8 @@ export interface TaskPatch {
   owner?: string | null
   reason?: string
   result?: string
+  /** blocked only; null clears it */
+  ownerAction?: unknown
 }
 
 export interface TaskFilter {
@@ -204,6 +209,7 @@ export function claimTask(data: LedgerData, id: string, cardId: string, liveCard
   }
   const next: Task = { ...task, owner: cardId, state: 'doing', updatedBy: cardId, updatedAt: now }
   delete next.reason
+  delete next.ownerAction
   return { ok: true, task: next, data: replace(data, next) }
 }
 
@@ -247,6 +253,19 @@ export function updateTask(data: LedgerData, id: string, patch: TaskPatch, by: s
     if (result) next.result = result
     else delete next.result
   }
+  if (patch.ownerAction !== undefined) {
+    const a = ownerActionInput(patch.ownerAction)
+    if (!a.ok) return a
+    if (a.action) {
+      // the card that asked gets the owner's answer, whoever changes the task later
+      next.ownerAction = { ...a.action, by: next.updatedBy ?? OWNER }
+      // the reason says it waits on the owner, so everything that lists owner decisions sees it
+      if (!/^\s*APPROVAL NEEDED/i.test(next.reason ?? '')) next.reason = cleanLine(`APPROVAL NEEDED: ${next.reason || a.action.ask}`, REASON_MAX)
+    } else delete next.ownerAction
+  } else if (patch.reason !== undefined) {
+    // a new reason without a new owner action: the old one no longer says what the task waits on
+    delete next.ownerAction
+  }
   if (patch.state !== undefined) {
     if (!TASK_STATES.includes(patch.state)) return { ok: false, error: `bad state: ${cleanLine(patch.state, 20)} (todo, doing, blocked, done, dropped)` }
     next.state = patch.state
@@ -261,6 +280,11 @@ export function updateTask(data: LedgerData, id: string, patch: TaskPatch, by: s
     next.state = 'doing'
   }
   if (next.state === 'done' || next.state === 'dropped') delete next.owner
+  // what the owner is asked belongs to the block: a task that moves on drops it, and an open task cannot take one
+  if (next.state !== 'blocked') {
+    if (patch.ownerAction) return { ok: false, error: 'owner_action goes with state=blocked (and a reason)' }
+    delete next.ownerAction
+  }
   if (next.state === 'doing' && !next.owner) next.state = 'todo' // owner= cleared on a doing task
   return { ok: true, task: next, data: replace(data, next) }
 }
@@ -324,6 +348,7 @@ export function formatTasks(tasks: Task[], all: Task[], titles: ReadonlyMap<stri
     lines.push(bits.join(' · '))
     if (t.detail) lines.push(`    detail: ${cleanLine(t.detail, 200)}`)
     if (t.reason) lines.push(`    reason: ${t.reason}`)
+    if (t.ownerAction) lines.push(`    owner action (${t.ownerAction.kind}): ${t.ownerAction.ask}`)
     if (t.result) lines.push(`    result: ${cleanLine(t.result, 200)}`)
   }
   if (tasks.length > LIST_MAX) lines.push(`… ${tasks.length - LIST_MAX} more (filter by state, owner or parent)`)
@@ -362,6 +387,10 @@ export function sanitizeLedger(raw: unknown): LedgerData {
     if (reason) t.reason = reason
     const result = cleanText(x.result, RESULT_MAX)
     if (result) t.result = result
+    if (state === 'blocked' && x.ownerAction) {
+      const a = ownerActionInput(x.ownerAction)
+      if (a.ok && a.action) t.ownerAction = { ...a.action, by: cleanLine((x.ownerAction as { by?: unknown }).by, 80) || OWNER }
+    }
     seen.add(id)
     max = Math.max(max, taskNumber(id))
     out.tasks.push(t)

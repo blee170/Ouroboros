@@ -3,6 +3,8 @@ import { useReactFlow } from '@xyflow/react'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
 import { TASK_STATES, type Task, type TaskState } from '@shared/ledger'
+import { ownerNeed } from '@shared/owner-action'
+import { OwnerActionBox } from './OwnerAction'
 
 const GROUPS: Array<{ state: TaskState; label: string; hint: string }> = [
   { state: 'blocked', label: 'Needs you', hint: 'Blocked tasks: a decision, a permission or something a card could not do' },
@@ -54,6 +56,9 @@ export function TasksPanel() {
 
   const row = (t: Task): React.ReactElement => {
     const expanded = Boolean(open[t.id])
+    const need = ownerNeed(t)
+    const askedBy = t.ownerAction ? t.ownerAction.by : t.updatedBy
+    const asker = askedBy && askedBy !== 'owner' ? titles.get(askedBy) : undefined
     return (
       <li key={t.id} className={`task-row${expanded ? ' open' : ''}`}>
         <div className="task-line">
@@ -70,7 +75,8 @@ export function TasksPanel() {
             ))}
           </select>
         </div>
-        {(t.owner || t.deps.length > 0 || t.reason) && (
+        {need && <OwnerActionBox task={t} cardTitle={asker} />}
+        {(t.owner || t.deps.length > 0 || (t.reason && !need)) && (
           <div className="task-meta">
             {t.owner && (
               <button className="link" onClick={() => jump(t.owner!)} title="Jump to the card">
@@ -78,7 +84,7 @@ export function TasksPanel() {
               </button>
             )}
             {t.deps.length > 0 && <span className="muted">after {t.deps.join(', ')}</span>}
-            {t.reason && <span className={t.state === 'blocked' ? 'task-reason warn' : 'task-reason muted'}>{t.reason}</span>}
+            {t.reason && !need && <span className={t.state === 'blocked' ? 'task-reason warn' : 'task-reason muted'}>{t.reason}</span>}
           </div>
         )}
         {expanded && <TaskDetails task={t} creator={t.createdBy === 'owner' ? 'you' : (titles.get(t.createdBy) ?? `card ${t.createdBy}`)} onSave={(patch) => update(t.id, patch)} />}
@@ -134,6 +140,9 @@ export function TasksPanel() {
   )
 }
 
+/** A text box tall enough for what it holds (about 36 characters a line in the side panel), 2 to 10 lines. */
+const rowsFor = (s: string): number => Math.min(10, Math.max(2, s.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 36)), 0)))
+
 function TaskDetails({ task, creator, onSave }: { task: Task; creator: string; onSave: (patch: { detail?: string; reason?: string; result?: string; state?: TaskState }) => Promise<boolean> }) {
   const [detail, setDetail] = useState(task.detail ?? '')
   const [reason, setReason] = useState(task.reason ?? '')
@@ -156,15 +165,15 @@ function TaskDetails({ task, creator, onSave }: { task: Task; creator: string; o
     <div className="task-details">
       <label>
         <span>Detail</span>
-        <textarea className="text" rows={2} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="what to do" />
+        <textarea className="text" rows={rowsFor(detail)} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="what to do" />
       </label>
       <label>
         <span>Reason</span>
-        <textarea className="text" rows={1} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why blocked or dropped (APPROVAL NEEDED: … when it is your call)" />
+        <textarea className="text" rows={rowsFor(reason)} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why blocked or dropped (APPROVAL NEEDED: … when it is your call)" />
       </label>
       <label>
         <span>Result</span>
-        <textarea className="text" rows={2} value={result} onChange={(e) => setResult(e.target.value)} placeholder="what was done and how it was checked (needed for done)" />
+        <textarea className="text" rows={rowsFor(result)} value={result} onChange={(e) => setResult(e.target.value)} placeholder="what was done and how it was checked (needed for done)" />
       </label>
       <div className="row right">
         {task.state !== 'done' && (

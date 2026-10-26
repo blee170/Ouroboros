@@ -66,3 +66,18 @@ export function aiTitleOf(chunk: string): string | undefined {
 export function shownDetail(d: { status?: string; statusDetail?: string; doing?: string }): string | undefined {
   return d.status === 'working' && d.doing ? d.doing : d.statusDetail
 }
+
+/** Pure: a keystroke that interrupts Claude Code's turn (Esc, or Ctrl+C), sent on its own. */
+export function isInterruptKey(data: string): boolean {
+  return data === '\x1b' || data === '\x03'
+}
+
+/**
+ * Pure: whether terminal output shows Claude Code's interrupt line ("⎿ Interrupted · What should Claude do instead?").
+ * Claude Code runs no hook when a turn is interrupted, so this is the only sign the turn ended. Escape sequences and
+ * spacing are dropped first: the terminal draws the line with cursor moves, not spaces.
+ */
+export function showsInterrupt(output: string): boolean {
+  const flat = output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\s+/g, '')
+  return /Interrupted(·|byuser)/.test(flat)
+}

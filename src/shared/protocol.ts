@@ -44,6 +44,7 @@ export const IPC = {
   tasksList: 'tasks:list',
   tasksCreate: 'tasks:create',
   tasksUpdate: 'tasks:update',
+  tasksOwner: 'tasks:owner',
   tasksChanged: 'tasks:changed',
   mailList: 'mail:list',
   mailSend: 'mail:send',
@@ -488,6 +489,8 @@ export interface OuroborosApi {
     list(): Promise<Task[]>
     create(input: TaskInput): Promise<LedgerApiResult>
     update(id: string, patch: TaskPatch): Promise<LedgerApiResult>
+    /** The owner's answer to a blocked task that waits on them: approve (the card goes ahead), hold, or did (they did it themselves; text is what they paste back). The card is told by board mail. shownAt is the task's updatedAt the owner read: a task changed since is refused. */
+    owner(id: string, choice: 'approve' | 'hold' | 'did', text: string | undefined, shownAt: number): Promise<{ ok: boolean; error?: string; warning?: string }>
     /** Main pushes the full list after every change (tools, the owner, a card that ended). */
     onChange(cb: (tasks: Task[]) => void): () => void
   }

@@ -53,7 +53,7 @@ export interface RolesListing {
 /** Appended to every specialist prompt: how a card on the board receives work and reports it. */
 export const BOARD_ROLE_FOOTER = [
   '## On this Ouroboros board',
-  'You are this specialist as one card on an Ouroboros board. Work arrives as messages from the Conductor card or from the owner; other cards cannot see your screen, so everything they need goes in your reply. Work in the folder you were started in. When a task is done, end your reply with a short RESULT: section (what you produced, where it is, how you checked it). Anything only a human may decide (spending money, sending anything outside this machine, production changes, deleting data) goes under APPROVAL NEEDED: instead of being done.'
+  'You are this specialist as one card on an Ouroboros board. Work arrives as messages from the Conductor card or from the owner; other cards cannot see your screen, so everything they need goes in your reply. Work in the folder you were started in. When a task is done, end your reply with a short RESULT: section (what you produced, where it is, how you checked it). Anything only a human may decide (spending money, sending anything outside this machine, production changes, deleting data) goes under APPROVAL NEEDED: instead of being done, written so someone who does not code can act on it: what to approve or do, numbered steps naming the window and the button, the exact text to paste, and how to check it worked.'
 ].join('\n')
 
 /** Frontmatter (`key: value` lines between `---` fences) and the markdown body of an agent file. */

@@ -20,7 +20,7 @@ const REPLY_EVENTS = new Set(['Stop', 'UserPromptSubmit', 'PostToolUse'])
 export interface ApiHandlers {
   listAgents(): unknown
   /** Queue a message from `from` (the caller's own card id) to another card. */
-  mailSend(input: { to: string; body: string; kind?: string; reply_to?: string }, from: string): { ok: true; id: string; to: string } | { ok: false; error: string }
+  mailSend(input: { to: string; body: string; kind?: string; reply_to?: string }, from: string): { ok: true; id: string; to: string; delivery?: string } | { ok: false; error: string }
   /** The caller's inbox (marked delivered); unreadOnly = not yet acknowledged. */
   mailInbox(self: string, unreadOnly: boolean): { text: string; count: number }
   mailAck(id: string, self: string): { ok: boolean; error?: string }

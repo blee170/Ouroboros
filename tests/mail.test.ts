@@ -168,3 +168,48 @@ describe('Mailbox', () => {
     box.dispose()
   })
 })
+
+describe('loop guard', () => {
+  const t2: MailTopology = { exists: () => true, isConductor: (id) => id === 'chief', parentOf: () => undefined, linked: () => true }
+  it('stops a reply chain of agents after the limit, and the owner resets it', () => {
+    let data = EMPTY_MAIL
+    let last: string | undefined
+    let now = 0
+    for (let i = 0; i < MAIL_LIMITS.agentThread; i++) {
+      const from = i % 2 ? 'b' : 'a'
+      const r = sendMail(data, { from, to: from === 'a' ? 'b' : 'a', body: `m${i}`, replyTo: last }, (now += 60_000), t2)
+      if (!r.ok) throw new Error(r.error)
+      data = r.data
+      last = r.mail.id
+    }
+    expect(sendMail(data, { from: 'a', to: 'b', body: 'one more', replyTo: last }, (now += 60_000), t2)).toMatchObject({ ok: false, error: expect.stringMatching(/without the owner/) })
+    const owner = sendMail(data, { from: OWNER, to: 'a', body: 'go on', replyTo: last }, (now += 60_000), t2)
+    if (!owner.ok) throw new Error(owner.error)
+    expect(owner.mail.depth).toBe(0)
+    expect(sendMail(owner.data, { from: 'a', to: 'b', body: 'resumed', replyTo: owner.mail.id }, (now += 60_000), t2)).toMatchObject({ ok: true, mail: { depth: 1 } })
+  })
+  it('stops two cards going back and forth without replies', () => {
+    let data = EMPTY_MAIL
+    for (let i = 0; i < MAIL_LIMITS.pairMessages; i++) {
+      const r = sendMail(data, { from: i % 2 ? 'b' : 'a', to: i % 2 ? 'a' : 'b', body: `ping ${i}` }, i * 10_000, t2)
+      if (!r.ok) throw new Error(r.error)
+      data = r.data
+    }
+    expect(sendMail(data, { from: 'a', to: 'b', body: 'again' }, 125_000, t2)).toMatchObject({ ok: false, error: expect.stringMatching(/back-and-forth/) })
+    expect(sendMail(data, { from: 'a', to: 'c', body: 'someone else' }, 125_000, t2).ok).toBe(true)
+    expect(sendMail(data, { from: 'a', to: 'b', body: 'later' }, 11 * 60_000, t2).ok).toBe(true)
+  })
+})
+
+describe('deliveryNote', () => {
+  it('says when the recipient sees it', async () => {
+    const { deliveryNote } = await import('../src/shared/mail')
+    expect(deliveryNote({ status: 'idle', running: true }, true)).toMatch(/^delivered: .*woken/)
+    expect(deliveryNote({ status: 'idle', running: true }, false)).toMatch(/typed/)
+    expect(deliveryNote({ status: 'working', running: true }, true)).toMatch(/next tool call/)
+    expect(deliveryNote({ status: 'needs-you', running: true }, true)).toMatch(/waits on the owner/)
+    expect(deliveryNote({ status: 'idle', engine: 'codex', running: true }, false)).toMatch(/check_inbox/)
+    expect(deliveryNote({ status: 'idle', running: false }, true)).toMatch(/not running/)
+    expect(deliveryNote(undefined, false)).toMatch(/not running/)
+  })
+})

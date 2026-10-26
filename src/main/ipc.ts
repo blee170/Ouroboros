@@ -33,7 +33,7 @@ import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
-import { cleanTitle, envelope, type MailTopology } from '@shared/mail'
+import { cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -329,7 +329,9 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const to = resolveMailTarget(board, input.to)
       if (!to) return { ok: false, error: `no agent card "${String(input.to).slice(0, 80)}" on this board (use an id from list_agents or an exact title)` }
       const r = s.mail.send({ from, to, body: input.body, kind: input.kind, replyTo: input.reply_to }, mailTopology(board))
-      return r.ok ? { ok: true, id: r.mail.id, to } : r
+      if (!r.ok) return r
+      const n = board.nodes.get(to)?.data
+      return { ok: true, id: r.mail.id, to, delivery: deliveryNote(n && { status: n.status, statusDetail: n.statusDetail, engine: n.engine, running: Boolean(n.ptyAlive) }, hasInbox(to)) }
     },
     mailInbox: (self, unreadOnly) => {
       const list = s.mail.inbox(self, unreadOnly)

@@ -71,7 +71,7 @@ server.registerTool(
   {
     title: 'Message another card',
     description:
-      'Send a short message to another agent card on the board (by id from list_agents, or its exact title). Use it for status, questions, a finished piece of work (kind=worker_done) or something that needs a decision (kind=escalation) - not to hand out a new task. A worker may message its parent, the Conductor, or a card it shares a handoff line with; the Conductor may message anyone. Sending only queues it: the recipient gets it before it ends its turn, after its next tool call, or with a short prompt if it is idle. Reply to a message with reply_to.',
+      'Send a short message to another agent card on the board (by id from list_agents, or its exact title). Use it for status, questions, a finished piece of work (kind=worker_done) or something that needs a decision (kind=escalation) - not to hand out a new task. A worker may message its parent, the Conductor, or a card it shares a handoff line with; the Conductor may message anyone. The result says when the recipient sees it (an idle Claude card is woken with it; a working one gets it after its next tool call). Reply to a message with reply_to. Agents answering agents stop after 8 messages in a thread, or 12 between two cards in 10 minutes, without a word from the owner: then ask the owner instead of carrying on.',
     inputSchema: {
       to: z.string().min(1).max(200).describe('Recipient card id, or its exact title'),
       body: z.string().min(1).max(8000).describe('The message (plain text, at most 8000 characters)'),

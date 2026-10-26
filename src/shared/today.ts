@@ -2,6 +2,7 @@
  * The "Today" tab: what needs the owner now, ranked, and what happened today. Pure: the renderer passes in its
  * store (cards, tasks, approvals, held cards) and draws the result.
  */
+import type { Decision } from './decisions'
 import { ownerMarker } from './announce'
 import type { HeldCard } from './board-trust'
 import type { Approval } from './gate'
@@ -42,13 +43,18 @@ export interface Need {
   approvalId?: string
   /** a Grok Bot handoff waiting for Send / Discard */
   handoffId?: string
+  /** a card's question (ask_owner) waiting for an answer */
+  decisionId?: string
 }
 
 const APPROVAL_RE = /^\s*APPROVAL NEEDED\s*[:—–-]?\s*/i
 const oneLine = (s: string | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim()
 
-export function needsYou(o: { cards: TodayCard[]; tasks: Task[]; approvals: Approval[]; held: HeldCard[]; handoffs?: GrokHandoff[] }): Need[] {
+export function needsYou(o: { cards: TodayCard[]; tasks: Task[]; approvals: Approval[]; held: HeldCard[]; handoffs?: GrokHandoff[]; decisions?: Decision[] }): Need[] {
   const out: Need[] = []
+  for (const d of o.decisions ?? []) {
+    if (d.state === 'pending') out.push({ key: `q:${d.id}`, kind: 'decision', title: d.title, text: oneLine(d.question).slice(0, 300), at: d.createdAt, cardId: d.card, decisionId: d.id })
+  }
   for (const h of o.handoffs ?? []) {
     if (h.state !== 'pending') continue
     const text = oneLine(h.task).slice(0, 300)

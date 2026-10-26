@@ -3,6 +3,7 @@ import { useReactFlow } from '@xyflow/react'
 import { useBoard } from '@/store/board'
 import { agoText } from '@shared/usage'
 import { needsYou, todayView, type Need, type NeedKind, type TodayCard } from '@shared/today'
+import { answersOf, DECISION_LIMITS } from '@shared/decisions'
 
 const KIND_LABEL: Record<NeedKind, string> = {
   approval: 'approve',
@@ -24,7 +25,7 @@ export function todayCards(s: Pick<BoardState, 'nodes' | 'attention' | 'workingS
 }
 
 /** How many things wait on the owner: the Today tab's badge. */
-export const needsCount = (s: BoardState): number => needsYou({ cards: todayCards(s), tasks: s.tasks, approvals: s.approvals, held: s.held, handoffs: s.grokHandoffs }).length
+export const needsCount = (s: BoardState): number => needsYou({ cards: todayCards(s), tasks: s.tasks, approvals: s.approvals, held: s.held, handoffs: s.grokHandoffs, decisions: s.decisions }).length
 
 const hhmm = (t: number): string => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -37,6 +38,8 @@ export function TodayPanel() {
   const nodes = useBoard((s) => s.nodes)
   const tasks = useBoard((s) => s.tasks)
   const approvals = useBoard((s) => s.approvals)
+  const decisions = useBoard((s) => s.decisions)
+  const [notes, setNotes] = useState<Record<string, string>>({})
   const handoffs = useBoard((s) => s.grokHandoffs)
   const held = useBoard((s) => s.held)
   const attention = useBoard((s) => s.attention)
@@ -53,7 +56,7 @@ export function TodayPanel() {
   }, [])
 
   const cards = useMemo(() => todayCards({ nodes, attention, workingSince }), [nodes, attention, workingSince])
-  const needs = useMemo(() => needsYou({ cards, tasks, approvals, held, handoffs }), [cards, tasks, approvals, held, handoffs])
+  const needs = useMemo(() => needsYou({ cards, tasks, approvals, held, handoffs, decisions }), [cards, tasks, approvals, held, handoffs, decisions])
   const [sending, setSending] = useState<ReadonlySet<string>>(new Set())
   const [reviewing, setReviewing] = useState<string | null>(null)
   const routineTail = useBoard((s) => (s.settings.grokBotUrl ?? '').split('/').pop()?.slice(-8) || '(not set)')
@@ -71,6 +74,11 @@ export function TodayPanel() {
   const resolve = async (id: string, approve: boolean): Promise<void> => {
     const r = await window.ouroboros.gate.resolve(id, approve)
     setError(r.ok ? (r.warning ?? '') : (r.error ?? 'failed'))
+  }
+  const answer = async (id: string, value: string): Promise<void> => {
+    const r = await window.ouroboros.decisions.answer(id, value, notes[id]?.trim() || undefined)
+    setError(r.ok ? (r.warning ?? '') : (r.error ?? 'failed'))
+    if (r.ok) setNotes(({ [id]: _, ...rest }) => rest)
   }
   const decideHandoff = async (id: string, send: boolean): Promise<void> => {
     setSending((prev) => new Set(prev).add(id))
@@ -145,6 +153,30 @@ export function TodayPanel() {
                       <button className="btn small primary" disabled={busy || !open} title={open ? 'Send exactly what is shown above' : 'Review what would be sent first'} onClick={() => void decideHandoff(h.id, true)}>
                         {busy ? 'Sending…' : 'Send to Grok Bot'}
                       </button>
+                    </div>
+                  </>
+                )
+              })()}
+              {n.decisionId && (() => {
+                const d = decisions.find((x) => x.id === n.decisionId)
+                if (!d) return null
+                return (
+                  <>
+                    {d.question.length > 300 && <div className="today-handoff"><pre>{d.question}</pre></div>}
+                    <div className="row today-actions">
+                      <input
+                        className="today-note"
+                        placeholder="Note (optional)"
+                        aria-label={`Note for ${d.title}`}
+                        maxLength={DECISION_LIMITS.noteChars}
+                        value={notes[d.id] ?? ''}
+                        onChange={(e) => setNotes((prev) => ({ ...prev, [d.id]: e.target.value }))}
+                      />
+                      {answersOf(d).map((a, i) => (
+                        <button key={a} className={`btn small${i === 0 ? ' primary' : ''}`} onClick={() => void answer(d.id, a)}>
+                          {a}
+                        </button>
+                      ))}
                     </div>
                   </>
                 )

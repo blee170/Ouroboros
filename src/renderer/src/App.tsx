@@ -49,6 +49,7 @@ export default function App() {
       api.tasks.onChange((t) => useBoard.getState().setTasks(t)),
       api.mail.onChange((m) => useBoard.getState().setMail(m)),
       api.gate.onChange((a) => useBoard.getState().setApprovals(a)),
+      api.decisions.onChange((d) => useBoard.getState().setDecisions(d)),
       api.grokBot.onChange((h) => useBoard.getState().setGrokHandoffs(h)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onActivity((p) => useBoard.getState().applyActivity(p)),

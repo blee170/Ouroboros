@@ -8,6 +8,7 @@ import type { UsageSnapshot } from './usage'
 import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
 import type { Approval } from './gate'
+import type { Decision } from './decisions'
 import type { GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { ProtectionView } from './rulesets'
@@ -50,6 +51,9 @@ export const IPC = {
   gateList: 'gate:list',
   gateResolve: 'gate:resolve',
   gateChanged: 'gate:changed',
+  decisionsList: 'decisions:list',
+  decisionsAnswer: 'decisions:answer',
+  decisionsChanged: 'decisions:changed',
   grokBotList: 'grokBot:list',
   grokBotResolve: 'grokBot:resolve',
   grokBotChanged: 'grokBot:changed',
@@ -515,6 +519,12 @@ export interface OuroborosApi {
     list(): Promise<Approval[]>
     resolve(id: string, approve: boolean): Promise<{ ok: boolean; error?: string; warning?: string }>
     onChange(cb: (approvals: Approval[]) => void): () => void
+  }
+  decisions: {
+    /** Questions cards asked the owner (ask_owner), pending and recently answered. */
+    list(): Promise<Decision[]>
+    answer(id: string, answer: string, note?: string): Promise<{ ok: boolean; error?: string; warning?: string }>
+    onChange(cb: (decisions: Decision[]) => void): () => void
   }
   grokBot: {
     /** Tasks cards asked to hand to Grok Bot, and what became of them. */

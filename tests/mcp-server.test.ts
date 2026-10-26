@@ -5,6 +5,9 @@ import { resolve } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
+/** The test runner's env without a Claude Code inbox: run inside a Claude session, the server would register that session's inbox. */
+const childEnv = (): Record<string, string> => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE_CODE_MESSAGING_'))) as Record<string, string>
+
 const script = resolve(__dirname, '../out/main/mcp-server.js')
 
 describe('bundled mcp server', () => {
@@ -51,12 +54,12 @@ describe('bundled mcp server', () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [script],
-      env: { ...process.env, OUROBOROS_URL: `http://127.0.0.1:${port}`, OUROBOROS_TOKEN: 'tok', OUROBOROS_SELF_ID: 'me' } as Record<string, string>
+      env: { ...childEnv(), OUROBOROS_URL: `http://127.0.0.1:${port}`, OUROBOROS_TOKEN: 'tok', OUROBOROS_SELF_ID: 'me' } as Record<string, string>
     })
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['ack', 'browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'check_inbox', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'handoff_to_grok_bot', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_message', 'send_prompt', 'set_board_tools', 'set_note', 'task_claim', 'task_create', 'task_list', 'task_update', 'tidy_board', 'wait_for_agents'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['ack', 'ask_owner', 'browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'check_inbox', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'handoff_to_grok_bot', 'list_agents', 'list_checkpoints', 'list_handoffs', 'list_roles', 'read_output', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_message', 'send_prompt', 'set_board_tools', 'set_note', 'task_claim', 'task_create', 'task_list', 'task_update', 'tidy_board', 'wait_for_agents'])
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text
@@ -126,6 +129,7 @@ describe('bundled mcp server', () => {
         res.setHeader('content-type', 'application/json')
         if (req.url === '/api/mail' && req.method === 'POST') res.end(JSON.stringify({ ok: true, id: 'M4', to: 'chief' }))
         else if (req.url?.startsWith('/api/mail?') && req.method === 'GET') res.end(JSON.stringify({ count: 0, text: 'No messages.' }))
+        else if (req.url === '/api/mail/ask') res.end(JSON.stringify({ ok: true, id: 'D1', answered: false, text: 'pending D1: wait' }))
         else if (req.url === '/api/mail/M4/ack') res.writeHead(404).end(JSON.stringify({ ok: false, error: 'no message M4 in your inbox' }))
         else res.writeHead(404).end('{"error":"nf"}')
       })
@@ -135,11 +139,11 @@ describe('bundled mcp server', () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [script],
-      env: { ...process.env, OUROBOROS_URL: `http://127.0.0.1:${port}`, OUROBOROS_TOKEN: 'mail-tok', OUROBOROS_SELF_ID: 'w1', OUROBOROS_TOOLS: 'mail' } as Record<string, string>
+      env: { ...childEnv(), OUROBOROS_URL: `http://127.0.0.1:${port}`, OUROBOROS_TOKEN: 'mail-tok', OUROBOROS_SELF_ID: 'w1', OUROBOROS_TOOLS: 'mail' } as Record<string, string>
     })
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(transport)
-    expect((await client.listTools()).tools.map((x) => x.name).sort()).toEqual(['ack', 'check_inbox', 'send_message'])
+    expect((await client.listTools()).tools.map((x) => x.name).sort()).toEqual(['ack', 'ask_owner', 'check_inbox', 'send_message'])
     const s = await client.callTool({ name: 'send_message', arguments: { to: 'chief', body: 'done: tests pass', kind: 'worker_done' } })
     expect((s.content as Array<{ text: string }>)[0].text).toBe('Sent M4 to chief.')
     expect(calls[0]).toMatchObject({ method: 'POST', url: '/api/mail', self: 'w1', body: '{"to":"chief","body":"done: tests pass","kind":"worker_done"}' })
@@ -148,6 +152,9 @@ describe('bundled mcp server', () => {
     expect(calls[1].url).toBe('/api/mail?unread=1')
     const ack = await client.callTool({ name: 'ack', arguments: { id: 'M4' } })
     expect(ack.isError).toBe(true)
+    const ask = await client.callTool({ name: 'ask_owner', arguments: { question: 'Ship it?', choices: ['Yes', 'Not yet'] } })
+    expect((ask.content as Array<{ text: string }>)[0].text).toBe('pending D1: wait')
+    expect(calls.at(-1)).toMatchObject({ method: 'POST', url: '/api/mail/ask', self: 'w1', body: '{"question":"Ship it?","choices":["Yes","Not yet"]}' })
     await client.close()
     server.close()
   }, 20000)

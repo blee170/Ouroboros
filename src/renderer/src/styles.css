@@ -287,6 +287,8 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .today-kind.k-held, .today-kind.k-failed { color: var(--bg); background: var(--danger); }
 .today-ago { flex: none; white-space: nowrap; }
 .today-actions { padding: 0 2px 4px; gap: 6px; }
+.today-actions { flex-wrap: wrap; }
+.today-note { flex: 1 1 140px; min-width: 0; font-size: 12px; padding: 3px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); }
 .today-handoff { display: flex; flex-direction: column; gap: 4px; margin: 2px 2px 6px; padding: 6px 8px; background: var(--panel-2); border-radius: var(--r-sm); }
 .today-handoff pre { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 11px; background: var(--bg); padding: 4px 6px; border-radius: 4px; }
 .task-details { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 6px 26px; }

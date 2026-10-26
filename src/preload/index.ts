@@ -139,6 +139,11 @@ const api: OuroborosApi = {
     pair: () => ipcRenderer.invoke(IPC.phonePair),
     revoke: (id) => ipcRenderer.invoke(IPC.phoneRevoke, id)
   },
+  decisions: {
+    list: () => ipcRenderer.invoke(IPC.decisionsList),
+    answer: (id, answer, note) => ipcRenderer.invoke(IPC.decisionsAnswer, id, answer, note),
+    onChange: (cb) => on(IPC.decisionsChanged, cb)
+  },
   gate: {
     list: () => ipcRenderer.invoke(IPC.gateList),
     resolve: (id, approve) => ipcRenderer.invoke(IPC.gateResolve, id, approve),

@@ -30,7 +30,7 @@ export const LIMIT_RETRY_MINUTES = 15
 /** A relaunched or new card that shows no session after this long never came up (stale --resume id, trust prompt, crash). */
 export const START_GRACE_MINUTES = 3
 
-export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion' | 'gate' | 'phone'
+export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion' | 'gate' | 'phone' | 'decision'
 
 export interface RunEvent {
   at: number
@@ -344,10 +344,20 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
     if (d) askedIds.delete(d[1])
   }
   const escalations = mail.filter((m) => m.kind === 'escalation' && !m.ackedAt && m.createdAt >= state.startedAt)
-  if (parked.length === 0 && blocked.length === 0 && escalations.length === 0 && askedIds.size === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
+  // ask_owner questions: "asked (D3): …" until "answered (D3): …" / "expired (D3)" / "withdrawn (D3)"
+  const questionEvents = events.filter((e) => e.kind === 'decision')
+  const openQuestions = new Map<string, RunEvent>()
+  for (const e of questionEvents) {
+    const m = /^asked \((D\d+)\)/.exec(e.detail ?? '')
+    if (m) openQuestions.set(m[1], e)
+    const d = /^(?:answered|expired|withdrawn)[^(]*\((D\d+)\)/.exec(e.detail ?? '')
+    if (d) openQuestions.delete(d[1])
+  }
+  if (parked.length === 0 && blocked.length === 0 && escalations.length === 0 && askedIds.size === 0 && openQuestions.size === 0) lines.push('Nothing. No card asked a question or hit a wall, no task is blocked.')
   for (const t of blocked) lines.push(`- Task **${t.id} ${oneLine(t.title)}**${t.owner ? ` (${oneLine(titleOf(t.owner))})` : ''}: ${oneLine(t.reason)}`)
   for (const [id, p] of parked) lines.push(`- **${oneLine(p.title)}** (${id}) since ${hhmm(p.at)}: ${oneLine(p.reason)}`)
   for (const e of askedIds.values()) lines.push(`- Approval for **${oneLine(e.title ?? e.card)}** since ${hhmm(e.at)}: ${oneLine((e.detail ?? '').replace(/^approval asked /, ''))} (Approve or Deny in the Autonomy panel)`)
+  for (const e of openQuestions.values()) lines.push(`- Question from **${oneLine(e.title ?? e.card)}** since ${hhmm(e.at)}: ${oneLine((e.detail ?? '').replace(/^asked /, ''))} (answer it in Today or on the phone)`)
   for (const m of escalations) lines.push(`- Escalation ${m.id} from **${oneLine(titleOf(m.from))}** to ${oneLine(titleOf(m.to))} at ${hhmm(m.createdAt)}, not handled: ${oneLine(m.body)}`)
   lines.push('')
   if (gates.length) {
@@ -359,6 +369,12 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
     lines.push(`## Gates · ${auto.length} allowed by policy · ${askedIds.size} waiting on you · ${never.length} refused${approved.length ? ` · ${approved.length} approved by you` : ''}${denied.length ? ` · ${denied.length} denied by you` : ''}`)
     for (const e of never.slice(0, 10)) lines.push(`- Refused: **${oneLine(e.title ?? e.card)}** tried ${cell(oneLine((e.detail ?? '').replace(/^never: /, '')).slice(0, 160))} at ${hhmm(e.at)}`)
     for (const e of auto.filter((x) => !/left to the permission flow/.test(x.detail ?? '')).slice(0, 10)) lines.push(`- Allowed: ${oneLine(e.title ?? e.card)}: ${oneLine((e.detail ?? '').replace(/^auto: /, '')).slice(0, 160)}`)
+    lines.push('')
+  }
+  const answered = questionEvents.filter((e) => /^answered/.test(e.detail ?? ''))
+  if (answered.length) {
+    lines.push(`## Decisions · ${answered.length} answered`)
+    for (const e of answered.slice(0, 20)) lines.push(`- ${oneLine(e.title ?? e.card)} at ${hhmm(e.at)}: ${oneLine((e.detail ?? '').replace(/^answered /, '')).slice(0, 300)}`)
     lines.push('')
   }
   if (tasks.length) {

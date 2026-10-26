@@ -13,6 +13,8 @@ export interface PhoneHandlers {
   /** `promptAt` is the prompt the phone showed (the card's lastEventAt): a newer prompt is not answered blind */
   answer(cardId: string, key: string, promptAt: number): { ok: boolean; error?: string }
   resolveApproval(id: string, approve: boolean): { ok: boolean; error?: string }
+  /** a card's question (ask_owner), answered from the phone; `device` is the paired phone's name */
+  answerDecision(id: string, answer: unknown, note: unknown, device: string): { ok: boolean; error?: string }
   latestReport(): string | undefined
   /** every action from the phone, for the log and the run's report */
   note(line: string): void
@@ -292,6 +294,14 @@ export class PhoneServer {
       if (typeof body?.approve !== 'boolean') return json(res, 400, { error: 'approve must be true or false' })
       const r = this.handlers.resolveApproval(appr[1], body.approve)
       if (r.ok) this.handlers.note(`${from} ${body.approve ? 'approved' : 'denied'} ${appr[1]}`)
+      return json(res, r.ok ? 200 : 409, r)
+    }
+    const dec = /^\/m\/api\/decisions\/(\d{1,9}-D\d{1,9})$/.exec(path)
+    if (method === 'POST' && dec) {
+      const body = (await readBody(req, 4096)) as { answer?: unknown; note?: unknown } | undefined
+      if (typeof body?.answer !== 'string' || (body.note !== undefined && typeof body.note !== 'string')) return json(res, 400, { error: 'answer must be one of the offered answers' })
+      const r = this.handlers.answerDecision(dec[1], body.answer, body.note, device.name)
+      if (r.ok) this.handlers.note(`${from} answered ${dec[1]}: ${body.answer.slice(0, 80)}`)
       return json(res, r.ok ? 200 : 409, r)
     }
     return json(res, 404, { error: 'not found' })

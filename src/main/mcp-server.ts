@@ -60,7 +60,7 @@ function text(value: unknown): { content: Array<{ type: 'text'; text: string }> 
 const server = new McpServer({ name: 'ouroboros', version: '0.1.0' })
 
 // a card without board tools runs this server for its mail only: every other tool is left unregistered
-const MAIL_TOOLS = new Set(['send_message', 'check_inbox', 'ack'])
+const MAIL_TOOLS = new Set(['send_message', 'check_inbox', 'ack', 'ask_owner'])
 if (process.env.OUROBOROS_TOOLS === 'mail') {
   const register = server.registerTool.bind(server)
   server.registerTool = ((name: string, ...rest: unknown[]) => (MAIL_TOOLS.has(name) ? (register as (...a: unknown[]) => unknown)(name, ...rest) : undefined)) as typeof server.registerTool
@@ -82,6 +82,23 @@ server.registerTool(
   async ({ to, body, kind, reply_to }) => {
     const r = (await api('POST', '/api/mail', { to, body, kind, reply_to })) as { id: string; to: string }
     return text(`Sent ${r.id} to ${r.to}.`)
+  }
+)
+
+server.registerTool(
+  'ask_owner',
+  {
+    title: 'Ask the owner',
+    description:
+      'Ask the human owner a question only they can answer (a product or scope call, an approval, a choice between options), instead of guessing or stopping. The owner answers from the board or their phone with one of your choices (or Approve / Deny when you give none) and maybe a note. The call waits up to 45 seconds; if the owner answers by then you get the answer as the result, otherwise the result says "pending D<n>" and the answer arrives later as a board message headed [owner decision D<n>] - carry on with other work meanwhile and do not ask again. One open question per card. During an autonomous run the owner is away: the question waits for the morning report. Never ask for secrets.',
+    inputSchema: {
+      question: z.string().min(1).max(2000).describe('The question, with the context the owner needs to answer it from a phone (what, why, what you recommend)'),
+      choices: z.array(z.string().min(1).max(80)).min(2).max(4).optional().describe('2 to 4 short answers to pick from, your recommendation first; omit for Approve / Deny')
+    }
+  },
+  async ({ question, choices }) => {
+    const r = (await api('POST', '/api/mail/ask', { question, choices })) as { text: string }
+    return text(r.text)
   }
 )
 

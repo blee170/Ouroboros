@@ -8,6 +8,7 @@ import type { Task } from '@shared/ledger'
 import { revertPrivileges, trustedIncoming, type HeldCard } from '@shared/board-trust'
 import type { Mail } from '@shared/mail'
 import type { Approval } from '@shared/gate'
+import type { Decision } from '@shared/decisions'
 import type { GrokHandoff } from '@shared/grokbot'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -82,6 +83,8 @@ interface BoardState {
   mail: Mail[]
   /** the action gate's requests to the owner (autonomous runs) */
   approvals: Approval[]
+  /** questions cards asked the owner (ask_owner) */
+  decisions: Decision[]
   /** Grok Bot handoffs cards asked for (pending ones wait for Send / Discard in the Today tab) */
   grokHandoffs: GrokHandoff[]
   /** What the right panel shows. */
@@ -106,6 +109,7 @@ interface BoardState {
   setTasks(t: Task[]): void
   setMail(m: Mail[]): void
   setApprovals(a: Approval[]): void
+  setDecisions(d: Decision[]): void
   setGrokHandoffs(h: GrokHandoff[]): void
   /** The owner's call on held cards: trust the change as it is, or put the values the app last wrote back. Either way they launch. */
   resolveHeld(ids: string[], revert: boolean): Promise<void>
@@ -188,6 +192,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   held: [],
   mail: [],
   approvals: [],
+  decisions: [],
   grokHandoffs: [],
   rpanelTab: 'inspector',
   async resolveHeld(ids, revert) {
@@ -217,6 +222,9 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
   setApprovals(a) {
     set({ approvals: a })
+  },
+  setDecisions(d) {
+    set({ decisions: d })
   },
   setGrokHandoffs(h) {
     set({ grokHandoffs: h })
@@ -280,6 +288,9 @@ export const useBoard = create<BoardState>((set, get) => ({
     void api()
       .gate.list()
       .then((a) => set({ approvals: a }))
+    void api()
+      .decisions.list()
+      .then((d) => set({ decisions: d }))
     void api()
       .grokBot.list()
       .then((h) => set({ grokHandoffs: h }))

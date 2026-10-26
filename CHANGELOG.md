@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.15.1] — 2026-10-27
 
 ### Changed
 - **The phone page looks like an app now.** It uses the desktop's greys with frosted-glass panels, the real Ouroboros logo in the header, on the pairing screen and as the home-screen icon, a floating tab bar (Board · Inbox · Report) with a badge for what waits on you, and bottom sheets for cards and confirmations.

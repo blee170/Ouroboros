@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.13.0] — 2026-10-26
 
 ### Added
 - **Protect main on GitHub.** Settings → *GitHub* → *Check* reads, with your own `gh` sign-in, whether the open project's default branch needs a pull request and refuses force pushes and deletion (rulesets only; classic branch protection is not read). *Protect…* then *Add ruleset* adds one ruleset, "Ouroboros · protect main": a pull request is required (0 approvals, so you can merge your own), force pushes and deletion are refused, and nobody bypasses it, you included (pushing straight to main stops working; merging a pull request does not). Nothing is sent when the branch is already protected, and a ruleset by that name that you switched off or edited is left alone. Private repositories need GitHub Pro. What it does not stop: a pull request merged by anyone who can push, a card token included. During autonomous runs the action gate asks you before `gh pr merge`, but a merge through the API (`curl`) is not seen.

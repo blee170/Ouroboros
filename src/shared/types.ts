@@ -1,5 +1,6 @@
 import type { VoiceSettings } from './voice'
 import type { Task } from './ledger'
+import type { OuroSettingsView } from './ouro'
 
 /** Which CLI a Claude/Conductor card runs. Codex, Gemini and Grok get the same hooks, lines and board tools. */
 export type AgentEngine = 'claude' | 'codex' | 'gemini' | 'grok'
@@ -270,6 +271,10 @@ export interface AppSettings {
   obsidianExport?: boolean
   /** The Obsidian vault folder; the export writes only under its `Ouroboros/<project>/` folder. */
   obsidianVaultPath?: string
+  /** Ouro: the owner talks to the board through Discord direct messages (see shared/ouro.ts; read through ouroSettings()). */
+  ouro?: Partial<OuroSettingsView>
+  /** Ouro's Discord bot token, stored encrypted (same scheme as notionTokenEnc). */
+  ouroTokenEnc?: string
   /** Voice input for the left composer (see shared/voice.ts; read through voiceSettings()). */
   voice?: Partial<VoiceSettings>
 }

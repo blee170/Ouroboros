@@ -11,6 +11,7 @@ import type { Approval } from './gate'
 import type { Decision } from './decisions'
 import type { GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
+import type { OuroSettingsView, OuroStatusView } from './ouro'
 import type { ProtectionView } from './rulesets'
 import type { WslCheck } from './wsl'
 
@@ -66,6 +67,10 @@ export const IPC = {
   githubSetCardToken: 'github:setCardToken',
   githubCardTokenStatus: 'github:cardTokenStatus',
   wslCheck: 'wsl:check',
+  ouroStatus: 'ouro:status',
+  ouroConfigure: 'ouro:configure',
+  ouroSetToken: 'ouro:setToken',
+  ouroTest: 'ouro:test',
   phoneStatus: 'phone:status',
   phoneInterfaces: 'phone:interfaces',
   phoneConfigure: 'phone:configure',
@@ -508,6 +513,15 @@ export interface OuroborosApi {
     setListening(on: boolean): Promise<void>
     /** The global push-to-talk hotkey was pressed with this window as the target. */
     onHotkey(cb: () => void): () => void
+  }
+  ouro: {
+    status(): Promise<OuroStatusView>
+    /** Saves Settings → Ouro and starts, restarts or stops the bot. */
+    configure(view: OuroSettingsView): Promise<OuroStatusView>
+    /** Store (encrypted) the Discord bot token; empty string clears it. */
+    setToken(token: string): Promise<OuroStatusView>
+    /** A direct message to the owner: whether it was sent. */
+    test(): Promise<{ ok: boolean; error?: string }>
   }
   phone: {
     status(): Promise<PhoneStatus>

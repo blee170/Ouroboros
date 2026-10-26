@@ -67,6 +67,8 @@ import { DEFAULT_STALL_MINUTES, newWatchdogState, watchdogReports } from '@share
 import type { UsageMonitor } from './usage'
 import { OWNER, cleanLine, cleanText, formatTasks, toApiResult, type Task, type TaskInput, type TaskPatch } from '@shared/ledger'
 import { OWNER_ACTION_LIMITS, approvalMessage, didMessage, holdMessage, ownerNeed } from '@shared/owner-action'
+import { Ouro } from './ouro'
+import { conductorPrompt, ouroSettings, type OuroNeed, type OuroSettingsView, type OuroStatus, type OuroStatusView } from '@shared/ouro'
 
 /** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
 const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
@@ -128,6 +130,8 @@ export interface MainContext {
   hookServer: HookServer
   /** The phone companion's server (off unless the owner turns it on in Settings → Phone). */
   phone: PhoneServer
+  /** Ouro, the owner on Discord (off unless the owner turns it on in Settings → Ouro). */
+  ouro: Ouro
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
   usage: UsageMonitor
   store: UserStore
@@ -901,6 +905,88 @@ export function createPhone(ctx: MainContext): PhoneServer {
   return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), handlers, log)
 }
 
+/** A scoped need id (`<window>-T4`) back to its window and the id inside it. */
+function needWindow(ctx: MainContext, ref: string): { s: WindowSession; id: string } | undefined {
+  const m = /^(\d+)-(.+)$/.exec(ref)
+  const s = m ? ctx.windows.all().find((w) => String(w.id) === m[1]) : undefined
+  return s && m ? { s, id: m[2] } : undefined
+}
+
+const OURO_BY = 'Ouro (Discord)'
+
+/** Ouro: the bot and the conversation, with handlers on every window's board. Off until the owner turns it on. */
+export function createOuro(ctx: MainContext): Ouro {
+  const gone = { ok: false, error: 'that is gone (its window was closed)' }
+  return new Ouro({
+    status: (): OuroStatus => {
+      const wins = ctx.windows.all()
+      const cards = wins.flatMap((w) => [...w.board.nodes.values()].filter((n) => n.data.kind === 'claude' || n.data.kind === 'conductor'))
+      const needs: OuroNeed[] = []
+      for (const w of wins) {
+        for (const d of w.decisions.pending()) needs.push({ ref: `${w.id}-${d.id}`, kind: 'question', title: d.title, text: d.question, answers: answersOf(d) })
+        for (const a of w.gate.pending()) needs.push({ ref: `${w.id}-${a.id}`, kind: 'approval', title: a.title, text: a.command })
+        for (const t of w.ledger.data.tasks) {
+          const need = ownerNeed(t)
+          if (need) needs.push({ ref: `${w.id}-${t.id}`, kind: need.kind === 'approve' ? 'task-approve' : need.kind === 'do' ? 'task-do' : 'task-either', title: `${t.id} ${t.title}`, text: need.ask, shownAt: t.updatedAt })
+        }
+        for (const n of w.board.nodes.values()) {
+          if (n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission')) needs.push({ ref: `${w.id}-P:${n.id}`, kind: 'permission', title: n.data.title, text: n.data.statusDetail ?? '' })
+        }
+      }
+      return {
+        project: basename(ctx.windows.current()?.board.projectRoot || ''),
+        working: cards.filter((n) => n.data.status === 'working').length,
+        idle: cards.filter((n) => n.data.status === 'idle' || n.data.status === 'done').length,
+        autonomous: wins.some((w) => w.autonomy.on),
+        needs
+      }
+    },
+    approve: (need) => {
+      const w = needWindow(ctx, need.ref)
+      if (!w) return gone
+      return need.kind === 'approval' ? resolveApproval(w.s, w.id, true) : ownerAnswerTask(w.s, w.id, 'approve', undefined, need.shownAt)
+    },
+    hold: (need) => {
+      const w = needWindow(ctx, need.ref)
+      if (!w) return gone
+      return need.kind === 'approval' ? resolveApproval(w.s, w.id, false) : ownerAnswerTask(w.s, w.id, 'hold', undefined, need.shownAt)
+    },
+    answer: (need, answer) => {
+      const w = needWindow(ctx, need.ref)
+      return w ? answerDecision(w.s, w.id, answer, undefined, OURO_BY) : gone
+    },
+    tell: (text, lang) => {
+      // the window in front first, else any window with a Conductor
+      const cur = ctx.windows.current()
+      const wins = cur ? [cur, ...ctx.windows.all().filter((w) => w !== cur)] : ctx.windows.all()
+      for (const s of wins) {
+        const c = [...s.board.nodes.values()].find((n) => n.data.kind === 'conductor')
+        if (!c) continue
+        const m = s.mail.send({ from: OWNER, to: c.id, body: conductorPrompt(text, lang), kind: 'note' }, mailTopology(s.board))
+        return m.ok ? { ok: true, card: c.id } : { ok: false, error: m.error ?? 'not delivered' }
+      }
+      return { ok: false, error: 'there is no Conductor on the board' }
+    },
+    note: (line) => {
+      log(`[ouro] ${line}`)
+      for (const w of ctx.windows.all()) w.autonomy.notePhone(`${OURO_BY}: ${line}`)
+    },
+    log
+  })
+}
+
+/** Settings → Ouro onto the bot: started, restarted on a new token or owner, stopped when off. */
+export function applyOuro(ctx: MainContext): void {
+  const st = ctx.store.getSettings()
+  const v = ouroSettings(st.ouro)
+  ctx.ouro.configure({ enabled: v.enabled, token: decryptToken(st.ouroTokenEnc) || undefined, ownerId: v.ownerId, notify: v.notify, approvals: v.approvals })
+}
+
+function ouroStatus(ctx: MainContext): OuroStatusView {
+  const st = ctx.store.getSettings()
+  return { ...ouroSettings(st.ouro), hasToken: Boolean(decryptToken(st.ouroTokenEnc)), ...ctx.ouro.status() }
+}
+
 function phoneStatus(ctx: MainContext): PhoneStatus {
   const v = ctx.store.getSettings().phone ?? { enabled: false, port: DEFAULT_PHONE_PORT, allowLan: false }
   return { ...v, url: ctx.phone.url, error: ctx.phone.error, devices: ctx.phone.devices.list.map(({ tokenHash: _h, ...d }) => d) }
@@ -1554,6 +1640,14 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.gate.on('asked', (a: Approval) => notifyApproval(ctx, s, a))
   s.decisions.on('change', (list: Decision[]) => sendToRenderer(s, IPC.decisionsChanged, list))
   s.decisions.on('asked', (d: Decision) => notifyDecision(s, d))
+  // Ouro tells the owner on Discord what newly waits on them, and passes the Conductor's replies back
+  s.decisions.on('change', () => ctx.ouro?.boardChanged())
+  s.gate.on('change', () => ctx.ouro?.boardChanged())
+  s.ledger.on('change', () => ctx.ouro?.boardChanged())
+  board.on('status', (p: AgentStatusPayload) => {
+    if (p.status === 'needs-you') ctx.ouro?.boardChanged()
+  })
+  board.on('stop', (nodeId: string, message: string) => ctx.ouro?.stopped(nodeId, message))
   s.decisions.on('expired', (d: Decision) => {
     s.autonomy.noteDecision(d.card, d.title, `expired (${d.id})`)
     s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
@@ -2183,6 +2277,22 @@ export function registerIpc(ctx: MainContext): void {
     return r.ok ? { hasToken: true, login: r.login, expiresAt: r.expiresAt } : { hasToken: true, error: r.error }
   })
   ipcMain.handle(IPC.wslCheck, () => wslPreflight(ctx.store.getSettings().wslDistro, portOf(hookServer.baseUrl)))
+  ipcMain.handle(IPC.ouroStatus, () => ouroStatus(ctx))
+  ipcMain.handle(IPC.ouroConfigure, (_e, view: OuroSettingsView) => {
+    const v = ouroSettings(view)
+    if (v.ownerId && !/^\d{15,22}$/.test(v.ownerId)) v.ownerId = ''
+    ctx.store.setSettings({ ouro: v })
+    applyOuro(ctx)
+    log(`[ouro] settings: ${v.enabled ? 'on' : 'off'}, notices ${v.notify ? 'on' : 'off'}, approvals by voice ${v.approvals ? 'on' : 'off'}`)
+    return ouroStatus(ctx)
+  })
+  ipcMain.handle(IPC.ouroSetToken, (_e, token: string) => {
+    const enc = encryptToken(String(token ?? '').replace(/\s+/g, ''))
+    ctx.store.setSettings({ ouroTokenEnc: enc || undefined })
+    applyOuro(ctx)
+    return ouroStatus(ctx)
+  })
+  ipcMain.handle(IPC.ouroTest, () => ctx.ouro.test())
   ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
   ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())
   ipcMain.handle(IPC.phoneConfigure, async (_e, view: PhoneSettingsView) => {

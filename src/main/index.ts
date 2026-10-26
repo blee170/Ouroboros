@@ -7,6 +7,7 @@ import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer, PREFERRED_HOOK_PORT } from './hook-server'
 import type { PhoneServer } from './phone-server'
+import type { Ouro } from './ouro'
 import { globalExternalHooksInstalled, loadExternalToken, setGlobalExternalHooks } from './external'
 
 /** The external-hook token; an unwritable data folder must not stop the app (outside sessions just go unseen). */
@@ -18,7 +19,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, createOuro, applyOuro, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -169,6 +170,7 @@ async function main(): Promise<void> {
     roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
     hookServer: null as unknown as HookServer,
     phone: null as unknown as PhoneServer,
+    ouro: null as unknown as Ouro,
     boardTrust: new BoardTrust(join(app.getPath('userData'), 'board-trust.json'), log),
     usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines })
   }
@@ -196,6 +198,7 @@ async function main(): Promise<void> {
     }
   }
   ctx.phone = createPhone(ctx)
+  ctx.ouro = createOuro(ctx)
   registerIpc(ctx)
   // the microphone is for the app's own window (the voice composer), audio only: a page in a browser card (its own
   // persist:ouroboros-browser session) gets neither mic nor camera. Everything else keeps Electron's default (allowed).
@@ -220,6 +223,8 @@ async function main(): Promise<void> {
     })
   }
 
+  applyOuro(ctx)
+
   createWindow(ctx, initialProjectArg())
   createTray(ctx)
   // a dev build has no section of its own in the CHANGELOG and must not publish the installed version's notes
@@ -242,6 +247,7 @@ async function main(): Promise<void> {
     ptys.killAll()
     ctx.hookServer.stop()
     ctx.phone?.stop()
+    ctx.ouro?.stop()
     whisper.stop()
     globalShortcut.unregisterAll()
   })

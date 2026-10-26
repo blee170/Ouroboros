@@ -51,6 +51,36 @@ export class Board extends EventEmitter {
     this.roleTurn.delete(nodeId)
   }
 
+  /**
+   * Fresh starts: a card whose turn began with a prompt carrying `marker` (armed on that UserPromptSubmit) has its
+   * Stop handed to the taker as the handoff note; it ends as idle and fires no lines. Any other prompt while armed
+   * means the note turn was cut (Esc): the taker gets undefined and that turn is a normal one.
+   */
+  private noteTurn = new Map<string, { marker: string; armed: boolean; take: (note: string | undefined) => void }>()
+  /** Cards waiting for their /clear to land (SessionEnd reason clear, or SessionStart source clear). */
+  private clearWatch = new Map<string, () => void>()
+
+  captureStop(nodeId: string, marker: string, take: (note: string | undefined) => void): void {
+    this.noteTurn.set(nodeId, { marker, armed: false, take })
+  }
+
+  /** The relay gave up waiting. An armed capture stays, swallowing a late note, until the next prompt. */
+  releaseStop(nodeId: string): void {
+    const t = this.noteTurn.get(nodeId)
+    if (t?.armed) t.take = () => {}
+    else this.noteTurn.delete(nodeId)
+  }
+
+  /** A note turn is running: mail must not turn its Stop into another round. */
+  capturing(nodeId: string): boolean {
+    return !!this.noteTurn.get(nodeId)?.armed
+  }
+
+  watchClear(nodeId: string, done: (() => void) | undefined): void {
+    if (done) this.clearWatch.set(nodeId, done)
+    else this.clearWatch.delete(nodeId)
+  }
+
   sync(payload: BoardSyncPayload): void {
     this.projectRoot = payload.projectRoot
     const next = new Map<string, NodeMeta>()
@@ -78,6 +108,8 @@ export class Board extends EventEmitter {
       if (!next.has(id)) {
         this.output.delete(id)
         this.roleTurn.delete(id)
+        this.noteTurn.delete(id)
+        this.clearWatch.delete(id)
       }
     }
     this.nodes = next
@@ -160,6 +192,29 @@ export class Board extends EventEmitter {
       this.roleTurn.delete(nodeId)
       this.setStatus(nodeId, { status: 'idle', statusDetail: 'ready (role acknowledged)' })
       return
+    }
+    const turn = this.noteTurn.get(nodeId)
+    if (turn && event.hook_event_name === 'UserPromptSubmit') {
+      const prompt = typeof event.prompt === 'string' ? event.prompt : ''
+      if (prompt.includes(turn.marker)) turn.armed = true
+      else if (turn.armed) {
+        this.noteTurn.delete(nodeId)
+        turn.take(undefined)
+      }
+    }
+    if (turn?.armed && event.hook_event_name === 'Stop') {
+      this.noteTurn.delete(nodeId)
+      const n = this.nodes.get(nodeId)
+      if (n) n.data.lastStopAt = Date.now()
+      this.setStatus(nodeId, { status: 'idle', statusDetail: 'handoff note written', sessionId: update.sessionId })
+      turn.take(update.lastAssistantMessage ?? '')
+      return
+    }
+    const cleared = (event.hook_event_name === 'SessionEnd' && event.reason === 'clear') || (event.hook_event_name === 'SessionStart' && event.source === 'clear')
+    const onClear = cleared ? this.clearWatch.get(nodeId) : undefined
+    if (onClear) {
+      this.clearWatch.delete(nodeId)
+      onClear()
     }
     this.setStatus(nodeId, update)
     if (event.hook_event_name === 'Stop') {

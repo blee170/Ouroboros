@@ -217,6 +217,12 @@ export interface AppSettings {
   retireMinutes?: number
   /** Stall watchdog: a card Working with no activity, or waiting on a person, this long is reported to its Conductor (default 15; 0 = off). */
   stallMinutes?: number
+  /** Fresh start (context relay): an idle Claude card past this many tokens (never past 60% of its window) starts a new conversation from a handoff note. Default 250k. */
+  relayTokens?: number
+  /** Fresh start for Conductors: auto, ask the owner (default), or off. */
+  relayConductor?: 'auto' | 'ask' | 'off'
+  /** Fresh start for worker cards: auto (default), ask, or off. */
+  relayWorkers?: 'auto' | 'ask' | 'off'
   /** create_agent refuses when a card already has this many live dispatched cards (default 6). */
   maxWorkersPerLead?: number
   /** Open claude.ai links (briefs) in the system browser instead of a browser card. Default false: briefs stay on the canvas. */

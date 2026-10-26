@@ -120,6 +120,7 @@ const api: OuroborosApi = {
     list: () => ipcRenderer.invoke(IPC.tasksList),
     create: (input) => ipcRenderer.invoke(IPC.tasksCreate, input),
     update: (id, patch) => ipcRenderer.invoke(IPC.tasksUpdate, id, patch),
+    owner: (id, choice, text, shownAt) => ipcRenderer.invoke(IPC.tasksOwner, id, choice, text, shownAt),
     onChange: (cb) => on(IPC.tasksChanged, cb)
   },
   mail: {

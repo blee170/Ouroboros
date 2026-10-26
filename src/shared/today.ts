@@ -84,7 +84,8 @@ export function needsYou(o: { cards: TodayCard[]; tasks: Task[]; approvals: Appr
       key: `t:${t.id}`,
       kind: approval ? 'decision' : 'blocked',
       title: `${t.id} ${t.title}`,
-      text: oneLine((t.reason ?? '').replace(APPROVAL_RE, '')) || 'blocked',
+      // a task with an owner action shows it in full under the row
+      text: t.ownerAction ? '' : oneLine((t.reason ?? '').replace(APPROVAL_RE, '')) || 'blocked',
       at: t.updatedAt,
       taskId: t.id,
       cardId: who && o.cards.some((c) => c.id === who) ? who : undefined

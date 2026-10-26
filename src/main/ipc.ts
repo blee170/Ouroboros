@@ -65,7 +65,8 @@ import type { BoardTrust } from './board-trust'
 import { Ledger } from './ledger'
 import { DEFAULT_STALL_MINUTES, newWatchdogState, watchdogReports } from '@shared/watchdog'
 import type { UsageMonitor } from './usage'
-import { OWNER, cleanLine, formatTasks, toApiResult, type TaskInput, type TaskPatch } from '@shared/ledger'
+import { OWNER, cleanLine, cleanText, formatTasks, toApiResult, type Task, type TaskInput, type TaskPatch } from '@shared/ledger'
+import { OWNER_ACTION_LIMITS, approvalMessage, didMessage, holdMessage, ownerNeed } from '@shared/owner-action'
 
 /** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
 const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
@@ -779,6 +780,53 @@ function answerDecision(s: WindowSession, id: string, answer: unknown, note: unk
   }
   const m = s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
   return m.ok ? { ok: true } : { ok: true, warning: `answered, but the card was not told: ${m.error}` }
+}
+
+/** The card an owner action is answered to: the card that asked, else the task's owner, else the Conductor. */
+function ownerActionCard(board: Board, t: Task): string | undefined {
+  const agent = (id: string | undefined): id is string => {
+    const k = id ? board.nodes.get(id)?.data.kind : undefined
+    return k === 'claude' || k === 'conductor'
+  }
+  // an older APPROVAL NEEDED task has no asker: the card that blocked it
+  const asker = t.ownerAction ? t.ownerAction.by : t.updatedBy
+  return [asker, t.owner].find(agent) ?? [...board.nodes.values()].find((n) => n.data.kind === 'conductor')?.id
+}
+
+/**
+ * The owner's answer to a blocked task that waits on them (Tasks tab, Today). Approve sends the card back to work,
+ * hold keeps the task blocked and tells the card not to, did marks it done with what the owner pasted back. Only a
+ * card may do an approve task and only the owner a do task; an older "APPROVAL NEEDED:" task takes either.
+ */
+function ownerAnswerTask(s: WindowSession, id: string, choice: unknown, text: unknown, shownAt: unknown): { ok: boolean; error?: string; warning?: string } {
+  if ((choice !== 'approve' && choice !== 'hold' && choice !== 'did') || (text !== undefined && typeof text !== 'string')) return { ok: false, error: 'bad answer' }
+  const t = s.ledger.data.tasks.find((x) => x.id === id)
+  const need = t && ownerNeed(t)
+  if (!t || !need) return { ok: false, error: `${id} is not waiting on you` }
+  // the answer is to what the owner read: a card that changed the task since then cannot slip another request under it
+  if (shownAt !== t.updatedAt) return { ok: false, error: `${id} changed since you read it. Read it again before you answer.` }
+  if (choice === 'approve' && need.kind === 'do') return { ok: false, error: 'Only you can do this one: follow the steps, then press Done.' }
+  if (choice === 'did' && need.kind === 'approve') return { ok: false, error: 'A card does this one once you approve it.' }
+  const limit = choice === 'did' ? OWNER_ACTION_LIMITS.pasteChars : OWNER_ACTION_LIMITS.noteChars
+  const note = cleanText(text ?? '', limit + 1)
+  if (note.length > limit) return { ok: false, error: `at most ${limit} characters` }
+  const flat = cleanLine(note, 200)
+  const patch: TaskPatch =
+    choice === 'approve'
+      ? { state: t.owner && liveCards(s.board).has(t.owner) ? 'doing' : 'todo', reason: `approved by the owner${flat ? `: ${flat}` : ''}`, ownerAction: null }
+      : choice === 'hold'
+        ? { reason: `on hold (owner)${flat ? `: ${flat}` : ''}`, ownerAction: null }
+        : // every card reads the ledger: what the owner pasted goes in full only to the card that asked
+          { state: 'done', result: `Done by the owner.${flat ? ` They pasted back: ${flat}` : ''}`, ownerAction: null }
+  const r = s.ledger.update(id, patch, OWNER)
+  if (!r.ok) return r
+  if (r.task.owner) s.ledger.cardStopped(s.board, r.task.owner) // a dead owner card hands it back after the grace period
+  const card = ownerActionCard(s.board, t)
+  const body = choice === 'approve' ? approvalMessage(t, need, note) : choice === 'hold' ? holdMessage(t, need, note) : didMessage(t, need, note)
+  if (card) s.autonomy.noteDecision(card, titleOf(s.board, card), `${choice === 'approve' ? 'approved' : choice === 'hold' ? 'put on hold' : 'did'} ${id} (owner): ${need.ask.slice(0, 200)}`)
+  if (!card) return { ok: true, warning: 'No card to tell: let the Conductor know yourself.' }
+  const m = s.mail.send({ from: OWNER, to: card, body, kind: 'note' }, mailTopology(s.board))
+  return m.ok ? { ok: true } : { ok: true, warning: `Saved, but the card was not told: ${m.error}` }
 }
 
 /** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
@@ -2157,6 +2205,10 @@ export function registerIpc(ctx: MainContext): void {
   })
   ipcMain.handle(IPC.tasksCreate, (e, input: TaskInput) => sessionOf(e)?.api.taskCreate(input, OWNER) ?? { ok: false, error: 'no window' })
   ipcMain.handle(IPC.tasksUpdate, (e, id: string, patch: TaskPatch) => sessionOf(e)?.api.taskUpdate(String(id), patch ?? {}, OWNER) ?? { ok: false, error: 'no window' })
+  ipcMain.handle(IPC.tasksOwner, (e, id: unknown, choice: unknown, text: unknown, shownAt: unknown) => {
+    const s = sessionOf(e)
+    return s && typeof id === 'string' ? ownerAnswerTask(s, id, choice, text, shownAt) : { ok: false, error: 'no window' }
+  })
   // Ctrl+V in a terminal card: xterm would send ^V to the CLI and no DOM paste event would fire, so the
   // renderer asks for the clipboard here (Electron reads Windows bitmaps reliably)
   ipcMain.handle(IPC.filesPasteClipboard, async (_e, saveImage = true): Promise<{ path?: string; text?: string; image?: boolean }> => {

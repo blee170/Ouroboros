@@ -384,7 +384,7 @@ server.registerTool(
   {
     title: 'Update a task',
     description:
-      "Change a task's state or fields. done needs result (what was done, how it was checked: the worker's RESULT line, after get_changes for code). blocked needs reason; start it with \"APPROVAL NEEDED:\" when the owner must decide, so it is listed first for them. dropped = not needed. todo reopens it. owner reassigns it to a card.",
+      "Change a task's state or fields. done needs result (what was done, how it was checked: the worker's RESULT line, after get_changes for code). blocked needs reason; start it with \"APPROVAL NEEDED:\" when the owner must decide, so it is listed first for them, and add owner_action. dropped = not needed. todo reopens it. owner reassigns it to a card. owner_action (with state=blocked) is what the owner sees and acts on, written for someone who does not code: kind=approve when a card can do it once the owner says yes (they press Approve and you are messaged to go ahead), kind=do when only the owner may do it (production database or migration, money, accounts, secrets; they follow your steps and press Done, and you are messaged with what they pasted back). ask = one plain sentence; steps = one action each, saying which window, which button, what to paste (no jargon); copy = the exact text to paste (SQL, a command) with a label; check = how they see it worked. Write in the owner's language.",
     inputSchema: {
       task_id: TASK_ID,
       state: TASK_STATE.optional(),
@@ -394,10 +394,21 @@ server.registerTool(
       detail: z.string().max(2000).optional(),
       deps: z.array(TASK_ID).max(50).optional(),
       parent: TASK_ID.nullable().optional(),
-      owner: z.string().nullable().optional()
+      owner: z.string().nullable().optional(),
+      owner_action: z
+        .object({
+          kind: z.enum(['approve', 'do']),
+          ask: z.string().max(300),
+          steps: z.array(z.string().max(300)).max(12).optional(),
+          copy: z.array(z.object({ label: z.string().max(60), text: z.string().max(8000) })).max(3).optional(),
+          check: z.string().max(300).optional()
+        })
+        .nullable()
+        .optional()
     }
   },
-  async ({ task_id, ...patch }) => text(await api('PATCH', `/api/tasks/${encodeURIComponent(task_id)}`, patch))
+  async ({ task_id, owner_action, ...patch }) =>
+    text(await api('PATCH', `/api/tasks/${encodeURIComponent(task_id)}`, owner_action === undefined ? patch : { ...patch, ownerAction: owner_action }))
 )
 
 server.registerTool(

@@ -4,6 +4,8 @@ import { useBoard } from '@/store/board'
 import { agoText } from '@shared/usage'
 import { needsYou, todayView, type Need, type NeedKind, type TodayCard } from '@shared/today'
 import { answersOf, DECISION_LIMITS } from '@shared/decisions'
+import { ownerNeed } from '@shared/owner-action'
+import { OwnerActionBox } from './OwnerAction'
 
 const KIND_LABEL: Record<NeedKind, string> = {
   approval: 'approve',
@@ -180,6 +182,13 @@ export function TodayPanel() {
                     </div>
                   </>
                 )
+              })()}
+              {n.taskId && (() => {
+                const t = tasks.find((x) => x.id === n.taskId)
+                if (!t || !ownerNeed(t)) return null
+                const askedBy = t.ownerAction ? t.ownerAction.by : t.updatedBy
+                const asker = askedBy && askedBy !== 'owner' ? nodes.find((x) => x.id === askedBy)?.data.title : undefined
+                return <OwnerActionBox task={t} cardTitle={asker} />
               })()}
               {n.approvalId && (
                 <div className="row today-actions">

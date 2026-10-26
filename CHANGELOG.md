@@ -13,6 +13,9 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 ### Changed
 - **Notion API 2026-03-11.** The app now talks to Notion's current API version (it was on 2022-06-28): rows are created in and queried from each database's data source, looked up once per database, as Notion requires since databases can hold several sources; *Test* reads the columns from the data source. Nothing changes in Settings: the same database URLs work.
 
+### Changed
+- **You hear when the wake phrase is recognized.** A bright two-note chime plays the moment the wake phrase is heard, whether you said it alone (then speak your prompt; the old start tone is no longer played on top of it) or with the prompt in one go (the prompt is in the composer). The push-to-talk start and end tones are a little louder.
+
 ### Verified
 - Unit tests for the ranking and the Today view (prefix stripped, a reply decision drops once the card is looked at or works again, blocked tasks link only to live cards, done since local midnight); built-app probe with a temp profile: empty state, a decision ranked above a blocked task, the badge count, done today, a task row opening the Tasks tab.
 - Unit tests against a stand-in Notion (data source lookup once and cached, an answer without a data source refused, page parents and query paths, Test reading the data source, view bodies from property ids, existing views skipped, a refused view reported without stopping the rest, the 2026-03-11 header); built-app probe: *Add views* without a token says so in Settings.

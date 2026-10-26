@@ -188,16 +188,27 @@ describe('loop guard', () => {
     expect(owner.mail.depth).toBe(0)
     expect(sendMail(owner.data, { from: 'a', to: 'b', body: 'resumed', replyTo: owner.mail.id }, (now += 60_000), t2)).toMatchObject({ ok: true, mail: { depth: 1 } })
   })
-  it('stops two cards going back and forth without replies', () => {
+  it('stops a card sending on and on to another, one direction at a time, until the owner writes', () => {
     let data = EMPTY_MAIL
     for (let i = 0; i < MAIL_LIMITS.pairMessages; i++) {
-      const r = sendMail(data, { from: i % 2 ? 'b' : 'a', to: i % 2 ? 'a' : 'b', body: `ping ${i}` }, i * 10_000, t2)
+      const r = sendMail(data, { from: 'a', to: 'b', body: `ping ${i}` }, i * 10_000, t2)
       if (!r.ok) throw new Error(r.error)
       data = r.data
     }
     expect(sendMail(data, { from: 'a', to: 'b', body: 'again' }, 125_000, t2)).toMatchObject({ ok: false, error: expect.stringMatching(/back-and-forth/) })
+    // the other card can still answer: a flood from one side does not silence the other
+    expect(sendMail(data, { from: 'b', to: 'a', body: 'stop' }, 125_000, t2).ok).toBe(true)
     expect(sendMail(data, { from: 'a', to: 'c', body: 'someone else' }, 125_000, t2).ok).toBe(true)
     expect(sendMail(data, { from: 'a', to: 'b', body: 'later' }, 11 * 60_000, t2).ok).toBe(true)
+    const owner = sendMail(data, { from: OWNER, to: 'b', body: 'keep going' }, 126_000, t2)
+    if (!owner.ok) throw new Error(owner.error)
+    expect(sendMail(owner.data, { from: 'a', to: 'b', body: 'resumed' }, 127_000, t2).ok).toBe(true)
+  })
+  it('takes a reply only to a message the sender sent or got', () => {
+    const first = sendMail(EMPTY_MAIL, { from: OWNER, to: 'b', body: 'for b' }, 0, t2)
+    if (!first.ok) throw new Error(first.error)
+    expect(sendMail(first.data, { from: 'a', to: 'b', body: 'hijack', replyTo: first.mail.id }, 1000, t2)).toMatchObject({ ok: false, error: expect.stringMatching(/not a message to or from you/) })
+    expect(sendMail(first.data, { from: 'b', to: 'a', body: 'mine', replyTo: first.mail.id }, 1000, t2).ok).toBe(true)
   })
 })
 

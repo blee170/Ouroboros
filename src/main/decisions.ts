@@ -11,12 +11,16 @@ export class DecisionDesk extends EventEmitter {
   private next = 1
   private waiters = new Map<string, (d: Decision | undefined) => void>()
 
-  /** A project switch: questions belong to the board they were asked on. */
-  load(): void {
-    for (const resolve of this.waiters.values()) resolve(undefined)
-    this.waiters.clear()
+  /** A project switch: questions belong to the board they were asked on. Returns the pending ones withdrawn (a waiting call gets that). */
+  load(now = Date.now()): Decision[] {
+    const dropped = this.pending().map((d) => {
+      const w = this.settle(d, { state: 'withdrawn', decidedAt: now })
+      this.release(d.id)
+      return w
+    })
     this.decisions = []
     this.emit('change', this.decisions)
+    return dropped
   }
 
   ask(card: { id: string; title: string }, question: string, choices: string[] | undefined, now = Date.now()): { ok: true; decision: Decision } | { ok: false; error: string } {
@@ -30,21 +34,27 @@ export class DecisionDesk extends EventEmitter {
     return { ok: true, decision }
   }
 
-  /** The question once it is settled, or undefined when ms pass first (or it is gone). One waiter per question. */
-  wait(id: string, ms: number): Promise<Decision | undefined> {
+  /**
+   * The question once it is settled, or undefined when ms pass first, the caller went away (`signal`), or it is gone.
+   * One waiter per question; a caller that went away no longer counts as waiting, so a later answer is sent as mail.
+   */
+  wait(id: string, ms: number, signal?: AbortSignal): Promise<Decision | undefined> {
     const d = this.decisions.find((x) => x.id === id)
     if (!d) return Promise.resolve(undefined)
-    if (d.state !== 'pending') return Promise.resolve(d)
+    if (d.state !== 'pending' || signal?.aborted) return Promise.resolve(d.state !== 'pending' ? d : undefined)
     this.waiters.get(id)?.(undefined)
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
+      const giveUp = (): void => {
         if (this.waiters.get(id) === done) this.waiters.delete(id)
-        resolve(undefined)
-      }, ms)
+        done(undefined)
+      }
+      const timer = setTimeout(giveUp, ms)
       const done = (x: Decision | undefined): void => {
         clearTimeout(timer)
+        signal?.removeEventListener('abort', giveUp)
         resolve(x)
       }
+      signal?.addEventListener('abort', giveUp, { once: true })
       this.waiters.set(id, done)
     })
   }
@@ -61,12 +71,15 @@ export class DecisionDesk extends EventEmitter {
     return { ok: true, decision: this.settle(d, { state: 'answered', answer, ...(text ? { note: text } : {}), decidedAt: now, by }), waited: this.release(id) }
   }
 
-  /** A card that leaves the board takes its question with it. */
-  withdraw(card: string, now = Date.now()): void {
-    for (const d of this.decisions.filter((x) => x.card === card && x.state === 'pending')) {
-      this.settle(d, { state: 'withdrawn', decidedAt: now })
-      this.release(d.id)
-    }
+  /** A card that leaves the board takes its question with it; returns what was withdrawn. */
+  withdraw(card: string, now = Date.now()): Decision[] {
+    return this.decisions
+      .filter((x) => x.card === card && x.state === 'pending')
+      .map((d) => {
+        const w = this.settle(d, { state: 'withdrawn', decidedAt: now })
+        this.release(d.id)
+        return w
+      })
   }
 
   /** Expire day-old questions; each one that expires now is emitted as 'expired' (its card is told). */

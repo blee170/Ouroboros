@@ -10,6 +10,7 @@ describe('validInbox', () => {
     for (const bad of [String.raw`\\.\pipe\other`, String.raw`C:\x\cc-msg-1`, String.raw`\\.\pipe\LOCAL\cc-msg-../x`, 7, undefined]) expect(validInbox(bad, 'win32')).toBe(false)
     expect(validInbox('/tmp/claude/cc-msg.sock', 'linux')).toBe(true)
     expect(validInbox('relative.sock', 'linux')).toBe(false)
+    expect(validInbox('/var/run/docker.sock', 'linux')).toBe(false)
   })
 })
 

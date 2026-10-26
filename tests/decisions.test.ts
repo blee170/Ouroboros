@@ -14,6 +14,12 @@ describe('askInput', () => {
       expect(askInput(bad as never).ok).toBe(false)
     }
   })
+  it('drops control, bidi and invisible characters, so two answers cannot look the same', () => {
+    const zw = String.fromCharCode(0x200b)
+    const rlo = String.fromCharCode(0x202e)
+    expect(askInput({ question: 'q', choices: ['Deny', 'Deny' + zw] })).toMatchObject({ ok: false })
+    expect(askInput({ question: `Ship${rlo} it?\nNow` })).toEqual({ ok: true, question: 'Ship  it?\nNow' })
+  })
   it('offers the choices, else Approve and Deny', () => {
     expect(answersOf({ choices: ['A', 'B'] })).toEqual(['A', 'B'])
     expect(answersOf({})).toEqual([APPROVE, DENY])
@@ -48,6 +54,20 @@ describe('DecisionDesk', () => {
     expect(await desk.wait('D1', 20)).toMatchObject({ state: 'answered' })
     expect(await desk.wait('D9', 20)).toBeUndefined()
   })
+  it('stops waiting when the caller hangs up, so a later answer goes by mail', async () => {
+    const desk = new DecisionDesk()
+    desk.ask(card, 'q', undefined)
+    const gone = new AbortController()
+    const waiting = desk.wait('D1', 60_000, gone.signal)
+    gone.abort()
+    expect(await waiting).toBeUndefined()
+    expect(desk.answer('D1', APPROVE, undefined, 'owner')).toMatchObject({ ok: true, waited: false })
+    const already = new AbortController()
+    already.abort()
+    desk.ask({ id: 'w2', title: 'Other' }, 'q2', undefined)
+    expect(await desk.wait('D2', 60_000, already.signal)).toBeUndefined()
+    expect(desk.answer('D2', APPROVE, undefined, 'owner')).toMatchObject({ ok: true, waited: false })
+  })
   it('refuses a note over the limit', () => {
     const desk = new DecisionDesk()
     desk.ask(card, 'q', undefined)
@@ -64,16 +84,18 @@ describe('DecisionDesk', () => {
     expect(expired.map((d) => d.state)).toEqual(['expired'])
     expect(await waiting).toMatchObject({ state: 'expired' })
     desk.ask({ id: 'w2', title: 'Other' }, 'Gone?', undefined)
-    desk.withdraw('w2')
+    expect(desk.withdraw('w2').map((d) => d.id)).toEqual(['D2'])
+    expect(desk.withdraw('w2')).toEqual([])
     expect(desk.pending()).toEqual([])
     expect(desk.decisions.find((d) => d.id === 'D2')?.state).toBe('withdrawn')
   })
-  it('drops waiters and questions when the project changes', async () => {
+  it('withdraws the questions when the project changes', async () => {
     const desk = new DecisionDesk()
     desk.ask(card, 'q', undefined)
     const waiting = desk.wait('D1', 60_000)
-    desk.load()
-    expect(await waiting).toBeUndefined()
+    expect(desk.load().map((d) => d.id)).toEqual(['D1'])
+    // the waiting call is told the question was withdrawn, not to wait for an answer that cannot come
+    expect(await waiting).toMatchObject({ id: 'D1', state: 'withdrawn' })
     expect(desk.decisions).toEqual([])
   })
 })

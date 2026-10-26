@@ -150,7 +150,7 @@ function renderQuestion(q) {
   var box = el('div', 'card needs')
   var head = el('div', 'head')
   head.appendChild(el('span', 'title', q.title))
-  head.appendChild(el('span', 'muted', q.id))
+  head.appendChild(el('span', 'muted', (q.project ? q.project + ' · ' : '') + q.id))
   box.appendChild(head)
   box.appendChild(el('div', 'last', q.question))
   var note = el('input', '')

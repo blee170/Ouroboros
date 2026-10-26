@@ -94,11 +94,14 @@ export function sendMail(data: MailData, input: { from: string; to: string; body
   if (denied) return { ok: false, error: denied }
   const parent = input.replyTo !== undefined ? data.messages.find((m) => m.id === input.replyTo) : undefined
   if (input.replyTo !== undefined && !parent) return { ok: false, error: `no message ${String(input.replyTo).slice(0, 20)} to reply to` }
+  if (parent && input.from !== OWNER && parent.from !== input.from && parent.to !== input.from) return { ok: false, error: `${parent.id} is not a message to or from you` }
   // loop guard: agents answering agents with no word from the owner stop after a while, in a thread and between two cards
   const depth = input.from === OWNER ? 0 : (parent ? (parent.from === OWNER ? 0 : (parent.depth ?? 1)) : 0) + 1
   if (depth > MAIL_LIMITS.agentThread) return { ok: false, error: `this thread has gone ${MAIL_LIMITS.agentThread} messages between agents without the owner: stop here, and ask the owner (ask_owner) or wait for new instructions` }
   if (input.from !== OWNER) {
-    const pair = data.messages.filter((m) => m.from !== OWNER && now - m.createdAt < MAIL_LIMITS.pairWindowMs && ((m.from === input.from && m.to === input.to) || (m.from === input.to && m.to === input.from)))
+    // one direction only (a card cannot silence the other's replies), counted since the owner last wrote to either card
+    const ownerAt = data.messages.reduce((t, m) => (m.from === OWNER && (m.to === input.from || m.to === input.to) ? Math.max(t, m.createdAt) : t), -1)
+    const pair = data.messages.filter((m) => m.from === input.from && m.to === input.to && m.createdAt > ownerAt && now - m.createdAt < MAIL_LIMITS.pairWindowMs)
     if (pair.length >= MAIL_LIMITS.pairMessages) return { ok: false, error: `${pair.length} messages between you and ${input.to} in the last ${MAIL_LIMITS.pairWindowMs / 60_000} minutes: stop the back-and-forth, and ask the owner (ask_owner) or wait` }
   }
   if (input.from !== OWNER) {

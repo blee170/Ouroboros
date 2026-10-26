@@ -41,9 +41,10 @@ function readTokenFile(file: string | undefined): string {
 }
 const SELF = process.env.OUROBOROS_SELF_ID ?? ''
 
-async function api(method: 'GET' | 'POST' | 'DELETE' | 'PATCH', path: string, body?: unknown): Promise<unknown> {
+async function api(method: 'GET' | 'POST' | 'DELETE' | 'PATCH', path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
   const res = await fetch(BASE + path, {
     method,
+    signal,
     // the caller's card id scopes every call to the window (board) that owns it
     headers: { 'content-type': 'application/json', 'x-ouroboros-token': TOKEN, ...(SELF ? { 'x-ouroboros-self': SELF } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body)
@@ -96,8 +97,9 @@ server.registerTool(
       choices: z.array(z.string().min(1).max(80)).min(2).max(4).optional().describe('2 to 4 short answers to pick from, your recommendation first; omit for Approve / Deny')
     }
   },
-  async ({ question, choices }) => {
-    const r = (await api('POST', '/api/mail/ask', { question, choices })) as { text: string }
+  async ({ question, choices }, extra) => {
+    // a cancelled call (Esc) hangs up, so the app sends a later answer as a board message instead
+    const r = (await api('POST', '/api/mail/ask', { question, choices }, extra.signal)) as { text: string }
     return text(r.text)
   }
 )

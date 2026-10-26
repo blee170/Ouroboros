@@ -190,6 +190,9 @@ function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token:
   if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return { ok: false, error: 'only Claude cards have an inbox' }
   if (!validInbox(socket)) return { ok: false, error: 'not a Claude Code inbox path' }
   if (token !== undefined && (typeof token !== 'string' || token.length > 512)) return { ok: false, error: 'bad inbox token' }
+  // one inbox per process: a card cannot move its prompts to a pipe of its own making later (a failed push clears it)
+  const had = inboxes.get(nodeId)
+  if (had && had.socket !== socket) return { ok: false, error: 'this card already has an inbox' }
   inboxes.set(nodeId, { socket, ...(token ? { token } : {}) })
   log(`inbox: ${nodeId} registered (text goes into its session, not its terminal)`)
   return { ok: true }
@@ -230,8 +233,9 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
   const inbox = inboxes.get(nodeId)
   if (inbox) {
     void pushInbox(inbox, text).then((ok) => {
-      if (ok || !ctx.ptys.isAlive(nodeId)) return
+      if (ok) return
       if (inboxes.get(nodeId) === inbox) inboxes.delete(nodeId)
+      if (!ctx.ptys.isAlive(nodeId)) return log(`inbox: ${nodeId} did not take the prompt and its process has exited; the prompt is dropped`)
       log(`inbox: ${nodeId} did not take the prompt; typed into the terminal instead`)
       pastePrompt(ctx, nodeId, text)
     })
@@ -287,7 +291,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.usage.forgetCard(id)
   forgetMail(id)
   inboxes.delete(id)
-  s.decisions.withdraw(id)
+  for (const d of s.decisions.withdraw(id)) s.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): the card was removed`)
   transcripts.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
@@ -347,7 +351,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     },
     mailAck: (id, self) => s.mail.ack(id, self),
     registerInbox: (self, socket, token) => registerInbox(s, self, socket, token),
-    askOwner: async (self, input) => {
+    askOwner: async (self, input, signal) => {
       const n = board.nodes.get(self)
       if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'only agent cards can ask the owner' }
       const q = askInput(input)
@@ -357,7 +361,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const id = r.decision.id
       s.autonomy.noteDecision(self, n.data.title, `asked (${id}): ${q.question.replace(/\s+/g, ' ').slice(0, 200)}${q.choices ? ` [${q.choices.join(' / ')}]` : ''}`)
       // the owner is away during a run: no point holding the card's turn
-      const d = s.autonomy.on ? undefined : await s.decisions.wait(id, DECISION_LIMITS.waitMs)
+      const d = s.autonomy.on ? undefined : await s.decisions.wait(id, DECISION_LIMITS.waitMs, signal)
       if (d && d.state === 'answered') return { ok: true, id, answered: true, text: decisionMessage(d) }
       if (d) return { ok: true, id, answered: false, text: decisionMessage(d) }
       return { ok: true, id, answered: false, text: pendingMessage(id, s.autonomy.on) }
@@ -1509,7 +1513,7 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
 }
 
 /** Claude cards' transcripts and how far the topic reader got. */
-const transcripts = new Map<string, { path: string; offset: number; reading?: boolean }>()
+const transcripts = new Map<string, { path: string; offset: number; reading?: boolean; again?: boolean }>()
 const TOPIC_READ_CAP = 256 * 1024
 /** Events that end a step: the turn ended, a new prompt came in, the session (re)started or ended. */
 const STEP_ENDS = new Set(['Stop', 'StopFailure', 'UserPromptSubmit', 'SessionStart', 'SessionEnd'])
@@ -1539,7 +1543,11 @@ function noteActivity(s: WindowSession, nodeId: string, event: HookEvent): void 
 /** Read what the transcript gained since the last read (at most its last 256 KB) for a newer conversation title. */
 async function readTopic(s: WindowSession, nodeId: string): Promise<void> {
   const t = transcripts.get(nodeId)
-  if (!t || t.reading) return
+  if (!t) return
+  if (t.reading) {
+    t.again = true
+    return
+  }
   t.reading = true
   try {
     const fh = await open(t.path, 'r')
@@ -1567,6 +1575,10 @@ async function readTopic(s: WindowSession, nodeId: string): Promise<void> {
     // the transcript moved or is unreadable: the card keeps its last topic
   } finally {
     t.reading = false
+    if (t.again) {
+      t.again = false
+      void readTopic(s, nodeId)
+    }
   }
 }
 
@@ -1772,6 +1784,11 @@ export function registerIpc(ctx: MainContext): void {
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
+    const ended = s?.board.nodes.get(nodeId)
+    if (s && ended?.data.doing) {
+      ended.data.doing = undefined
+      sendToRenderer(s, IPC.boardActivity, { nodeId, doing: null })
+    }
     if (!s) return
     s.board.setPtyAlive(nodeId, false)
     if (s.board.nodes.has(nodeId)) s.board.setStatus(nodeId, { status: 'ended', statusDetail: `exited (${code})` })
@@ -1913,7 +1930,7 @@ export function registerIpc(ctx: MainContext): void {
     s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
     s?.mail.load(mailFile(app.getPath('userData'), projectRoot))
     s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
-    s?.decisions.load()
+    for (const d of s?.decisions.load() ?? []) s?.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): another project was opened`)
     // check() never throws: anything unexpected holds every card
     const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
     // tasks from a board this app never wrote (a cloned repo) or one changed behind its back go to Notion only once they change here

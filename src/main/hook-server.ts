@@ -27,7 +27,7 @@ export interface ApiHandlers {
   /** The caller's Claude Code inbox (its MCP server's CLAUDE_CODE_MESSAGING_SOCKET and token): text for the card goes in there. */
   registerInbox(self: string, socket: unknown, token: unknown): { ok: boolean; error?: string }
   /** ask_owner: the caller's question to the owner; waits a while for the answer, else says it is pending. */
-  askOwner(self: string, input: { question?: unknown; choices?: unknown }): Promise<{ ok: true; id: string; answered: boolean; text: string } | { ok: false; error: string }>
+  askOwner(self: string, input: { question?: unknown; choices?: unknown }, signal?: AbortSignal): Promise<{ ok: true; id: string; answered: boolean; text: string } | { ok: false; error: string }>
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
   listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
@@ -350,7 +350,12 @@ export class HookServer {
       }
       if (method === 'POST' && path === '/api/mail/ask') {
         const body = (await readJson(req, 16_000)) as { question?: unknown; choices?: unknown }
-        const r = await api.askOwner(claimed, { question: body?.question, choices: body?.choices })
+        // a caller that hangs up (a cancelled tool call, a restarted card) stops waiting: a later answer then goes by mail
+        const gone = new AbortController()
+        res.on('close', () => {
+          if (!res.writableEnded) gone.abort()
+        })
+        const r = await api.askOwner(claimed, { question: body?.question, choices: body?.choices }, gone.signal)
         return send(res, r.ok ? 200 : 400, r)
       }
       const ack = /^\/api\/mail\/([^/]+)\/ack$/.exec(path)

@@ -3,6 +3,7 @@
  * phone with one of the card's choices (or Approve / Deny when it gave none) and an optional note. Pure: the rules,
  * the input checks and the text the card gets back.
  */
+import { stripUnsafe } from './doing'
 
 export interface Decision {
   /** D<n>, per window */
@@ -40,11 +41,11 @@ export const DECISION_LIMITS = {
 export const APPROVE = 'Approve'
 export const DENY = 'Deny'
 
-const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
+const oneLine = (s: string): string => stripUnsafe(s).replace(/\s+/g, ' ').trim()
 
 /** Pure: a card's question and choices as given to ask_owner, checked. */
 export function askInput(raw: { question?: unknown; choices?: unknown }): { ok: true; question: string; choices?: string[] } | { ok: false; error: string } {
-  const question = typeof raw.question === 'string' ? raw.question.trim() : ''
+  const question = typeof raw.question === 'string' ? stripUnsafe(raw.question).trim() : ''
   if (!question || question.length > DECISION_LIMITS.questionChars) return { ok: false, error: `question: 1 to ${DECISION_LIMITS.questionChars} characters` }
   if (raw.choices === undefined || raw.choices === null) return { ok: true, question }
   if (!Array.isArray(raw.choices) || raw.choices.some((c) => typeof c !== 'string')) return { ok: false, error: 'choices: a list of short strings' }

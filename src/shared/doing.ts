@@ -9,6 +9,11 @@ const MAX = 80
 // control characters, bidi marks and overrides, zero-width characters
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
 
+/** Pure: text with control, bidi and invisible characters replaced by spaces (line breaks kept). */
+export function stripUnsafe(text: string): string {
+  return text.replace(/\r\n?/g, '\n').replace(UNSAFE, (c) => (c === '\n' ? c : ' '))
+}
+
 export function cleanLine(text: string): string {
   const t = text.replace(UNSAFE, ' ').replace(/\s+/g, ' ').trim()
   return t.length > MAX ? `${t.slice(0, MAX - 1)}…` : t

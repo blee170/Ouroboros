@@ -15,7 +15,7 @@ export interface InboxAddress {
 /** Pure: an inbox path Claude Code would make (its named pipe on Windows, an absolute socket path elsewhere). */
 export function validInbox(socket: unknown, platform: NodeJS.Platform = process.platform): socket is string {
   if (typeof socket !== 'string' || socket.length > 300) return false
-  return platform === 'win32' ? /^\\\\\.\\pipe\\LOCAL\\cc-msg-[A-Za-z0-9_-]{8,128}$/.test(socket) : /^\/[^\0]+$/.test(socket)
+  return platform === 'win32' ? /^\\\\\.\\pipe\\LOCAL\\cc-msg-[A-Za-z0-9_-]{8,128}$/.test(socket) : /^\/[^\0]*\/cc-msg[A-Za-z0-9._-]*$/.test(socket)
 }
 
 /** Pure: the lines written to the inbox. */

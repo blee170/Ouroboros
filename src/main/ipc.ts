@@ -17,6 +17,7 @@ import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
 import { applyProtection, checkCardToken, readProtection } from './rulesets'
+import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
 import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
@@ -175,7 +176,34 @@ function viewing(s: WindowSession, nodeId: string): boolean {
   return !s.win.isDestroyed() && s.win.isFocused() && s.selectedNodeId === nodeId
 }
 
-/** Type a prompt into an agent terminal (bracketed paste + Enter); command cards run their template instead. */
+/** Claude cards' inboxes, registered by their board MCP server (in memory only: the token never reaches a file or the log). */
+const inboxes = new Map<string, InboxAddress>()
+
+function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token: unknown): { ok: boolean; error?: string } {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return { ok: false, error: 'only Claude cards have an inbox' }
+  if (!validInbox(socket)) return { ok: false, error: 'not a Claude Code inbox path' }
+  if (token !== undefined && (typeof token !== 'string' || token.length > 512)) return { ok: false, error: 'bad inbox token' }
+  inboxes.set(nodeId, { socket, ...(token ? { token } : {}) })
+  log(`inbox: ${nodeId} registered (text goes into its session, not its terminal)`)
+  return { ok: true }
+}
+
+/** Whether text for this card goes into its Claude Code inbox (the delivery state send_message reports). */
+export function hasInbox(nodeId: string): boolean {
+  return inboxes.has(nodeId)
+}
+
+function pastePrompt(ctx: MainContext, nodeId: string, text: string): void {
+  ctx.ptys.write(nodeId, toPastePayload(text))
+  setTimeout(() => ctx.ptys.write(nodeId, '\r'), 150)
+}
+
+/**
+ * Give an agent card a prompt: into its Claude Code inbox when it registered one (a running turn takes it between
+ * tool calls, an idle session starts a turn), else typed into its terminal (bracketed paste + Enter). An inbox that
+ * fails is dropped and the text typed instead. Command cards run their template.
+ */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   if (!ctx.ptys.isAlive(nodeId)) return false
   // the CLI never started: the live process is the shell itself, and a prompt typed there would run as a command
@@ -193,8 +221,17 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
     ctx.ptys.write(nodeId, line + '\r')
     return true
   }
-  ctx.ptys.write(nodeId, toPastePayload(text))
-  setTimeout(() => ctx.ptys.write(nodeId, '\r'), 150)
+  const inbox = inboxes.get(nodeId)
+  if (inbox) {
+    void pushInbox(inbox, text).then((ok) => {
+      if (ok || !ctx.ptys.isAlive(nodeId)) return
+      if (inboxes.get(nodeId) === inbox) inboxes.delete(nodeId)
+      log(`inbox: ${nodeId} did not take the prompt; typed into the terminal instead`)
+      pastePrompt(ctx, nodeId, text)
+    })
+    return true
+  }
+  pastePrompt(ctx, nodeId, text)
   // Codex has no prompt-submitted hook; we know we just gave it work
   if (n && n.data.engine === 'codex' && n.data.status !== 'working') s.board.setStatus(nodeId, { status: 'working', statusDetail: 'prompt sent' })
   return true
@@ -243,6 +280,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   running.delete(id)
   ctx.usage.forgetCard(id)
   forgetMail(id)
+  inboxes.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -298,6 +336,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       return { count: list.length, text: list.length ? list.map((m) => envelope(m, titleOf(board, m.from))).join('\n\n') : 'No messages.' }
     },
     mailAck: (id, self) => s.mail.ack(id, self),
+    registerInbox: (self, socket, token) => registerInbox(s, self, socket, token),
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
@@ -1593,6 +1632,7 @@ export function registerIpc(ctx: MainContext): void {
   })
   ptys.on('exit', (nodeId: string, code: number) => {
     running.delete(nodeId)
+    inboxes.delete(nodeId)
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)

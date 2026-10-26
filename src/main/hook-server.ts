@@ -24,6 +24,8 @@ export interface ApiHandlers {
   /** The caller's inbox (marked delivered); unreadOnly = not yet acknowledged. */
   mailInbox(self: string, unreadOnly: boolean): { text: string; count: number }
   mailAck(id: string, self: string): { ok: boolean; error?: string }
+  /** The caller's Claude Code inbox (its MCP server's CLAUDE_CODE_MESSAGING_SOCKET and token): text for the card goes in there. */
+  registerInbox(self: string, socket: unknown, token: unknown): { ok: boolean; error?: string }
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
   listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
@@ -339,6 +341,11 @@ export class HookServer {
         return send(res, r.ok ? 200 : 400, r)
       }
       if (method === 'GET' && path === '/api/mail') return send(res, 200, api.mailInbox(claimed, url.searchParams.get('unread') !== '0'))
+      if (method === 'POST' && path === '/api/mail/inbox') {
+        const body = (await readJson(req, 4_000)) as { socket?: unknown; token?: unknown }
+        const r = api.registerInbox(claimed, body?.socket, body?.token)
+        return send(res, r.ok ? 200 : 400, r)
+      }
       const ack = /^\/api\/mail\/([^/]+)\/ack$/.exec(path)
       if (method === 'POST' && ack) {
         const r = api.mailAck(decodeURIComponent(ack[1]), claimed)

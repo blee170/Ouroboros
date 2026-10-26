@@ -497,6 +497,13 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)
   log('connected')
+  // Claude Code gives the servers it starts its inbox: the board puts text for this card there instead of typing it
+  const inbox = process.env.CLAUDE_CODE_MESSAGING_SOCKET
+  if (inbox && SELF) {
+    api('POST', '/api/mail/inbox', { socket: inbox, token: process.env.CLAUDE_CODE_MESSAGING_TOKEN || undefined })
+      .then(() => log('inbox registered'))
+      .catch((err) => log(`inbox not registered: ${String(err)}`))
+  }
 }
 
 main().catch((err) => {

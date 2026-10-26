@@ -5,6 +5,7 @@ import type { WslCheck } from '@shared/wsl'
 import { PROTECT_RULES, protectedFully } from '@shared/rulesets'
 import { EnginesPanel } from './EnginesPanel'
 import { PhoneSettings } from './PhoneSettings'
+import { OuroSettings } from './OuroSettings'
 import { VoiceSettings } from './VoiceSettings'
 import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
@@ -25,6 +26,7 @@ const SECTIONS = [
   { id: 'announce', label: 'Announcements', group: 'General' },
   { id: 'voice', label: 'Voice input', group: 'Voice & phone' },
   { id: 'phone', label: 'Phone', group: 'Voice & phone' },
+  { id: 'ouro', label: 'Ouro (Discord)', group: 'Voice & phone' },
   { id: 'github', label: 'GitHub', group: 'Integrations' },
   { id: 'notion', label: 'Notion', group: 'Integrations' },
   { id: 'obsidian', label: 'Obsidian', group: 'Integrations' },
@@ -410,6 +412,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
             <div {...pane('phone')}>
               <PhoneSettings />
+            </div>
+
+            <div {...pane('ouro')}>
+              <OuroSettings />
             </div>
 
             <section className="settings-section" {...pane('github')}>

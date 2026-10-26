@@ -133,6 +133,12 @@ const api: OuroborosApi = {
     setListening: (on) => ipcRenderer.invoke(IPC.voiceListening, on),
     onHotkey: (cb) => on(IPC.voiceHotkey, cb)
   },
+  ouro: {
+    status: () => ipcRenderer.invoke(IPC.ouroStatus),
+    configure: (view) => ipcRenderer.invoke(IPC.ouroConfigure, view),
+    setToken: (token) => ipcRenderer.invoke(IPC.ouroSetToken, token),
+    test: () => ipcRenderer.invoke(IPC.ouroTest)
+  },
   phone: {
     status: () => ipcRenderer.invoke(IPC.phoneStatus),
     interfaces: () => ipcRenderer.invoke(IPC.phoneInterfaces),

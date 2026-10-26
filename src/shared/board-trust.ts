@@ -29,6 +29,7 @@ export const PRIVILEGE_FIELDS = [
   'claude.resume',
   'claude.continue',
   'claude.model',
+  'claude.wsl',
   'handoffs'
 ] as const
 export type PrivilegeField = (typeof PRIVILEGE_FIELDS)[number]

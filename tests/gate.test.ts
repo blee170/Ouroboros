@@ -132,3 +132,25 @@ describe('approvals', () => {
     expect(approvalNeeded('gh pr merge 3')).toMatch(/^APPROVAL NEEDED: gh pr merge 3/)
   })
 })
+
+describe('supabase db reset (Type 1 (f): local stack only)', () => {
+  it('allows a plain local reset, refuses one aimed anywhere else', () => {
+    for (const ok of ['supabase db reset', 'supabase db reset --no-seed', 'npx supabase db reset --local --debug', 'npx -y supabase db reset --version 20261026000000', 'supabase.exe db reset --version=1'])
+      expect(decide(ok), ok).toMatchObject({ decision: 'auto', onlyGated: true })
+    for (const bad of ['supabase db reset --linked', 'supabase db reset --db-url postgres://x', 'npx supabase db reset --db-url=postgres://x', 'supabase db reset --workdir ../prod', 'supabase --workdir ../prod db reset', 'supabase db reset $FLAGS', 'bash -c "supabase db reset --linked"'])
+      expect(decide(bad).decision, bad).toBe('never')
+    expect(decide('supabase db reset && git push origin main').decision).toBe('never')
+    expect(decide('supabase status').decision).toBeUndefined()
+    expect(mayBeGated('npx supabase db reset')).toBe(true)
+  })
+})
+
+describe('supabase db reset through shims and other runners', () => {
+  it('reads .cmd shims and refuses runners it cannot check', () => {
+    expect(decide('supabase.cmd db reset').decision).toBe('auto')
+    expect(decide('supabase.cmd db reset --linked').decision).toBe('never')
+    expect(decide('npx.cmd supabase db reset --db-url x').decision).toBe('never')
+    for (const bad of ['npx supabase@latest db reset --linked', 'pnpm dlx supabase db reset', 'bunx supabase db reset --linked', 'npm exec supabase -- db reset', 'yarn supabase db reset'])
+      expect(decide(bad).decision, bad).toBe('never')
+  })
+})

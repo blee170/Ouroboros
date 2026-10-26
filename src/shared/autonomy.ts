@@ -182,14 +182,14 @@ export const WORKER_DENY_RULES: string[] = [
 ]
 
 /** Decided by the action gate instead of denied outright, when the gate hook is installed (src/shared/gate.ts). */
-export const GATED_PREFIXES = ['git push', 'git send-pack', 'gh pr merge']
+export const GATED_PREFIXES = ['git push', 'git send-pack', 'gh pr merge', 'supabase db reset', 'npx supabase db reset']
 
 /**
  * Kept denied even with the gate: if the hook cannot run at all (node gone, the script missing, a timeout), Claude
  * Code lets the command through, so the forms the gate always refuses stay on the deny list as a second rail. None of
  * them can be an allowed push (those name a claude/* or card/* branch).
  */
-const GATE_BACKSTOP = ['git push -f', 'git push --force', 'git push --delete', 'git push -d', 'git push --mirror', 'git push --all', 'git push --tags', 'git push --prune', 'git push origin main', 'git push origin master', 'git push origin HEAD:main', 'git push origin HEAD:master', 'git push origin +', 'git push origin :', 'git send-pack']
+const GATE_BACKSTOP = ['git push -f', 'git push --force', 'git push --delete', 'git push -d', 'git push --mirror', 'git push --all', 'git push --tags', 'git push --prune', 'git push origin main', 'git push origin master', 'git push origin HEAD:main', 'git push origin HEAD:master', 'git push origin +', 'git push origin :', 'git send-pack', 'supabase db reset --linked', 'supabase db reset --db-url', 'npx supabase db reset --linked', 'npx supabase db reset --db-url']
 
 /**
  * The settings fragment merged into a card's `--settings` file during a run. With a gate command (the PreToolUse
@@ -221,15 +221,23 @@ export function autonomyRetryRefusal(state: RunState, title: string): string | n
 export type RelaunchAction = 'relaunch' | 'close' | 'keep'
 
 /**
- * What the toggle does to each live card: Claude cards are relaunched in auto mode with the deny rules
- * (same conversation via --resume), Codex, Gemini and Grok cards are closed (no such guarantees there),
+ * Engines a run keeps: Claude (auto mode, deny rules, the action gate) and Codex (its own sandbox: workspace-write
+ * with no network and a read-only .git, never asking). Gemini and Grok have neither rails nor a sandbox to rely on.
+ */
+export function engineJoinsRun(engine: string | undefined): boolean {
+  return engine === undefined || engine === 'claude' || engine === 'codex'
+}
+
+/**
+ * What the toggle does to each live card: Claude and Codex cards are relaunched with the run's rails (same
+ * conversation where there is a session to resume), Gemini and Grok cards are closed (no such guarantees there),
  * terminals and command cards are left alone.
  */
 export function relaunchAction(a: Pick<AgentSnapshot, 'kind' | 'engine' | 'ptyAlive' | 'status'>): RelaunchAction {
   if (a.status === 'ended') return 'keep' // /exit or a crash inside a live shell is still an ended card
   if (!a.ptyAlive && a.status !== 'starting') return 'keep'
   if (a.kind !== 'claude' && a.kind !== 'conductor') return 'keep'
-  return a.engine === 'codex' || a.engine === 'gemini' || a.engine === 'grok' ? 'close' : 'relaunch'
+  return engineJoinsRun(a.engine) ? 'relaunch' : 'close'
 }
 
 export interface StallAction {

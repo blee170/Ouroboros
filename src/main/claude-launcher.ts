@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path'
 import type { AgentEngine, ClaudeOptions } from '@shared/types'
 import { buildCodexLaunch, buildGeminiLaunch, buildGrokLaunch } from './agent-launcher'
 import { shellKind, type ShellKind } from './pty-manager'
+import { homedir } from 'node:os'
+import { toWslPath, wslSandboxSettings } from '@shared/wsl'
 
 const HOOK_EVENTS_WITH_MATCHER = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']
 const HOOK_EVENTS = [
@@ -72,10 +74,13 @@ export function buildHookSettings(baseUrl: string, target: string, events: strin
  * quotes read the same in Git Bash, cmd.exe and PowerShell. Undefined without a node binary or a script (the run then
  * keeps pushes and merges on its deny list), or for an id a shell could misread.
  */
-export function buildGateCommand(nodeBin: string | undefined, hookScriptPath: string | undefined, baseUrl: string, nodeId: string): string | undefined {
+export function buildGateCommand(nodeBin: string | undefined, hookScriptPath: string | undefined, baseUrl: string, nodeId: string, wsl = false): string | undefined {
   if (!nodeBin || !hookScriptPath || !SHELL_SAFE_ID.test(nodeId) || /["%$`]/.test(nodeBin + hookScriptPath)) return undefined
   const fwd = (p: string): string => p.split(String.fromCharCode(92)).join('/')
-  return `"${fwd(nodeBin)}" "${fwd(hookScriptPath)}" gate --url ${baseUrl} --node ${nodeId}`
+  // a WSL card's shell starts the Windows node through interop (/mnt/c/…); the script path stays Windows' for that node
+  const exe = wsl ? toWslPath(nodeBin) : fwd(nodeBin)
+  if (!exe) return undefined
+  return `"${exe}" "${fwd(hookScriptPath)}" gate --url ${baseUrl} --node ${nodeId}`
 }
 
 /** Settings on top of the card's hook settings: `hooks` are added per event (the run's gate next to the card's own hooks), the rest replaced. */
@@ -146,6 +151,31 @@ export function buildClaudeCommand(
   const quoted = rest.map((a) => (/^[A-Za-z0-9_./:\\-]+$/.test(a) ? a : quoteArg(a, kind)))
   const prefix = kind === 'powershell' ? '& ' : ''
   return `${prefix}${bin} ${quoted.join(' ')}`.trim()
+}
+
+/**
+ * The launch line of a WSL card: `wsl.exe -d <distro> --cd <folder> -e bash -lc '<claude …>'`. The claude line is
+ * built for a posix shell with the launch files' /mnt paths; a login shell puts ~/.local/bin (the installer's) on PATH.
+ */
+export function buildWslClaudeCommand(
+  opts: ClaudeOptions,
+  files: { settingsPath: string; mcpConfigPath?: string; systemPromptPath?: string; sessionName?: string },
+  wsl: { distro: string; cwd: string },
+  kind: ShellKind
+): string {
+  const map = (p: string | undefined): string | undefined => {
+    if (p === undefined) return undefined
+    const w = toWslPath(p)
+    if (!w) throw new Error(`WSL card: ${p} is not on a drive WSL mounts`)
+    return w
+  }
+  const inner = buildClaudeCommand(opts, { settingsPath: map(files.settingsPath)!, mcpConfigPath: map(files.mcpConfigPath), systemPromptPath: map(files.systemPromptPath), sessionName: files.sessionName }, 'posix')
+  // PowerShell 5.1 and cmd.exe pass an argument with a double quote inside to a native program wrongly
+  if (inner.includes('"')) throw new Error('WSL card: an option contains a double quote, which cannot be passed to wsl.exe safely')
+  if (!toWslPath(wsl.cwd)) throw new Error(`WSL card: the folder ${wsl.cwd} is not on a drive WSL mounts`)
+  const args = ['-d', wsl.distro, '--cd', wsl.cwd, '-e', 'bash', '-lc', inner]
+  const quoted = args.map((a) => (/^[A-Za-z0-9_./:\\-]+$/.test(a) ? a : quoteArg(a, kind)))
+  return `${kind === 'powershell' ? '& ' : ''}wsl.exe ${quoted.join(' ')}`
 }
 
 export const CONDUCTOR_SYSTEM_PROMPT = `# Ouroboros Conductor
@@ -227,13 +257,23 @@ export function prepareLaunch(params: {
   title?: string
   /** More for the card's `--settings` file (Autonomous mode writes its `permissions.deny` rules here). */
   settingsExtra?: Record<string, unknown>
+  /** launched during an autonomous run (Codex: sandbox forced) */
+  autonomous?: boolean
+  /** a Claude card run inside WSL2 with the sandbox on (experimental): the distro and the card's Windows folder */
+  wsl?: { distro: string; cwd: string }
 }): PreparedLaunch {
   assertLaunchableId(params.nodeId)
   mkdirSync(params.tmpDir, { recursive: true })
   const engine = params.engine ?? 'claude'
   if (engine === 'codex' || engine === 'gemini' || engine === 'grok') return prepareEngineLaunch(engine, params)
   const settingsPath = join(params.tmpDir, `${params.nodeId}.settings.json`)
-  writeFileSync(settingsPath, JSON.stringify(mergeSettings(buildHookSettings(params.baseUrl, params.nodeId), params.settingsExtra ?? {}), null, 2))
+  const wsl = params.wsl
+  let settings = mergeSettings(buildHookSettings(params.baseUrl, params.nodeId), params.settingsExtra ?? {})
+  if (wsl) {
+    settings = { ...settings, ...wslSandboxSettings(wsl.cwd, homedir()) }
+    if (settings.statusLine) settings.statusLine = { type: 'command', command: buildStatusLineCommand(params.baseUrl, params.nodeId, 'linux') }
+  }
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
   let mcpConfigPath: string | undefined
   const claude: ClaudeOptions = { ...params.claude }
   const mcpServers: Record<string, unknown> = { ...(claude.mcpServers ?? {}) }
@@ -253,6 +293,13 @@ export function prepareLaunch(params: {
   if (boardTools) claude.appendSystemPrompt = [CONDUCTOR_SYSTEM_PROMPT, claude.appendSystemPrompt].filter(Boolean).join(' ')
   if (Object.keys(mcpServers).length > 0) {
     mcpConfigPath = join(params.tmpDir, `${params.nodeId}.mcp.json`)
+    if (wsl) {
+      // the board's MCP server is a Windows program: Linux starts it through interop
+      const own = mcpServers.ouroboros as { command: string }
+      const exe = toWslPath(own.command)
+      if (!exe) throw new Error('WSL card: the node or app path is not on a drive WSL mounts')
+      mcpServers.ouroboros = { ...own, command: exe }
+    }
     writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }, null, 2))
   }
   let systemPromptPath: string | undefined
@@ -261,7 +308,9 @@ export function prepareLaunch(params: {
     writeFileSync(systemPromptPath, claude.appendSystemPrompt.trim() + '\n', 'utf8')
   }
   const sessionName = params.title ? safeSessionName(params.title) || undefined : undefined
-  const command = buildClaudeCommand(claude, { settingsPath, mcpConfigPath, systemPromptPath, sessionName }, shellKind(params.shell), params.claudeBin)
+  const command = wsl
+    ? buildWslClaudeCommand(claude, { settingsPath, mcpConfigPath, systemPromptPath, sessionName }, wsl, shellKind(params.shell))
+    : buildClaudeCommand(claude, { settingsPath, mcpConfigPath, systemPromptPath, sessionName }, shellKind(params.shell), params.claudeBin)
   const env: Record<string, string> = { [CARD_TOKEN_ENV]: params.token }
   if (boardTools) env[CARD_API_TOKEN_ENV] = params.apiToken
   else env[CARD_MAIL_TOKEN_ENV] = params.mailToken
@@ -298,7 +347,8 @@ function prepareEngineLaunch(engine: 'codex' | 'gemini' | 'grok', params: Parame
     electronAsNode: !params.nodeBin,
     hookScriptPath: params.hookScriptPath,
     mcpScriptPath: params.mcpScriptPath,
-    shell: shellKind(params.shell)
+    shell: shellKind(params.shell),
+    autonomous: params.autonomous === true
   }
   if (engine === 'codex') {
     const l = buildCodexLaunch(input)

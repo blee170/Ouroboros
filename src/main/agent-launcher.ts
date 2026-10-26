@@ -33,6 +33,8 @@ export interface EngineLaunchInput {
   hookScriptPath: string
   mcpScriptPath: string
   shell: ShellKind
+  /** launched during an autonomous run: Codex gets its sandbox forced (see buildCodexLaunch) */
+  autonomous?: boolean
 }
 
 export interface EngineLaunch {
@@ -111,13 +113,19 @@ export function buildCodexLaunch(input: EngineLaunchInput): EngineLaunch {
   }
   let args = build(inlineRole)
   if (claude.model) args.push('-m', claude.model)
-  switch (claude.permissionMode) {
+  if (input.autonomous) {
+    // Autonomous run (Type 1 (d)): the sandbox is the rail. workspace-write keeps .git read-only and the network off;
+    // the overrides beat a config.toml that opened either, and nothing the card or its options add can widen it.
+    if (claude.permissionMode === 'plan') args.push('-s', 'read-only', '-a', 'never')
+    else args.push('-s', 'workspace-write', '-a', 'never', '-c', 'sandbox_workspace_write.network_access=false', '-c', 'sandbox_workspace_write.writable_roots=[]')
+  } else switch (claude.permissionMode) {
     case 'plan':
       args.push('-s', 'read-only')
       break
     case 'acceptEdits':
     case 'auto':
-      args.push('--full-auto')
+      // the documented Auto preset (current docs no longer list --full-auto)
+      args.push('-s', 'workspace-write', '-a', 'on-request')
       break
     case 'bypassPermissions':
     case 'dontAsk':
@@ -126,7 +134,7 @@ export function buildCodexLaunch(input: EngineLaunchInput): EngineLaunch {
     default:
       break
   }
-  if (claude.extraArgs?.length) args.push(...claude.extraArgs)
+  if (claude.extraArgs?.length && !input.autonomous) args.push(...claude.extraArgs)
   if (claude.resume) args.push('resume', claude.resume)
   else if (claude.continue) args.push('resume', '--last')
   const prefix = shell === 'powershell' ? '& codex --% ' : 'codex '

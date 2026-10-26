@@ -10,6 +10,8 @@ import type { Mail } from './mail'
 import type { Approval } from './gate'
 import type { GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
+import type { ProtectionView } from './rulesets'
+import type { WslCheck } from './wsl'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -54,6 +56,11 @@ export const IPC = {
   grokBotSetKey: 'grokBot:setKey',
   grokBotStatus: 'grokBot:status',
   grokBotTest: 'grokBot:test',
+  githubProtection: 'github:protection',
+  githubProtect: 'github:protect',
+  githubSetCardToken: 'github:setCardToken',
+  githubCardTokenStatus: 'github:cardTokenStatus',
+  wslCheck: 'wsl:check',
   phoneStatus: 'phone:status',
   phoneInterfaces: 'phone:interfaces',
   phoneConfigure: 'phone:configure',
@@ -279,6 +286,17 @@ export interface Checkpoint {
 export type CheckpointResult<T> = ({ ok: true } & T) | { ok: false; error: string }
 export type CheckpointRestoreResult = CheckpointResult<{ restored: Checkpoint; safety: Checkpoint; movedHead: boolean }> & { ahead?: number; behind?: number; safety?: Checkpoint }
 
+export type GitHubProtectionResult = ({ ok: true } & ProtectionView) | { ok: false; error: string }
+
+export interface GitHubCardTokenStatus {
+  hasToken: boolean
+  /** after a check: the account the token belongs to */
+  login?: string
+  /** after a check: GitHub's expiry for the token (absent for a token without one) */
+  expiresAt?: string
+  error?: string
+}
+
 export interface SessionUsage {
   /** tokens in the context window at the last assistant turn (input + cache read + cache write) */
   contextTokens: number
@@ -500,6 +518,20 @@ export interface OuroborosApi {
     status(): Promise<{ hasKey: boolean }>
     /** POST a test body ({ source: "ouroboros", kind: "test" }) to the saved webhook: whether a run started. */
     test(): Promise<{ ok: true; runUuid?: string } | { ok: false; error: string }>
+  }
+  github: {
+    /** Main-branch protection of the open project's GitHub repository (read with the owner's gh). */
+    protection(): Promise<GitHubProtectionResult>
+    /** Add the recommended ruleset (the owner's button); nothing is sent when the branch is already protected. */
+    protect(): Promise<GitHubProtectionResult & { added?: boolean }>
+    /** Store (encrypted) the card-only GitHub token; empty string clears it. */
+    setCardToken(token: string): Promise<GitHubCardTokenStatus>
+    /** Whether a card token is saved and, when asked to check, whose it is and when it expires. */
+    cardTokenStatus(check?: boolean): Promise<GitHubCardTokenStatus>
+  }
+  wsl: {
+    /** Whether WSL cards can run here: the distro, what is missing (with what to do) and small notes. */
+    check(): Promise<WslCheck>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

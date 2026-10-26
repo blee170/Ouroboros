@@ -16,6 +16,9 @@ import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, fir
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
+import { applyProtection, checkCardToken, readProtection } from './rulesets'
+import { wslPreflight } from './wsl'
+import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
 import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
@@ -51,7 +54,7 @@ import { buildCommandLine, extractCompleted, type RunningCommand } from './comma
 import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
-import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, detectEngines } from './engines'
+import { cardGitHubEnv, claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, detectEngines } from './engines'
 import { readWorkspace, saveLedger, saveWorkspace, UserStore, WORKSPACE_FILE } from './workspace-store'
 import type { BoardTrust } from './board-trust'
 import { Ledger } from './ledger'
@@ -73,7 +76,7 @@ import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint 
 import { normalizePath, type SessionRegistry } from './windows'
 import { openMode, resolveOpenPath } from './open-path'
 import { Autonomy, type AutonomyHost } from './autonomy'
-import type { AutonomyConfig } from '@shared/autonomy'
+import { engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -455,11 +458,11 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       }
       // caps are enforced here, not left to the prompt: depth (Conductor → team → worker) and live workers per lead.
       // Checked before an ended twin is replaced, so a refused call changes nothing.
-      // autonomous run: Claude cards only. A terminal or command card is a shell past every deny rule; Codex and Gemini
-      // have no deny rules and 'auto' would mean yolo there (an omitted engine means Claude during the run). Then the caps.
+      // autonomous run: Claude and Codex cards only. A terminal or command card is a shell past every deny rule; Gemini and
+      // Grok have no rails and 'auto' would mean yolo there (an omitted engine means Claude during the run). Then the caps.
       if (s.autonomy.on && kind !== 'claude') return { error: 'Autonomous mode: no terminal or command cards during a run (a shell has no rails). Use a Claude card.' }
       const engine = s.autonomy.on ? normalizeEngine(input.engine) : normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine)
-      if (s.autonomy.on && engine) return { error: `Autonomous mode: no ${engine} cards during a run (no deny rules for that engine). Omit the engine or pass engine=claude.` }
+      if (s.autonomy.on && !engineJoinsRun(engine)) return { error: `Autonomous mode: no ${engine} cards during a run (no rails for that engine). Use engine=claude or engine=codex.` }
       const autonomyRefusal = s.autonomy.dispatchRefusal(title, Boolean(twin))
       if (autonomyRefusal) return { error: autonomyRefusal }
       if (parentId) {
@@ -803,11 +806,16 @@ ${a.command}`
 }
 
 /** The gate hook command for a card, or undefined (the run then keeps pushes and merges denied) when node or the helper is missing. */
-function gateCommandFor(baseUrl: string, nodeId: string): string | undefined {
+function gateCommandFor(baseUrl: string, nodeId: string, wsl = false): string | undefined {
   const node = findNodeBinary()
   const script = resolveHookScriptPath()
   if (!node || !existsSync(node) || !existsSync(script)) return undefined
-  return buildGateCommand(node, script, baseUrl, nodeId)
+  return buildGateCommand(node, script, baseUrl, nodeId, wsl)
+}
+
+/** The hook server's port, for the WSL probe. */
+function portOf(baseUrl: string): number {
+  return Number(new URL(baseUrl).port) || 80
 }
 
 /** A card's shell command that may push or touch a PR, from its PreToolUse gate helper. */
@@ -1631,8 +1639,17 @@ export function registerIpc(ctx: MainContext): void {
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const engine = opts.engine ?? 'claude'
-      // during an autonomous run only Claude launches: the deny rules are Claude settings, and 'auto' would mean yolo elsewhere
-      if (s.autonomy.on && engine !== 'claude') return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
+      // during an autonomous run only Claude (deny rules, gate) and Codex (its sandbox, forced below) launch: 'auto' would mean yolo elsewhere
+      if (s.autonomy.on && !engineJoinsRun(engine)) return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
+      // a WSL card (experimental): Claude only, and only once the distro can run it sandboxed and reach the app
+      let wsl: { distro: string; cwd: string } | undefined
+      if (opts.claude.wsl) {
+        if (engine !== 'claude') return { ok: false, error: `Run in WSL2 is for Claude cards only (this card runs ${engine}).` }
+        const check = await wslPreflight(store.getSettings().wslDistro, portOf(hookServer.baseUrl))
+        if (!check.ok || !check.distro) return { ok: false, error: `WSL2 card not started. Missing: ${check.missing.join(' ')}` }
+        for (const n of check.notes) log(`wsl launch ${opts.nodeId}: ${n}`)
+        wsl = { distro: check.distro, cwd: opts.cwd }
+      }
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -1650,7 +1667,9 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId))
+        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))),
+        autonomous: s.autonomy.on,
+        wsl
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
@@ -1663,7 +1682,19 @@ export function registerIpc(ctx: MainContext): void {
       const credentials = credentialEnvKeys(process.env, engine, store.getSettings().passCredentialEnv === true)
       if (credentials.length) log(`${engine} launch ${opts.nodeId}: ${credentials.join(', ')} not passed to the card (Settings → pass credential variables to change this)`)
       omitEnv.push(...credentials)
-      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env, omitEnv }))
+      // the card-only GitHub token (Settings → GitHub) replaces the owner's sign-in for gh and git in agent cards
+      const cardToken = decryptToken(store.getSettings().cardGithubTokenEnc)
+      const launchEnv: Record<string, string> = { ...(prepared.env ?? {}) }
+      if (cardToken) {
+        const gh = cardGitHubEnv(cardToken, process.env)
+        Object.assign(launchEnv, gh.env)
+        const ours = new Set(Object.keys(gh.env))
+        for (let i = omitEnv.length - 1; i >= 0; i--) if (ours.has(omitEnv[i])) omitEnv.splice(i, 1)
+        omitEnv.push(...gh.omit)
+      }
+      // only what WSLENV names crosses into Linux (and from there into the Windows helpers): the card's own variables
+      if (wsl) launchEnv.WSLENV = wslEnvNames([...Object.keys(launchEnv), ...WSL_HELPER_ENV], process.env.WSLENV)
+      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: launchEnv, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
       if (prepared.initialPrompt) {
@@ -1814,6 +1845,26 @@ export function registerIpc(ctx: MainContext): void {
     log(`[grok-bot] test: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
     return r.ok ? r : { ok: false, error: r.error }
   })
+  ipcMain.handle(IPC.githubProtection, (e) => readProtection(sessionOf(e)?.board.projectRoot ?? ''))
+  ipcMain.handle(IPC.githubProtect, async (e) => {
+    const r = await applyProtection(sessionOf(e)?.board.projectRoot ?? '')
+    log(`[github] protect main: ${r.ok ? `${r.repo} ${r.added ? 'ruleset added' : 'already protected'}` : r.error}`)
+    return r
+  })
+  ipcMain.handle(IPC.githubSetCardToken, (_e, token: string) => {
+    const enc = encryptToken(String(token ?? '').replace(/\s+/g, ''))
+    ctx.store.setSettings({ cardGithubTokenEnc: enc || undefined })
+    return { hasToken: Boolean(enc) }
+  })
+  ipcMain.handle(IPC.githubCardTokenStatus, async (_e, check: boolean) => {
+    const st = ctx.store.getSettings()
+    const token = decryptToken(st.cardGithubTokenEnc)
+    if (!token) return { hasToken: false, ...(st.cardGithubTokenEnc ? { error: 'the saved card token could not be decrypted; paste it again' } : {}) }
+    if (check !== true) return { hasToken: true }
+    const r = await checkCardToken(token)
+    return r.ok ? { hasToken: true, login: r.login, expiresAt: r.expiresAt } : { hasToken: true, error: r.error }
+  })
+  ipcMain.handle(IPC.wslCheck, () => wslPreflight(ctx.store.getSettings().wslDistro, portOf(hookServer.baseUrl)))
   ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
   ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())
   ipcMain.handle(IPC.phoneConfigure, async (_e, view: PhoneSettingsView) => {

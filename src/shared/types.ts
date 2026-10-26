@@ -30,6 +30,8 @@ export interface ClaudeOptions {
   mcpServers?: Record<string, McpServerSpec>
   /** Attach the board's own MCP server (agents + browser cards) to a plain Claude card. Conductors always have it. */
   boardTools?: boolean
+  /** Run this Claude card inside WSL2 with Claude Code's sandbox on (experimental; needs the distro set up, see Settings). */
+  wsl?: boolean
 }
 
 export interface McpServerSpec {
@@ -256,6 +258,10 @@ export interface AppSettings {
   grokBotUrl?: string
   /** That routine's key (crsr_…), stored encrypted (same scheme as notionTokenEnc). */
   grokBotKeyEnc?: string
+  /** A card-only fine-grained GitHub token (stored encrypted): agent cards push and open pull requests with it instead of the owner's sign-in. */
+  cardGithubTokenEnc?: string
+  /** The WSL distribution WSL cards run in (empty: the first one that is not Docker Desktop's). */
+  wslDistro?: string
   /** Mirror the open project's tasks, morning reports and board into the Obsidian vault below (default off). */
   obsidianExport?: boolean
   /** The Obsidian vault folder; the export writes only under its `Ouroboros/<project>/` folder. */

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
-import type { AppInfo, UpdateStatus } from '@shared/protocol'
+import type { AppInfo, GitHubCardTokenStatus, GitHubProtectionResult, UpdateStatus } from '@shared/protocol'
+import type { WslCheck } from '@shared/wsl'
+import { PROTECT_RULES, protectedFully } from '@shared/rulesets'
 import { EnginesPanel } from './EnginesPanel'
 import { PhoneSettings } from './PhoneSettings'
 import { VoiceSettings } from './VoiceSettings'
@@ -32,6 +34,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [notionToken, setNotionToken] = useState('')
   const [grokKey, setGrokKey] = useState('')
   const [grokHasKey, setGrokHasKey] = useState(false)
+  const [protection, setProtection] = useState<GitHubProtectionResult | null>(null)
+  const [confirmProtect, setConfirmProtect] = useState(false)
+  const [cardToken, setCardToken] = useState('')
+  const [cardTokenStatus, setCardTokenStatus] = useState<GitHubCardTokenStatus>({ hasToken: false })
+  const [wslCheck, setWslCheck] = useState<WslCheck | 'checking' | null>(null)
   useEscape(onClose)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
@@ -41,6 +48,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     void window.ouroboros.tts.keys().then(setTtsKeys)
     void window.ouroboros.notion.status().then((n) => setNotion({ hasToken: n.hasToken }))
     void window.ouroboros.grokBot.status().then((g) => setGrokHasKey(g.hasKey))
+    void window.ouroboros.github.cardTokenStatus().then(setCardTokenStatus)
     return window.ouroboros.update.onStatus(setUpd)
   }, [])
   const saveTtsKey = async (engine: TtsKeyEngine): Promise<void> => {
@@ -74,6 +82,39 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       return
     }
     void setSettings({ grokBotUrl: v ? grokBotUrl(v) : undefined })
+  }
+  const checkProtection = async (): Promise<void> => {
+    setProtection(null)
+    setConfirmProtect(false)
+    setProtection(await window.ouroboros.github.protection())
+  }
+  const protectMain = async (): Promise<void> => {
+    setConfirmProtect(false)
+    setMsg('Adding the ruleset on GitHub…')
+    const r = await window.ouroboros.github.protect()
+    setProtection(r)
+    setMsg(r.ok ? (r.added ? `GitHub: ${r.repo} ${r.branch} is now protected.` : `GitHub: ${r.repo} ${r.branch} was already protected; nothing sent.`) : `GitHub: ${r.error}`)
+  }
+  const saveCardToken = async (): Promise<void> => {
+    if (cardToken && !cardToken.trim()) {
+      setCardToken('')
+      setMsg('Card token: nothing to save (the field held only spaces).')
+      return
+    }
+    const r = await window.ouroboros.github.setCardToken(cardToken)
+    setCardToken('')
+    setCardTokenStatus(r)
+    setMsg(r.hasToken ? 'Card token saved (encrypted). Cards started from now on use it; press Check.' : 'Card token cleared: cards use your own gh and git sign-in again.')
+  }
+  const checkCardToken = async (): Promise<void> => {
+    setMsg('Asking GitHub…')
+    const r = await window.ouroboros.github.cardTokenStatus(true)
+    setCardTokenStatus(r)
+    setMsg(r.error ? `Card token: ${r.error}` : `Card token: belongs to ${r.login}${r.expiresAt ? `, expires ${r.expiresAt}` : ', no expiry'}.`)
+  }
+  const checkWsl = async (): Promise<void> => {
+    setWslCheck('checking')
+    setWslCheck(await window.ouroboros.wsl.check())
   }
   const testGrokBot = async (): Promise<void> => {
     setMsg('Asking Grok Bot…')
@@ -324,6 +365,80 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="hint">Adds Ouroboros views to the databases above: Tasks as a board by state and a "Waiting on you" table, Reports as a calendar, Updates newest first. Views already there (by name) are left alone; the integration needs the insert and update content capabilities.</div>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h4>GitHub</h4>
+          <label className="field">
+            <span>Protect main</span>
+            <div className="ctl">
+              <button className="btn" onClick={() => void checkProtection()} title="Reads the rules active on the open project's default branch with your gh sign-in">
+                Check
+              </button>
+              {protection?.ok && !protectedFully(protection) && !confirmProtect && (
+                <button className="btn" onClick={() => setConfirmProtect(true)}>
+                  Protect {protection.repo}…
+                </button>
+              )}
+              {confirmProtect && (
+                <>
+                  <button className="btn primary" onClick={() => void protectMain()}>
+                    Add ruleset
+                  </button>
+                  <button className="btn" onClick={() => setConfirmProtect(false)}>
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="hint">
+              {protection === null
+                ? "The open project's default branch on GitHub: whether it needs a pull request and refuses force pushes and deletion. This is the rail a card cannot get around with local credentials."
+                : protection.ok
+                  ? `${protection.repo} · ${protection.branch}${protection.private ? ' (private)' : ''}: ${PROTECT_RULES.map((r) => `${protection.rules[r] ? '✓' : '✗'} ${r === 'pull_request' ? 'pull request required' : r === 'non_fast_forward' ? 'no force push' : 'no deletion'}`).join(' · ')}`
+                  : protection.error}
+              {confirmProtect && ' Adds one ruleset, "Ouroboros · protect main", on the default branch: a pull request is required (0 approvals, so you can merge your own), force pushes and deletion are refused, and nobody bypasses it, you included: pushing straight to main stops working, merging a pull request does not. It does not stop a pull request being merged by anyone who can push, a card token included: during autonomous runs the action gate asks you before gh pr merge, but a merge through the API (curl) is not seen. Change or remove it on GitHub under Settings → Rules.'}
+            </div>
+          </label>
+          <label className="field">
+            <span>Card token</span>
+            <div className="ctl">
+              <input className="text" type="password" placeholder={cardTokenStatus.hasToken ? '•••••• (saved)' : 'github_pat_…'} value={cardToken} onChange={(e) => setCardToken(e.target.value)} />
+              <button className="btn" onClick={() => void saveCardToken()}>
+                {cardToken ? 'Save' : cardTokenStatus.hasToken ? 'Clear' : 'Save'}
+              </button>
+              <button className="btn" disabled={!cardTokenStatus.hasToken} onClick={() => void checkCardToken()}>
+                Check
+              </button>
+            </div>
+            <div className="hint">
+              A fine-grained token only for agent cards: make one on GitHub (Settings → Developer settings → Fine-grained tokens) for the repositories cards work in, with an expiry, Contents and Pull requests read and write, nothing else. With it saved, agent cards started from then on use it for gh and git push instead of your sign-in, so a card can push its branches and open pull requests and the ruleset above stops it at main. Stored encrypted. Your terminal cards keep your own sign-in, and without a saved token agent cards use it too. Only https remotes use the token: a git@github.com remote pushes with your SSH key.
+            </div>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h4>WSL2 cards (experimental)</h4>
+          <div className="hint">
+            A Claude card with <em>Run in WSL2 with the sandbox</em> ticked (Inspector) starts claude inside a Linux distribution with Claude Code's sandbox on: its shell commands can write only in the card's folder and reach only the network you allow. Native Windows has no such sandbox. The card's folder is reached through /mnt/c, which is slower than a Linux folder.
+          </div>
+          <label className="field">
+            <span>Distribution</span>
+            <div className="ctl">
+              <input className="text" placeholder="first one found (not Docker Desktop's)" defaultValue={settings.wslDistro ?? ''} onBlur={(e) => void setSettings({ wslDistro: e.target.value.trim() || undefined })} />
+              <button className="btn" disabled={wslCheck === 'checking'} onClick={() => void checkWsl()}>
+                {wslCheck === 'checking' ? 'Checking…' : 'Check'}
+              </button>
+            </div>
+            {wslCheck && wslCheck !== 'checking' && (
+              <div className="hint">
+                {wslCheck.ok ? `${wslCheck.distro}: ready for WSL cards.` : `${wslCheck.distro ? `${wslCheck.distro}: ` : ''}not ready yet.`}
+                {[...wslCheck.missing, ...wslCheck.notes].map((m) => (
+                  <div key={m}>• {m}</div>
+                ))}
+              </div>
+            )}
           </label>
         </section>
 

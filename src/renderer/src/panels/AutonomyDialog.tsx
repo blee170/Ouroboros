@@ -104,14 +104,14 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
           <ul className="auto-plan">
             {relaunch.map(({ n }) => (
               <li key={n.id}>
-                <span className="dot" style={{ background: 'var(--working)' }} /> <b>{n.data.title}</b> restarts in auto mode with the deny rules ({n.data.sessionId || n.data.claude?.resume ? 'same conversation' : n.data.claude?.continue ? '--continue' : 'fresh conversation'})
+                <span className="dot" style={{ background: 'var(--working)' }} /> <b>{n.data.title}</b> restarts {n.data.engine === 'codex' ? 'in the Codex sandbox (workspace-write, no network, read-only .git, never asks)' : 'in auto mode with the deny rules'} ({n.data.sessionId || n.data.claude?.resume ? 'same conversation' : n.data.claude?.continue ? '--continue' : 'fresh conversation'})
                 {n.data.status === 'working' ? '; its current turn is cut and it is told to carry on' : ''}
                 {n.data.kind === 'conductor' ? '; it gets the autonomous-mode brief' : ''}
               </li>
             ))}
             {close.map(({ n }) => (
               <li key={n.id}>
-                <span className="dot" style={{ background: 'var(--warn)' }} /> <b>{n.data.title}</b> is closed ({n.data.engine} cards have no auto-mode rails)
+                <span className="dot" style={{ background: 'var(--warn)' }} /> <b>{n.data.title}</b> is closed ({n.data.engine} cards have no rails or sandbox to rely on)
               </li>
             ))}
             {relaunch.length + close.length === 0 && <li className="muted">No live agent card. The rails still apply to every card started during the run.</li>}
@@ -122,8 +122,8 @@ export function AutonomyDialog({ onClose }: { onClose: () => void }) {
           <h4>Rails</h4>
           <ul className="auto-plan">
             <li>A card that asks a question, needs a permission or hits an error is <b>parked</b>: never answered for you, listed first in the report. The run ends early once nothing has worked for {IDLE_END_MINUTES} min.</li>
-            <li>Every card launched during the run is denied: git push, merge, rebase, reset --hard, branch -D, clean, force-add; gh pr merge / workflow run / release / api; npm publish, docker push, vercel, wrangler, firebase / netlify / fly deploy, terraform apply, supabase db push / reset, prisma migrate deploy / reset; rm -rf /, ~; editing .ouroboros.json, Claude settings or ~/.claude; clicking or typing in the board browser. The rules match the command as typed (git -C, an alias, a wrapper script or a nested shell is not caught), so keep production credentials out of worker folders.</li>
-            <li>During the run only Claude cards can be created, nothing is typed into terminal or command cards, no card answers a parked permission prompt, and a checkpoint restore never moves HEAD.</li>
+            <li>Every card launched during the run is denied: git push, merge, rebase, reset --hard, branch -D, clean, force-add; gh pr merge / workflow run / release / api; npm publish, docker push, vercel, wrangler, firebase / netlify / fly deploy, terraform apply, supabase db push and a reset of anything but the local stack, prisma migrate deploy / reset; rm -rf /, ~; editing .ouroboros.json, Claude settings or ~/.claude; clicking or typing in the board browser. The rules match the command as typed (git -C, an alias, a wrapper script or a nested shell is not caught), so keep production credentials out of worker folders.</li>
+            <li>Codex cards run in their own sandbox instead: they edit files in their folder and cannot reach the network or commit, so push and commit stay with Claude cards. During the run only Claude and Codex cards can be created, nothing is typed into terminal or command cards, no card answers a parked permission prompt, and a checkpoint restore never moves HEAD.</li>
             <li>The PC stays awake. Stop any time with the stop button on the pill in the status bar. The report (waiting on you · every card's branch, diff and last reply · denials · stalls · timeline) lands on the canvas as a note and in the app's data folder.</li>
           </ul>
         </div>

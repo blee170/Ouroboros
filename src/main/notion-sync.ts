@@ -165,7 +165,7 @@ export class TaskSync {
           return
         }
         // a 400 about the database itself (a renamed or missing column, an archived database) is not this task's fault
-        const databaseWide = r.status === 400 && (r.stage === 'query' || /not a property|could not find|archived|database/i.test(r.error))
+        const databaseWide = r.status === 400 && (r.stage === 'query' || /not a property|could not find|archived|in.?trash|database|data source/i.test(r.error))
         if (r.status === 400 && !databaseWide) {
           // this task's row was refused (a property Notion would not take): skip it until it changes, keep the rest going
           this.deps.log(`[notion] tasks: ${task.id} refused: ${r.error}`)

@@ -85,6 +85,7 @@ export const IPC = {
   notionSetToken: 'notion:setToken',
   notionStatus: 'notion:status',
   notionTest: 'notion:test',
+  notionViews: 'notion:views',
   obsidianPick: 'obsidian:pick',
   obsidianExport: 'obsidian:export',
   voiceTranscribe: 'voice:transcribe',
@@ -525,6 +526,8 @@ export interface OuroborosApi {
     status(): Promise<{ hasToken: boolean; databaseId?: string }>
     /** Fetch one of the databases (Reports by default) with the saved token: its title, or why not. */
     test(which?: NotionDatabaseKind): Promise<{ ok: true; title: string } | { ok: false; error: string }>
+    /** Add the Ouroboros views to every database set in Settings (by name: a second run adds nothing). One line per database. */
+    addViews(): Promise<{ ok: boolean; lines: string[] }>
   }
   obsidian: {
     /** Pick the vault folder (a folder dialog); null when cancelled. */

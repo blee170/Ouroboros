@@ -74,6 +74,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     const what = which === 'tasks' ? 'Tasks will be kept in sync there' : which === 'updates' ? 'Release notes will go there on the next new version' : 'Reports will be published there'
     setMsg(r.ok ? `Notion: found database "${r.title}". ${what}.` : `Notion: ${r.error}`)
   }
+  const [addingViews, setAddingViews] = useState(false)
+  const addNotionViews = async (): Promise<void> => {
+    setAddingViews(true)
+    setMsg('Adding views in Notion…')
+    try {
+      const r = await window.ouroboros.notion.addViews()
+      setMsg(`Notion views — ${r.lines.join(' · ')}`)
+    } finally {
+      setAddingViews(false)
+    }
+  }
   const saveToken = async (): Promise<void> => {
     const r = await window.ouroboros.update.setToken(token)
     setHasToken(r.hasToken)
@@ -281,6 +292,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="hint">On the first start of each new version, its release notes (from the changelog) as one page.</div>
+          </label>
+          <label className="field">
+            <span>Views</span>
+            <div className="ctl">
+              <button className="btn" onClick={() => void addNotionViews()} disabled={addingViews}>
+                Add views
+              </button>
+            </div>
+            <div className="hint">Adds Ouroboros views to the databases above: Tasks as a board by state and a "Waiting on you" table, Reports as a calendar, Updates newest first. Views already there (by name) are left alone; the integration needs the insert and update content capabilities.</div>
           </label>
         </section>
 

@@ -33,8 +33,8 @@ import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
 import { synthesize, ttsKeyFor, ttsKeyPatch } from './tts'
-import { publishReport, publishUpdate, testNotion, type NotionTarget } from './notion'
-import { notionDatabaseId, TASK_SCHEMA, UPDATE_SCHEMA } from '@shared/notion'
+import { ensureViews, publishReport, publishUpdate, testNotion, type NotionTarget } from './notion'
+import { NOTION_VIEWS, notionDatabaseId, TASK_SCHEMA, UPDATE_SCHEMA } from '@shared/notion'
 import { NotionMap, TaskSync } from './notion-sync'
 import { VaultExport } from './obsidian-export'
 import type { CanvasCard } from '@shared/obsidian'
@@ -1930,6 +1930,40 @@ export function registerIpc(ctx: MainContext): void {
     if (which === 'updates') return testNotion({ token, databaseId }, UPDATE_SCHEMA, 'a release-notes page')
     return testNotion({ token, databaseId })
   })
+  let addingViews = false
+  ipcMain.handle(IPC.notionViews, async () => {
+    // two runs at once would both list the views before either adds one, and both add them
+    if (addingViews) return { ok: false, lines: ['already adding views'] }
+    addingViews = true
+    try {
+      return await addNotionViews()
+    } finally {
+      addingViews = false
+    }
+  })
+  const addNotionViews = async (): Promise<{ ok: boolean; lines: string[] }> => {
+    const st = store.getSettings()
+    const token = decryptToken(st.notionTokenEnc)
+    if (!token) return { ok: false, lines: [st.notionTokenEnc ? 'the saved token could not be decrypted; paste it again' : 'no token saved'] }
+    const lines: string[] = []
+    let ok = true
+    for (const which of ['reports', 'tasks', 'updates'] as const) {
+      const databaseId = notionDatabaseId(st[NOTION_FIELD[which]])
+      if (!databaseId) continue
+      const r = await ensureViews({ token, databaseId }, NOTION_VIEWS[which])
+      if (!r.ok) {
+        ok = false
+        lines.push(`${NOTION_LABEL[which]}: ${r.error}`)
+        continue
+      }
+      if (r.failed.length) ok = false
+      const bits = [r.created.length ? `added ${r.created.join(', ')}` : '', r.existing.length ? `${r.existing.length} already there` : '', ...r.failed]
+      lines.push(`${NOTION_LABEL[which]}: ${bits.filter(Boolean).join('; ') || 'nothing to add'}`)
+    }
+    if (!lines.length) return { ok: false, lines: ['no database set'] }
+    log(`[notion] views: ${lines.join(' | ')}`)
+    return { ok, lines }
+  }
   ipcMain.handle(IPC.obsidianPick, async (e) => {
     const win = sessionOf(e)?.win
     const opts: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Choose your Obsidian vault folder' }

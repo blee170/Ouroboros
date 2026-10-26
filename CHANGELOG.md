@@ -4,6 +4,18 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Notion views.** Settings → *Notion* → *Add views* puts Ouroboros views in the databases you set: Tasks as a **board by state** and a **Waiting on you** table (blocked tasks, newest first), Reports as a **calendar** by date, Updates **newest first**. Each is named `Ouroboros · …`; one that is already there (by name) is left alone, so pressing it again adds nothing, and a view you deleted comes back. The result is one line per database (added, already there, or why Notion refused one). The integration needs the *insert* and *update content* capabilities.
+
+### Changed
+- **Notion API 2026-03-11.** The app now talks to Notion's current API version (it was on 2022-06-28): rows are created in and queried from each database's data source, looked up once per database, as Notion requires since databases can hold several sources; *Test* reads the columns from the data source. Nothing changes in Settings: the same database URLs work.
+
+### Verified
+- Unit tests against a stand-in Notion (data source lookup once and cached, an answer without a data source refused, page parents and query paths, Test reading the data source, view bodies from property ids, existing views skipped, a refused view reported without stopping the rest, the 2026-03-11 header); built-app probe: *Add views* without a token says so in Settings.
+- **Not verified against the real Notion API** (no token used on this machine): that Notion accepts these view bodies, and that report, task and release-note writes work on 2026-03-11 with your databases. Press *Test* on each database, then *Add views*, after updating.
+
 ## [0.10.0] — 2026-10-26
 
 ### Added

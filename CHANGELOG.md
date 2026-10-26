@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.11.0] — 2026-10-26
 
 ### Added
 - **Today tab.** The right panel has a third tab, *Today*, with a badge counting what waits on you. **Needs you** lists it in one ranked place: action-gate approvals (with *Deny* / *Approve once* inline), cards stopped on a permission prompt, cards held because the board file changed outside the app, decisions (a reply ending in `OWNER: DECIDE — …` that you have not looked at yet, a task blocked with *APPROVAL NEEDED*), failed turns (until you look at the card), then other blocked tasks; one question is listed once (a reply decision that is also a blocked task shows as the task), and sessions started outside the app are left out; each row says how long it has waited and opens its card (or the Tasks tab). Below it: the autonomous run (running since, until, dispatches, parked; or how today's last run ended, with *Open report*), reports handed over (`OWNER: REPORT — …`) not looked at yet, cards working now and since when, and tasks finished since midnight.
@@ -12,8 +12,6 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ### Changed
 - **Notion API 2026-03-11.** The app now talks to Notion's current API version (it was on 2022-06-28): rows are created in and queried from each database's data source, looked up once per database, as Notion requires since databases can hold several sources; *Test* reads the columns from the data source. Nothing changes in Settings: the same database URLs work.
-
-### Changed
 - **You hear when the wake phrase is recognized.** A bright two-note chime plays the moment the wake phrase is heard, whether you said it alone (then speak your prompt; the old start tone is no longer played on top of it) or with the prompt in one go (the prompt is in the composer). The push-to-talk start and end tones are a little louder.
 
 ### Verified

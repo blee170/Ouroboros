@@ -5,6 +5,8 @@
  *   `gh pr create --draft`
  * - ask: `gh pr merge` (the owner approves once, for that card and that exact command)
  * - never: any other push, `git send-pack`, a PR that is not a draft
+ * And for Supabase (Type 1 (f), 2026-10-26: no paid branching): `supabase db reset` against the local stack is auto,
+ * one aimed anywhere else (`--linked`, `--db-url`) is never; push and migration commands stay on the deny list.
  * Pure: the command text in, a decision out. The text is parsed the way a shell would split it, not executed:
  * aliases, scripts that push, `bash -c "…"` and `curl` to the GitHub API are not seen (a second rail, not a sandbox).
  */
@@ -12,7 +14,7 @@
 export type GateDecision = 'auto' | 'ask' | 'never'
 
 export interface GateAction {
-  kind: 'push' | 'send-pack' | 'pr-create' | 'pr-merge'
+  kind: 'push' | 'send-pack' | 'pr-create' | 'pr-merge' | 'db-reset'
   decision: GateDecision
   reason: string
   /** the segment of the command it came from */
@@ -266,6 +268,25 @@ function isDraft(args: string[]): boolean {
   return false
 }
 
+/** `supabase db reset` flags that keep it on the local stack (`--version` takes a value). Anything else refuses it. */
+const LOCAL_RESET_FLAGS = new Set(['--local', '--no-seed', '--debug', '--yes'])
+
+/** `supabase db reset`: auto only against the local stack (the default target); `--linked`, `--db-url` and the rest are never. */
+function classifyReset(rest: string[], text: string): GateAction {
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i]
+    const name = w.split('=')[0]
+    if (name === '--version') {
+      if (!w.includes('=')) i++
+      continue
+    }
+    if (LOCAL_RESET_FLAGS.has(w)) continue
+    const reason = name === '--linked' || name === '--db-url' ? `supabase db reset ${name} resets a remote database: never during a run` : `supabase db reset ${w} is not allowed during a run: only a plain reset of the local stack`
+    return { kind: 'db-reset', decision: 'never', reason, text }
+  }
+  return { kind: 'db-reset', decision: 'auto', reason: 'reset of the local Supabase stack', text }
+}
+
 /** The gated actions in one command line. */
 export function classify(command: string): { actions: GateAction[]; segments: number } {
   const segments = splitCommands(command)
@@ -277,7 +298,16 @@ export function classify(command: string): { actions: GateAction[]; segments: nu
       actions.push({ kind, decision: 'never', reason, text: seg })
     }
     if (INDIRECT.has(p) && mayBeGated(seg)) {
-      refuse('push', 'git or gh inside another command line (bash -c, pwsh -Command, eval, xargs …) cannot be checked during a run: run it directly')
+      refuse('push', 'git, gh or supabase inside another command line (bash -c, pwsh -Command, eval, xargs …) cannot be checked during a run: run it directly')
+      continue
+    }
+    // `supabase …` or `npx [-y] supabase …`: only `db reset` is decided here
+    const sb = p === 'supabase' ? ws.slice(1) : p === 'npx' && prog(ws.find((w, i) => i > 0 && !w.startsWith('-'))) === 'supabase' ? ws.slice(ws.findIndex((w, i) => i > 0 && !w.startsWith('-')) + 1) : undefined
+    if (sb) {
+      if (sb[0] === 'db' && sb[1] === 'reset') {
+        if (hasShellMagic(seg)) refuse('db-reset', 'a supabase db reset written with shell expansion, escapes or substitution cannot be checked during a run: write it plainly')
+        else actions.push(classifyReset(sb.slice(2), seg))
+      } else if (sb.includes('db') && sb.includes('reset')) refuse('db-reset', 'supabase options before db reset (--workdir, --profile …) are not allowed during a run: write supabase db reset [--no-seed]')
       continue
     }
     if (p !== 'git' && p !== 'gh') {
@@ -320,7 +350,7 @@ export function decide(command: string): GateVerdict {
 
 /** True when the command could hold a gated action at all (the hook helper's fast path). */
 export function mayBeGated(command: string): boolean {
-  return /\b(git|gh)(\.exe)?\b/i.test(command)
+  return /\b(git|gh|supabase)(\.exe|\.cmd)?\b/i.test(command)
 }
 
 // ---- approvals ("ask") ----

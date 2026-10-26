@@ -182,14 +182,14 @@ export const WORKER_DENY_RULES: string[] = [
 ]
 
 /** Decided by the action gate instead of denied outright, when the gate hook is installed (src/shared/gate.ts). */
-export const GATED_PREFIXES = ['git push', 'git send-pack', 'gh pr merge']
+export const GATED_PREFIXES = ['git push', 'git send-pack', 'gh pr merge', 'supabase db reset', 'npx supabase db reset']
 
 /**
  * Kept denied even with the gate: if the hook cannot run at all (node gone, the script missing, a timeout), Claude
  * Code lets the command through, so the forms the gate always refuses stay on the deny list as a second rail. None of
  * them can be an allowed push (those name a claude/* or card/* branch).
  */
-const GATE_BACKSTOP = ['git push -f', 'git push --force', 'git push --delete', 'git push -d', 'git push --mirror', 'git push --all', 'git push --tags', 'git push --prune', 'git push origin main', 'git push origin master', 'git push origin HEAD:main', 'git push origin HEAD:master', 'git push origin +', 'git push origin :', 'git send-pack']
+const GATE_BACKSTOP = ['git push -f', 'git push --force', 'git push --delete', 'git push -d', 'git push --mirror', 'git push --all', 'git push --tags', 'git push --prune', 'git push origin main', 'git push origin master', 'git push origin HEAD:main', 'git push origin HEAD:master', 'git push origin +', 'git push origin :', 'git send-pack', 'supabase db reset --linked', 'supabase db reset --db-url', 'npx supabase db reset --linked', 'npx supabase db reset --db-url']
 
 /**
  * The settings fragment merged into a card's `--settings` file during a run. With a gate command (the PreToolUse

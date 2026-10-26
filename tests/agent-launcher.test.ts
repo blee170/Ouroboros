@@ -32,7 +32,7 @@ describe('buildCodexLaunch', () => {
     expect(l.command).toContain('mcp_servers.ouroboros.command=')
     expect(l.command).toContain('mcp_servers.ouroboros.env={OUROBOROS_URL=')
     expect(l.command).toContain('OUROBOROS_SELF_ID=\\"n1\\"')
-    expect(l.command).toContain(' -m gpt-5-codex --full-auto')
+    expect(l.command).toContain(' -m gpt-5-codex -s workspace-write -a on-request')
     // Windows: the role is typed as the first message (cmd.exe/npm shim would mangle it on the line)
     expect(l.command).not.toContain('developer_instructions')
     expect(l.initialPrompt).toContain('Be "brief".')
@@ -103,4 +103,17 @@ describe('card token', () => {
     expect(buildCodexLaunch({ ...base, boardTools: true, mcpTokenFile: 'x' }).command).not.toContain('OUROBOROS_TOOLS')
   })
 })
+})
+
+describe('buildCodexLaunch in an autonomous run', () => {
+  const run: EngineLaunchInput = { nodeId: 'n1', claude: {}, boardTools: false, baseUrl: 'http://127.0.0.1:47821', tokenFile: '/t/n1.token', mcpTokenFile: '/t/n1.mail-token', nodeBin: '/usr/bin/node', hookScriptPath: '/a/agent-hook.js', mcpScriptPath: '/a/mcp.js', shell: 'posix', autonomous: true }
+  it('forces workspace-write with no network, never asking, and drops extra args', () => {
+    const l = buildCodexLaunch({ ...run, claude: { permissionMode: 'auto', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] } })
+    expect(l.command).toContain("-s workspace-write -a never -c sandbox_workspace_write.network_access=false -c 'sandbox_workspace_write.writable_roots=[]'")
+    expect(l.command).not.toContain('dangerously')
+    expect(l.command).not.toContain('on-request')
+  })
+  it('keeps plan read-only', () => {
+    expect(buildCodexLaunch({ ...run, claude: { permissionMode: 'plan' } }).command).toContain('-s read-only -a never')
+  })
 })

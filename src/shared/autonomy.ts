@@ -221,15 +221,23 @@ export function autonomyRetryRefusal(state: RunState, title: string): string | n
 export type RelaunchAction = 'relaunch' | 'close' | 'keep'
 
 /**
- * What the toggle does to each live card: Claude cards are relaunched in auto mode with the deny rules
- * (same conversation via --resume), Codex, Gemini and Grok cards are closed (no such guarantees there),
+ * Engines a run keeps: Claude (auto mode, deny rules, the action gate) and Codex (its own sandbox: workspace-write
+ * with no network and a read-only .git, never asking). Gemini and Grok have neither rails nor a sandbox to rely on.
+ */
+export function engineJoinsRun(engine: string | undefined): boolean {
+  return engine === undefined || engine === 'claude' || engine === 'codex'
+}
+
+/**
+ * What the toggle does to each live card: Claude and Codex cards are relaunched with the run's rails (same
+ * conversation where there is a session to resume), Gemini and Grok cards are closed (no such guarantees there),
  * terminals and command cards are left alone.
  */
 export function relaunchAction(a: Pick<AgentSnapshot, 'kind' | 'engine' | 'ptyAlive' | 'status'>): RelaunchAction {
   if (a.status === 'ended') return 'keep' // /exit or a crash inside a live shell is still an ended card
   if (!a.ptyAlive && a.status !== 'starting') return 'keep'
   if (a.kind !== 'claude' && a.kind !== 'conductor') return 'keep'
-  return a.engine === 'codex' || a.engine === 'gemini' || a.engine === 'grok' ? 'close' : 'relaunch'
+  return engineJoinsRun(a.engine) ? 'relaunch' : 'close'
 }
 
 export interface StallAction {

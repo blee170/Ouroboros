@@ -227,6 +227,8 @@ export function prepareLaunch(params: {
   title?: string
   /** More for the card's `--settings` file (Autonomous mode writes its `permissions.deny` rules here). */
   settingsExtra?: Record<string, unknown>
+  /** launched during an autonomous run (Codex: sandbox forced) */
+  autonomous?: boolean
 }): PreparedLaunch {
   assertLaunchableId(params.nodeId)
   mkdirSync(params.tmpDir, { recursive: true })
@@ -298,7 +300,8 @@ function prepareEngineLaunch(engine: 'codex' | 'gemini' | 'grok', params: Parame
     electronAsNode: !params.nodeBin,
     hookScriptPath: params.hookScriptPath,
     mcpScriptPath: params.mcpScriptPath,
-    shell: shellKind(params.shell)
+    shell: shellKind(params.shell),
+    autonomous: params.autonomous === true
   }
   if (engine === 'codex') {
     const l = buildCodexLaunch(input)

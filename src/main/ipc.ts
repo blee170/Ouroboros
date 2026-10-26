@@ -74,7 +74,7 @@ import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint 
 import { normalizePath, type SessionRegistry } from './windows'
 import { openMode, resolveOpenPath } from './open-path'
 import { Autonomy, type AutonomyHost } from './autonomy'
-import type { AutonomyConfig } from '@shared/autonomy'
+import { engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -456,11 +456,11 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       }
       // caps are enforced here, not left to the prompt: depth (Conductor → team → worker) and live workers per lead.
       // Checked before an ended twin is replaced, so a refused call changes nothing.
-      // autonomous run: Claude cards only. A terminal or command card is a shell past every deny rule; Codex and Gemini
-      // have no deny rules and 'auto' would mean yolo there (an omitted engine means Claude during the run). Then the caps.
+      // autonomous run: Claude and Codex cards only. A terminal or command card is a shell past every deny rule; Gemini and
+      // Grok have no rails and 'auto' would mean yolo there (an omitted engine means Claude during the run). Then the caps.
       if (s.autonomy.on && kind !== 'claude') return { error: 'Autonomous mode: no terminal or command cards during a run (a shell has no rails). Use a Claude card.' }
       const engine = s.autonomy.on ? normalizeEngine(input.engine) : normalizeEngine(input.engine ?? ctx.store.getSettings().defaultEngine)
-      if (s.autonomy.on && engine) return { error: `Autonomous mode: no ${engine} cards during a run (no deny rules for that engine). Omit the engine or pass engine=claude.` }
+      if (s.autonomy.on && !engineJoinsRun(engine)) return { error: `Autonomous mode: no ${engine} cards during a run (no rails for that engine). Use engine=claude or engine=codex.` }
       const autonomyRefusal = s.autonomy.dispatchRefusal(title, Boolean(twin))
       if (autonomyRefusal) return { error: autonomyRefusal }
       if (parentId) {
@@ -1632,8 +1632,8 @@ export function registerIpc(ctx: MainContext): void {
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const engine = opts.engine ?? 'claude'
-      // during an autonomous run only Claude launches: the deny rules are Claude settings, and 'auto' would mean yolo elsewhere
-      if (s.autonomy.on && engine !== 'claude') return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
+      // during an autonomous run only Claude (deny rules, gate) and Codex (its sandbox, forced below) launch: 'auto' would mean yolo elsewhere
+      if (s.autonomy.on && !engineJoinsRun(engine)) return { ok: false, error: `Autonomous mode is on: ${engine} cards have no rails. Stop the run (■) to start one.` }
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -1651,7 +1651,8 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId))
+        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId)),
+        autonomous: s.autonomy.on
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)

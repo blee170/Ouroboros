@@ -34,10 +34,11 @@ describe('deny rules', () => {
 })
 
 describe('relaunchAction', () => {
-  it('relaunches live Claude cards, closes Codex/Gemini, leaves the rest', () => {
+  it('relaunches live Claude and Codex cards, closes Gemini/Grok, leaves the rest', () => {
     expect(relaunchAction(a({ kind: 'conductor' }))).toBe('relaunch')
-    expect(relaunchAction(a({ kind: 'claude', engine: 'codex' }))).toBe('close')
+    expect(relaunchAction(a({ kind: 'claude', engine: 'codex' }))).toBe('relaunch')
     expect(relaunchAction(a({ kind: 'claude', engine: 'gemini' }))).toBe('close')
+    expect(relaunchAction(a({ kind: 'claude', engine: 'grok' }))).toBe('close')
     expect(relaunchAction(a({ kind: 'terminal' }))).toBe('keep')
     expect(relaunchAction(a({ kind: 'claude', ptyAlive: false, status: 'ended' }))).toBe('keep')
     expect(relaunchAction(a({ kind: 'claude', ptyAlive: true, status: 'ended' }))).toBe('keep') // /exit inside a live shell

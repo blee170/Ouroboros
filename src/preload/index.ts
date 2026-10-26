@@ -175,7 +175,8 @@ const api: OuroborosApi = {
   notion: {
     setToken: (token) => ipcRenderer.invoke(IPC.notionSetToken, token),
     status: () => ipcRenderer.invoke(IPC.notionStatus),
-    test: (which) => ipcRenderer.invoke(IPC.notionTest, which)
+    test: (which) => ipcRenderer.invoke(IPC.notionTest, which),
+    addViews: () => ipcRenderer.invoke(IPC.notionViews)
   },
   obsidian: {
     pick: () => ipcRenderer.invoke(IPC.obsidianPick),

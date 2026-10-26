@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { NOTION_CHILDREN_MAX, NOTION_TEXT_MAX, chunkBlocks, notionDatabaseId, reportBlocks, reportProperties, reportTitle, richText, tableCells } from '../src/shared/notion'
-import { NOTION_VERSION, REPORT_SCHEMA, publishReport, scrub, testNotion } from '../src/main/notion'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { NOTION_CHILDREN_MAX, NOTION_TEXT_MAX, NOTION_VIEWS, chunkBlocks, notionDatabaseId, viewBody, reportBlocks, reportProperties, reportTitle, richText, tableCells } from '../src/shared/notion'
+import { NOTION_VERSION, REPORT_SCHEMA, ensureViews, forgetDataSources, publishReport, rememberDataSource, scrub, testNotion } from '../src/main/notion'
 import { newRunState, reportMarkdown } from '../src/shared/autonomy'
 import type { AgentSnapshot } from '../src/shared/types'
 
@@ -108,8 +108,13 @@ function fakeFetch(handler: (c: Call, n: number) => Response | Promise<Response>
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 const TOKEN = 'ntn_SECRETTOKENVALUE123'
 const DB = '3ff04ad6-43a8-41b1-8ef6-5bcf8c96a81d'
+const DS = 'cccccccc-1111-2222-3333-444444444444'
 
 describe('publishReport', () => {
+  beforeEach(() => {
+    forgetDataSources()
+    rememberDataSource(DB, DS)
+  })
   it('creates the page with properties and the first 100 blocks, appends the rest, returns the URL', async () => {
     const { fetch, calls } = fakeFetch((c) => (c.url.endsWith('/pages') ? json(200, { id: '11111111-2222-3333-4444-555555555555', url: 'https://www.notion.so/page1' }) : json(200, { results: [] })))
     const md = Array.from({ length: 150 }, (_, i) => `- line ${i}`).join('\n')
@@ -121,7 +126,7 @@ describe('publishReport', () => {
     expect(h.Authorization).toBe(`Bearer ${TOKEN}`)
     expect(h['Notion-Version']).toBe(NOTION_VERSION)
     const body = JSON.parse(String(calls[0].init.body)) as { parent: unknown; properties: Record<string, unknown>; children: unknown[] }
-    expect(body.parent).toEqual({ database_id: DB })
+    expect(body.parent).toEqual({ type: 'data_source_id', data_source_id: DS })
     expect(body.properties.Status).toEqual({ status: { name: 'New' } })
     expect(body.children).toHaveLength(100)
     expect(calls[1].url).toBe('https://api.notion.com/v1/blocks/11111111-2222-3333-4444-555555555555/children')
@@ -175,13 +180,102 @@ describe('publishReport', () => {
   })
   it('testNotion reads the database title', async () => {
     const props = Object.fromEntries(Object.entries(REPORT_SCHEMA).map(([k, type]) => [k, { type }]))
-    const { fetch, calls } = fakeFetch(() => json(200, { title: [{ plain_text: 'Rep' }, null, { plain_text: 'orts' }], properties: props }))
+    const { fetch, calls } = fakeFetch(() => json(200, { title: [{ plain_text: 'Rep' }, null, { plain_text: 'orts' }], data_sources: [{ id: DS }], properties: props }))
     expect(await testNotion({ token: TOKEN, databaseId: DB, fetch })).toEqual({ ok: true, title: 'Reports' })
     // a database without the properties a report sets, or with the wrong type: said at Test time, not at the end of the night
-    const bad = fakeFetch(() => json(200, { title: [{ plain_text: 'Other' }], properties: { ...props, Status: { type: 'select' }, Dispatches: undefined } }))
+    const bad = fakeFetch(() => json(200, { title: [{ plain_text: 'Other' }], data_sources: [{ id: DS }], properties: { ...props, Status: { type: 'select' }, Dispatches: undefined } }))
     expect(await testNotion({ token: TOKEN, databaseId: DB, fetch: bad.fetch })).toEqual({ ok: false, error: 'database "Other" lacks Dispatches (number), Status (status): a run\'s report would be refused' })
     expect(calls[0].url).toBe(`https://api.notion.com/v1/databases/${DB}`)
     expect(calls[0].init.method).toBe('GET')
+    expect(calls[1].url).toBe(`https://api.notion.com/v1/data_sources/${DS}`)
     expect(scrub('secret_abc ntn_def x')).toBe('[token] [token] x')
+  })
+})
+
+describe('data sources and views (Notion-Version 2026-03-11)', () => {
+  beforeEach(() => forgetDataSources())
+  const PROPS = { Name: { id: 'title', type: 'title' }, State: { id: 'st%3A', type: 'select' }, Date: { id: 'dt%3B', type: 'date' }, Updated: { id: 'up', type: 'date' } }
+
+  it('looks up the database\'s data source once, and refuses an answer without one', async () => {
+    const { fetch, calls } = fakeFetch((c) => (c.url.endsWith(`/databases/${DB}`) ? json(200, { title: [], data_sources: [{ id: DS, name: 'Reports' }] }) : json(200, { id: '11111111-2222-3333-4444-555555555555', url: 'u' })))
+    await publishReport({ token: TOKEN, databaseId: DB, markdown: '# a', meta, fetch })
+    await publishReport({ token: TOKEN, databaseId: DB, markdown: '# b', meta, fetch })
+    expect(calls.map((c) => `${c.init.method} ${c.url.replace('https://api.notion.com/v1', '')}`)).toEqual([`GET /databases/${DB}`, 'POST /pages', 'POST /pages'])
+    forgetDataSources()
+    const none = fakeFetch(() => json(200, { title: [{ plain_text: 'Old' }], data_sources: [{ id: '../x' }] }))
+    expect(await publishReport({ token: TOKEN, databaseId: DB, markdown: '# a', meta, fetch: none.fetch })).toEqual({ ok: false, error: 'Notion returned no data source for database "Old"' })
+  })
+
+  it('builds view bodies from property ids, and names what is missing', () => {
+    const [board, waiting] = NOTION_VIEWS.tasks
+    expect(viewBody(board, DB, DS, PROPS)).toEqual({ ok: true, body: { database_id: DB, data_source_id: DS, name: board.name, type: 'board', configuration: { type: 'board', group_by: { type: 'select', property_id: 'st%3A', sort: { type: 'manual' } } } } })
+    expect(viewBody(waiting, DB, DS, PROPS)).toMatchObject({ ok: true, body: { type: 'table', filter: { property: 'State', select: { equals: 'blocked' } } } })
+    expect(viewBody(NOTION_VIEWS.reports[0], DB, DS, PROPS)).toMatchObject({ ok: true, body: { configuration: { type: 'calendar', date_property_id: 'dt%3B' } } })
+    expect(viewBody(board, DB, DS, { State: { id: 'x', type: 'status' } })).toEqual({ ok: false, error: `"${board.name}" needs a select property State` })
+  })
+
+  it('adds only the views a database does not have yet', async () => {
+    const posted: Array<Record<string, unknown>> = []
+    const { fetch, calls } = fakeFetch((c) => {
+      const p = c.url.replace('https://api.notion.com/v1', '')
+      if (p === `/databases/${DB}`) return json(200, { title: [{ plain_text: 'Tasks' }], data_sources: [{ id: DS }] })
+      if (p === `/data_sources/${DS}`) return json(200, { properties: PROPS })
+      if (p.startsWith('/views?')) return json(200, { results: [{ object: 'view', id: '99999999-0000-0000-0000-000000000001' }, { object: 'view', id: 'not-an-id' }], has_more: false })
+      if (p === '/views/99999999-0000-0000-0000-000000000001') return json(200, { name: NOTION_VIEWS.tasks[0].name })
+      if (p === '/views' && c.init.method === 'POST') {
+        posted.push(JSON.parse(String(c.init.body)))
+        return json(200, { object: 'view', id: '99999999-0000-0000-0000-000000000002' })
+      }
+      return json(404, {})
+    })
+    const r = await ensureViews({ token: TOKEN, databaseId: DB, fetch }, NOTION_VIEWS.tasks, 0)
+    expect(r).toEqual({ ok: true, created: [NOTION_VIEWS.tasks[1].name], existing: [NOTION_VIEWS.tasks[0].name], failed: [] })
+    expect(posted).toHaveLength(1)
+    expect(posted[0].name).toBe(NOTION_VIEWS.tasks[1].name)
+    expect(calls.find((c) => c.url.includes('/views?'))?.url).toBe(`https://api.notion.com/v1/views?database_id=${DB}`)
+    expect(calls.some((c) => c.url.includes('not-an-id'))).toBe(false)
+    expect((calls[0].init.headers as Record<string, string>)['Notion-Version']).toBe('2026-03-11')
+  })
+
+  it('adds nothing when an existing view cannot be read (it might be one of ours)', async () => {
+    const posts: string[] = []
+    const { fetch } = fakeFetch((c) => {
+      const p = c.url.replace('https://api.notion.com/v1', '')
+      if (p === `/databases/${DB}`) return json(200, { data_sources: [{ id: DS }] })
+      if (p === `/data_sources/${DS}`) return json(200, { properties: PROPS })
+      if (p.startsWith('/views?')) return json(200, { results: [{ object: 'view', id: '99999999-0000-0000-0000-000000000001' }] })
+      if (c.init.method === 'POST') posts.push(p)
+      return json(429, {})
+    })
+    const r = await ensureViews({ token: TOKEN, databaseId: DB, fetch }, NOTION_VIEWS.tasks, 0)
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/could not read the existing views.*429.*nothing was added/) })
+    expect(posts).toEqual([])
+  })
+
+  it('looks the data source up again after a 404', async () => {
+    rememberDataSource(DB, DS)
+    let n = 0
+    const { fetch, calls } = fakeFetch((c) => {
+      n++
+      if (n === 1) return json(404, {})
+      if (c.url.endsWith(`/databases/${DB}`)) return json(200, { data_sources: [{ id: 'dddddddd-1111-2222-3333-444444444444' }] })
+      return json(200, { id: '11111111-2222-3333-4444-555555555555', url: 'u' })
+    })
+    expect((await publishReport({ token: TOKEN, databaseId: DB, markdown: '# a', meta, fetch })).ok).toBe(false)
+    expect(await publishReport({ token: TOKEN, databaseId: DB, markdown: '# a', meta, fetch })).toEqual({ ok: true, url: 'u' })
+    expect(JSON.parse(String(calls[2].init.body)).parent).toEqual({ type: 'data_source_id', data_source_id: 'dddddddd-1111-2222-3333-444444444444' })
+  })
+
+  it('reports a view Notion refused without stopping the others', async () => {
+    const { fetch } = fakeFetch((c) => {
+      const p = c.url.replace('https://api.notion.com/v1', '')
+      if (p === `/databases/${DB}`) return json(200, { data_sources: [{ id: DS }] })
+      if (p === `/data_sources/${DS}`) return json(200, { properties: { Name: { id: 'title', type: 'title' } } })
+      if (p.startsWith('/views?')) return json(200, { results: [] })
+      return json(400, { message: 'Could not find sort property with name or id: Updated' })
+    })
+    const r = await ensureViews({ token: TOKEN, databaseId: DB, fetch }, NOTION_VIEWS.tasks, 0)
+    expect(r.ok && r.created).toEqual([])
+    expect(r.ok && r.failed).toEqual([`"${NOTION_VIEWS.tasks[0].name}" needs a select property State`, `"${NOTION_VIEWS.tasks[1].name}": Notion 400: Could not find sort property with name or id: Updated`])
   })
 })

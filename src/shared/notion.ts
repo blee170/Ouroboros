@@ -250,3 +250,48 @@ export function updateProperties(version: string, date: string | undefined, high
     Highlights: { rich_text: highlights ? richText(highlights.slice(0, NOTION_TEXT_MAX)) : [] }
   }
 }
+
+/**
+ * A view "Add views" creates in one of the databases (Notion API 2026-03-11 `POST /views`), named so a second
+ * run finds it and leaves it alone. Property names here are resolved to the data source's property ids.
+ */
+export interface ViewSpec {
+  name: string
+  type: 'board' | 'table' | 'calendar'
+  /** board: the select property to group by */
+  groupBy?: string
+  /** calendar: the date property */
+  date?: string
+  filter?: Record<string, unknown>
+  sorts?: Array<Record<string, unknown>>
+}
+
+export const NOTION_VIEWS: Record<'reports' | 'tasks' | 'updates', ViewSpec[]> = {
+  tasks: [
+    { name: 'Ouroboros · Board by state', type: 'board', groupBy: 'State' },
+    { name: 'Ouroboros · Waiting on you', type: 'table', filter: { property: 'State', select: { equals: 'blocked' } }, sorts: [{ property: 'Updated', direction: 'descending' }] }
+  ],
+  reports: [{ name: 'Ouroboros · Calendar', type: 'calendar', date: 'Date' }],
+  updates: [{ name: 'Ouroboros · Latest first', type: 'table', sorts: [{ property: 'Date', direction: 'descending' }] }]
+}
+
+/** The `POST /views` body for one spec, or why it cannot be made (a property it needs is missing or of another type). */
+export function viewBody(spec: ViewSpec, databaseId: string, dataSourceId: string, props: Record<string, { id?: string; type?: string } | undefined>): { ok: true; body: Record<string, unknown> } | { ok: false; error: string } {
+  const need = (name: string, type: string): string | undefined => {
+    const p = props[name]
+    return p?.type === type && typeof p.id === 'string' && p.id ? p.id : undefined
+  }
+  const body: Record<string, unknown> = { database_id: databaseId, data_source_id: dataSourceId, name: spec.name, type: spec.type }
+  if (spec.type === 'board') {
+    const id = spec.groupBy ? need(spec.groupBy, 'select') : undefined
+    if (!id) return { ok: false, error: `"${spec.name}" needs a select property ${spec.groupBy}` }
+    body.configuration = { type: 'board', group_by: { type: 'select', property_id: id, sort: { type: 'manual' } } }
+  } else if (spec.type === 'calendar') {
+    const id = spec.date ? need(spec.date, 'date') : undefined
+    if (!id) return { ok: false, error: `"${spec.name}" needs a date property ${spec.date}` }
+    body.configuration = { type: 'calendar', date_property_id: id, view_range: 'month', show_weekends: true }
+  }
+  if (spec.filter) body.filter = spec.filter
+  if (spec.sorts) body.sorts = spec.sorts
+  return { ok: true, body }
+}

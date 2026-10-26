@@ -1,10 +1,10 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { TASK_SCHEMA, UPDATE_SCHEMA, taskProperties, taskQuery, updateProperties } from '../src/shared/notion'
 import { changelogSection } from '../src/shared/changelog'
-import { publishUpdate, testNotion, upsertTask } from '../src/main/notion'
+import { forgetDataSources, publishUpdate, rememberDataSource, testNotion, upsertTask } from '../src/main/notion'
 import { NotionMap, TaskSync } from '../src/main/notion-sync'
 import type { Task } from '../src/shared/ledger'
 import changelog from '../CHANGELOG.md?raw'
@@ -13,6 +13,11 @@ const T0 = 1_800_000_000_000
 const DB = '3ff04ad6-43a8-41b1-8ef6-5bcf8c96a81d'
 const PAGE = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 const PAGE2 = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'
+const DS = 'cccccccc-1111-2222-3333-444444444444'
+beforeEach(() => {
+  forgetDataSources()
+  rememberDataSource(DB, DS)
+})
 
 type Call = { method: string; path: string; body: Record<string, unknown> }
 /** A fetch that answers each call from the queue in order and records what was sent. */
@@ -70,10 +75,10 @@ describe('upsertTask', () => {
   it('finds the row again when the cached page was deleted, else creates it', async () => {
     const a = fakeFetch([[404, { message: 'gone' }], [200, { results: [{ id: PAGE2 }] }], [200, { id: PAGE2 }]])
     expect(await upsertTask(target(a.fetch), row, 'p', PAGE)).toEqual({ ok: true, pageId: PAGE2 })
-    expect(a.calls.map((c) => c.method + ' ' + c.path)).toEqual([`PATCH /pages/${PAGE}`, `POST /databases/${DB}/query`, `PATCH /pages/${PAGE2}`])
+    expect(a.calls.map((c) => c.method + ' ' + c.path)).toEqual([`PATCH /pages/${PAGE}`, `POST /data_sources/${DS}/query`, `PATCH /pages/${PAGE2}`])
     const b = fakeFetch([[200, { results: [] }], [200, { id: PAGE }]])
     expect(await upsertTask(target(b.fetch), row, 'p')).toEqual({ ok: true, pageId: PAGE })
-    expect(b.calls[1].body.parent).toEqual({ database_id: DB })
+    expect(b.calls[1].body.parent).toEqual({ type: 'data_source_id', data_source_id: DS })
   })
   it('creates anew when the cached page is archived and the query finds only it', async () => {
     const { fetch, calls } = fakeFetch([[400, { message: "Can't edit block that is archived." }], [200, { results: [{ id: PAGE }] }], [200, { id: PAGE2 }]])
@@ -100,10 +105,11 @@ describe('publishUpdate and testNotion schemas', () => {
     expect(again.calls).toHaveLength(1)
   })
   it('names the columns a Tasks database lacks', async () => {
-    const { fetch } = fakeFetch([[200, { title: [{ plain_text: 'Tasks' }], properties: { Name: { type: 'title' } } }]])
+    const { fetch, calls } = fakeFetch([[200, { title: [{ plain_text: 'Tasks' }], data_sources: [{ id: DS }] }], [200, { properties: { Name: { type: 'title' } } }]])
     const r = await testNotion({ token: 't', databaseId: DB, fetch }, TASK_SCHEMA, 'a task row')
     expect(r.ok).toBe(false)
     expect(!r.ok && r.error).toMatch(/Task ID \(rich_text\).*a task row would be refused/)
+    expect(calls.map((c) => c.path)).toEqual([`/databases/${DB}`, `/data_sources/${DS}`])
   })
 })
 

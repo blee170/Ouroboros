@@ -8,9 +8,15 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ### Added
 - **Today tab.** The right panel has a third tab, *Today*, with a badge counting what waits on you. **Needs you** lists it in one ranked place: action-gate approvals (with *Deny* / *Approve once* inline), cards stopped on a permission prompt, cards held because the board file changed outside the app, decisions (a reply ending in `OWNER: DECIDE — …` that you have not looked at yet, a task blocked with *APPROVAL NEEDED*), failed turns (until you look at the card), then other blocked tasks; one question is listed once (a reply decision that is also a blocked task shows as the task), and sessions started outside the app are left out; each row says how long it has waited and opens its card (or the Tasks tab). Below it: the autonomous run (running since, until, dispatches, parked; or how today's last run ended, with *Open report*), reports handed over (`OWNER: REPORT — …`) not looked at yet, cards working now and since when, and tasks finished since midnight.
+- **Notion views.** Settings → *Notion* → *Add views* puts Ouroboros views in the databases you set: Tasks as a **board by state** and a **Waiting on you** table (blocked tasks, newest first), Reports as a **calendar** by date, Updates **newest first**. Each is named `Ouroboros · …`; one that is already there (by name) is left alone, so pressing it again adds nothing, and a view you deleted comes back. The result is one line per database (added, already there, or why Notion refused one). The integration needs the *insert* and *update content* capabilities.
+
+### Changed
+- **Notion API 2026-03-11.** The app now talks to Notion's current API version (it was on 2022-06-28): rows are created in and queried from each database's data source, looked up once per database, as Notion requires since databases can hold several sources; *Test* reads the columns from the data source. Nothing changes in Settings: the same database URLs work.
 
 ### Verified
 - Unit tests for the ranking and the Today view (prefix stripped, a reply decision drops once the card is looked at or works again, blocked tasks link only to live cards, done since local midnight); built-app probe with a temp profile: empty state, a decision ranked above a blocked task, the badge count, done today, a task row opening the Tasks tab.
+- Unit tests against a stand-in Notion (data source lookup once and cached, an answer without a data source refused, page parents and query paths, Test reading the data source, view bodies from property ids, existing views skipped, a refused view reported without stopping the rest, the 2026-03-11 header); built-app probe: *Add views* without a token says so in Settings.
+- **Not verified against the real Notion API** (no token used on this machine): that Notion accepts these view bodies, and that report, task and release-note writes work on 2026-03-11 with your databases. Press *Test* on each database, then *Add views*, after updating.
 
 ## [0.10.0] — 2026-10-26
 

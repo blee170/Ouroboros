@@ -16,6 +16,7 @@ import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, fir
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
+import { applyProtection, checkCardToken, readProtection } from './rulesets'
 import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
@@ -51,7 +52,7 @@ import { buildCommandLine, extractCompleted, type RunningCommand } from './comma
 import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
-import { claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, detectEngines } from './engines'
+import { cardGitHubEnv, claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, detectEngines } from './engines'
 import { readWorkspace, saveLedger, saveWorkspace, UserStore, WORKSPACE_FILE } from './workspace-store'
 import type { BoardTrust } from './board-trust'
 import { Ledger } from './ledger'
@@ -1663,7 +1664,17 @@ export function registerIpc(ctx: MainContext): void {
       const credentials = credentialEnvKeys(process.env, engine, store.getSettings().passCredentialEnv === true)
       if (credentials.length) log(`${engine} launch ${opts.nodeId}: ${credentials.join(', ')} not passed to the card (Settings → pass credential variables to change this)`)
       omitEnv.push(...credentials)
-      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: prepared.env, omitEnv }))
+      // the card-only GitHub token (Settings → GitHub) replaces the owner's sign-in for gh and git in agent cards
+      const cardToken = decryptToken(store.getSettings().cardGithubTokenEnc)
+      const launchEnv: Record<string, string> = { ...(prepared.env ?? {}) }
+      if (cardToken) {
+        const gh = cardGitHubEnv(cardToken, process.env)
+        Object.assign(launchEnv, gh.env)
+        const ours = new Set(Object.keys(gh.env))
+        for (let i = omitEnv.length - 1; i >= 0; i--) if (ours.has(omitEnv[i])) omitEnv.splice(i, 1)
+        omitEnv.push(...gh.omit)
+      }
+      await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: launchEnv, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
       if (prepared.initialPrompt) {
@@ -1813,6 +1824,25 @@ export function registerIpc(ctx: MainContext): void {
     const r = await sendToGrokBot({ url, key, payload: { source: 'ouroboros', kind: 'test', note: 'Connection test from Ouroboros: no task, nothing to do.', sentAt: new Date().toISOString() } })
     log(`[grok-bot] test: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
     return r.ok ? r : { ok: false, error: r.error }
+  })
+  ipcMain.handle(IPC.githubProtection, (e) => readProtection(sessionOf(e)?.board.projectRoot ?? ''))
+  ipcMain.handle(IPC.githubProtect, async (e) => {
+    const r = await applyProtection(sessionOf(e)?.board.projectRoot ?? '')
+    log(`[github] protect main: ${r.ok ? `${r.repo} ${r.added ? 'ruleset added' : 'already protected'}` : r.error}`)
+    return r
+  })
+  ipcMain.handle(IPC.githubSetCardToken, (_e, token: string) => {
+    const enc = encryptToken(String(token ?? '').replace(/s+/g, ''))
+    ctx.store.setSettings({ cardGithubTokenEnc: enc || undefined })
+    return { hasToken: Boolean(enc) }
+  })
+  ipcMain.handle(IPC.githubCardTokenStatus, async (_e, check: boolean) => {
+    const st = ctx.store.getSettings()
+    const token = decryptToken(st.cardGithubTokenEnc)
+    if (!token) return { hasToken: false, ...(st.cardGithubTokenEnc ? { error: 'the saved card token could not be decrypted; paste it again' } : {}) }
+    if (check !== true) return { hasToken: true }
+    const r = await checkCardToken(token)
+    return r.ok ? { hasToken: true, login: r.login, expiresAt: r.expiresAt } : { hasToken: true, error: r.error }
   })
   ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
   ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())

@@ -256,6 +256,8 @@ export interface AppSettings {
   grokBotUrl?: string
   /** That routine's key (crsr_…), stored encrypted (same scheme as notionTokenEnc). */
   grokBotKeyEnc?: string
+  /** A card-only fine-grained GitHub token (stored encrypted): agent cards push and open pull requests with it instead of the owner's sign-in. */
+  cardGithubTokenEnc?: string
   /** Mirror the open project's tasks, morning reports and board into the Obsidian vault below (default off). */
   obsidianExport?: boolean
   /** The Obsidian vault folder; the export writes only under its `Ouroboros/<project>/` folder. */

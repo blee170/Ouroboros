@@ -151,6 +151,12 @@ const api: OuroborosApi = {
     status: () => ipcRenderer.invoke(IPC.grokBotStatus),
     test: () => ipcRenderer.invoke(IPC.grokBotTest)
   },
+  github: {
+    protection: () => ipcRenderer.invoke(IPC.githubProtection),
+    protect: () => ipcRenderer.invoke(IPC.githubProtect),
+    setCardToken: (token) => ipcRenderer.invoke(IPC.githubSetCardToken, token),
+    cardTokenStatus: (check) => ipcRenderer.invoke(IPC.githubCardTokenStatus, check === true)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

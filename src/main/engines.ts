@@ -149,6 +149,36 @@ export function credentialEnvKeys(env: NodeJS.ProcessEnv, engine: AgentEngine, p
   })
 }
 
+/** git credential helper that answers github.com with the card's token (a `!` helper runs in git's sh, Git for Windows included). */
+export const CARD_GIT_HELPER = '!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f'
+
+/**
+ * Pure: the environment that makes an agent card use the card-only GitHub token (Type 1 (c)) instead of the owner's
+ * sign-in: gh reads GH_TOKEN before its keyring, and git gets two runtime config entries for github.com, an empty
+ * helper (which clears the helpers from the owner's config, Git Credential Manager among them) and then ours. Entries
+ * already in GIT_CONFIG_COUNT are kept and ours go after them. `omit` lists other spellings of the names we set (Windows
+ * names are case-insensitive, and the spawn drops omitted names after merging). Same OS user: a card that sets out to
+ * can still call the credential manager itself; this stops mistakes and stray pushes, not a determined card.
+ */
+export function cardGitHubEnv(token: string, env: NodeJS.ProcessEnv): { env: Record<string, string>; omit: string[] } {
+  const countKey = Object.keys(env).find((k) => k.toUpperCase() === 'GIT_CONFIG_COUNT')
+  const prior = countKey ? Number.parseInt(env[countKey] ?? '', 10) : 0
+  const base = Number.isInteger(prior) && prior > 0 && prior < 1000 ? prior : 0
+  const out: Record<string, string> = {
+    GH_TOKEN: token,
+    GITHUB_TOKEN: token,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_COUNT: String(base + 2),
+    [`GIT_CONFIG_KEY_${base}`]: 'credential.https://github.com.helper',
+    [`GIT_CONFIG_VALUE_${base}`]: '',
+    [`GIT_CONFIG_KEY_${base + 1}`]: 'credential.https://github.com.helper',
+    [`GIT_CONFIG_VALUE_${base + 1}`]: CARD_GIT_HELPER
+  }
+  const ours = new Set(Object.keys(out))
+  const upper = new Set([...ours].map((k) => k.toUpperCase()))
+  return { env: out, omit: Object.keys(env).filter((k) => upper.has(k.toUpperCase()) && !ours.has(k)) }
+}
+
 /** Where `grok login` may keep its cached sign-in (not documented; checked in this order). */
 const GROK_LOGIN_FILES = ['auth.json', 'credentials.json', 'oauth.json', 'token.json']
 

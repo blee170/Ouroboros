@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.16.1] — 2026-10-28
 
 ### Fixed
 - **Notion task sync failed at every start for a project the Tasks database had not seen yet.** It showed "Notion sync failed: select option "chill-shuttle" not found for property "Project"".

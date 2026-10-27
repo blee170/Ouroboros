@@ -4,6 +4,31 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Grok Bot can reply through a GitHub issue.** Grok Bot's cloud box cannot open a Tailscale Funnel address: its network gateway drops `*.ts.net`. So a routine can now comment its result on an issue in a private repository instead.
+  - Ouroboros reads that issue every 30 s with the owner's own `gh` sign-in. No new account, token or key is involved.
+  - Each reply goes to the asking card through the same path as a Funnel reply: correlation id, waiting, order, per-handoff limit, sent from Grok Bot. Its comment is then deleted, so the issue stays empty.
+  - What is never deleted: a person's note on the issue, a reply for an unknown handoff, and a block that can't be read. Each of those is logged once.
+  - A delivered comment is recorded before it is deleted. So a delete that fails never sends the reply twice, even after a restart.
+  - Settings → Grok Bot → Replies → *Or a GitHub issue*. *Check and use* refuses a public or organisation-internal repository, and a pull request. *Copy the steps for the routine* gives Grok Bot the comment format.
+  - The repository is checked again every 5 minutes. If it becomes public, or gh loses access, handoffs stop being told a reply will come. A check that failed at start is retried.
+  - Every page of comments is read, so notes a person leaves can't hide a newer reply.
+
+### Verified
+- Unit tests:
+  - the issue address and the comment block, including a reply after another code block;
+  - mail order, and notes left alone;
+  - refused replies left on the issue;
+  - no double mail when a delete fails;
+  - a comment someone else already deleted;
+  - delete retry spacing;
+  - every page read;
+  - the private-repository recheck and the retry.
+- A bug hunt (security and silent failures) found 8 issues; all confirmed ones are fixed.
+- Not verified: a real routine comment going round the loop.
+
 ## [0.17.1] — 2026-10-28
 
 ### Fixed

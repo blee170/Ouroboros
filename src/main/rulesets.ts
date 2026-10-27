@@ -33,7 +33,7 @@ export async function repoOf(projectRoot: string): Promise<RepoRef | { error: st
 }
 
 /** gh's message, made plain where GitHub's is cryptic. */
-function plain(err: unknown): string {
+export function plainGhError(err: unknown): string {
   const m = (err as Error).message || String(err)
   if (/ENOENT|not recognized|not found/i.test(m) && !/HTTP/.test(m)) return 'the GitHub CLI (gh) is not installed or not on PATH'
   if (/gh auth login|authentication/i.test(m)) return 'gh is not signed in: run gh auth login'
@@ -52,7 +52,7 @@ export async function readProtection(projectRoot: string, gh: GhRunner = runGh):
     const sets = JSON.parse(await gh(['api', `repos/${slug}/rulesets?per_page=100`])) as { name?: string }[]
     return { ok: true, repo: slug, branch, private: repo.private === true, rules, ours: Array.isArray(sets) && sets.some((s) => s?.name === RULESET_NAME) }
   } catch (err) {
-    return { ok: false, error: err instanceof SyntaxError ? 'gh answered with something that is not JSON' : plain(err) }
+    return { ok: false, error: err instanceof SyntaxError ? 'gh answered with something that is not JSON' : plainGhError(err) }
   }
 }
 
@@ -68,7 +68,7 @@ export async function applyProtection(projectRoot: string, gh: GhRunner = runGh)
   try {
     await gh(['api', '--method', 'POST', `repos/${before.repo}/rulesets`, '--input', '-'], JSON.stringify(rulesetBody()))
   } catch (err) {
-    return { ok: false, error: plain(err) }
+    return { ok: false, error: plainGhError(err) }
   }
   const after = await readProtection(projectRoot, gh)
   return after.ok ? { ...after, added: true } : after

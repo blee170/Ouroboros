@@ -110,3 +110,72 @@ export function routineInstructions(url: string): string {
     'For a connection test, send {"kind":"test","text":"hello"} (no correlation_id).'
   ].join('\n')
 }
+
+/**
+ * The other way back, for routines whose network cannot reach a Funnel address: the routine comments on an issue in
+ * a private GitHub repository, and Ouroboros reads the issue with the owner's gh, mails the reply, and deletes the
+ * comment. No key: the repository is private and a reply must name a correlation id Ouroboros sent.
+ */
+export interface IssueRef {
+  owner: string
+  repo: string
+  number: number
+}
+
+/** `https://github.com/<owner>/<repo>/issues/<n>` as typed, or undefined. */
+export function issueRef(raw: string): IssueRef | undefined {
+  let u: URL
+  try {
+    u = new URL(raw.trim())
+  } catch {
+    return undefined
+  }
+  if (u.protocol !== 'https:' || u.hostname !== 'github.com' || u.port || u.username || u.password) return undefined
+  const m = /^\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/issues\/(\d{1,9})\/?$/.exec(u.pathname)
+  if (!m || m[2] === '.' || m[2] === '..') return undefined
+  return { owner: m[1], repo: m[2], number: Number(m[3]) }
+}
+
+export const issueUrl = (i: IssueRef): string => `https://github.com/${i.owner}/${i.repo}/issues/${i.number}`
+
+/**
+ * The reply object in an issue comment: the first ```json (or bare ```) block holding a JSON object with a kind.
+ * Undefined for any other comment (a person's note stays untouched).
+ */
+export function replyFromComment(body: string): unknown {
+  if (typeof body !== 'string' || body.length > REPLY_LIMITS.body) return undefined
+  // read line by line: a block's closing fence is never taken for the next block's opening one
+  let open: string[] | undefined
+  for (const line of body.split(/\r?\n/)) {
+    if (open === undefined) {
+      if (/^\s*```[\w-]*\s*$/.test(line)) open = []
+      continue
+    }
+    if (!/^\s*```\s*$/.test(line)) {
+      open.push(line)
+      continue
+    }
+    try {
+      const v = JSON.parse(open.join('\n')) as unknown
+      if (v && typeof v === 'object' && !Array.isArray(v) && 'kind' in v) return v
+    } catch {
+      /* another block may hold it */
+    }
+    open = undefined
+  }
+  return undefined
+}
+
+/** What a routine must do to reply through the issue, for Settings to show and the owner to paste into Grok Bot. */
+export function issueInstructions(url: string): string {
+  return [
+    'When you finish (or need to ask something), add a comment to this GitHub issue so Ouroboros picks it up:',
+    `  ${url}`,
+    'The comment holds one fenced JSON block and nothing secret:',
+    '```json',
+    '{"kind":"result" or "question", "correlation_id":"<correlation_id from the request body>", "text":"<the result, under 7000 characters>", "status":"done" or "failed" or "needs_approval"}',
+    '```',
+    'Use the correlation_id exactly as it came in the request. Ouroboros deletes the comment once the card has it.',
+    'For a connection test, comment {"kind":"test","text":"hello"} the same way (no correlation_id).'
+  ].join('\n')
+}

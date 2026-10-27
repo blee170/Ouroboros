@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.17.0] — 2026-10-28
 
 ### Added
 - **Grok Bot can answer the card that handed it work.** Before, a routine's result stayed in the Grok Bot app chat. Now it comes back into Ouroboros as board mail, and the Conductor (or the card that asked) carries on with it.

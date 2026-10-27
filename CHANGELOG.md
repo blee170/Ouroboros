@@ -21,7 +21,18 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 ### Security
 - Bots and keys can be written only through the Grok Bot settings calls. `settings.set` ignores them, so a stale Settings copy can't drop a key. `settings.get` leaves them out, so not even an encrypted key reaches the window.
 
+### Verified
+- **Built-app probe**, with a temp data folder seeded with an older single-bot URL, checked:
+  - that bot read as the first entry;
+  - two named bots saved, with the key encrypted on disk and the older fields removed;
+  - the Settings list never carried a key;
+  - `settings.set` could not overwrite the list;
+  - the Settings page showed both bots.
+- **Same probe, merged with `claude/grok-launcher`** (Grok cards don't start on main without it): a Grok Conductor got "find 10 badminton clubs for CSB marketing outreach". It read `list_grok_bots` and handed the task to **CSB**, not Personal. The handoff was discarded, so nothing went to Cursor.
+- Unit tests cover the list, the migration, picking a bot and the removed-or-renamed refusal.
+
 ### Not verified
+- The Today tab's bot name in the built app. The probe looked while the tab was closed; the handoff did carry the name.
 - A real send to two different routines. The probe saved fake webhooks and discarded the handoff instead of sending it.
 - Apps you connect in Grok (Gmail, Calendar) are shared by every bot on that Grok account, which is how Grok works. To keep personal and business apps apart, use separate Grok accounts.
 

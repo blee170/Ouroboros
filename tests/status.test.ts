@@ -8,6 +8,8 @@ describe('reduceHook', () => {
     expect(reduceHook('working', { hook_event_name: 'PreToolUse', tool_name: 'Bash' })).toMatchObject({ status: 'working', statusDetail: 'tool: Bash' })
     expect(reduceHook('working', { hook_event_name: 'Stop', last_assistant_message: 'done!' })).toMatchObject({ status: 'done', lastAssistantMessage: 'done!' })
     expect(reduceHook('done', { hook_event_name: 'SessionEnd' })?.status).toBe('ended')
+    expect(reduceHook('done', { hook_event_name: 'SessionEnd', reason: 'clear' })).toMatchObject({ status: 'idle', statusDetail: 'cleared' })
+    expect(reduceHook('idle', { hook_event_name: 'SessionEnd', reason: 'logout' })?.status).toBe('ended')
   })
   it('turns permission/idle notifications into needs-you and ignores others', () => {
     expect(reduceHook('working', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Allow Bash?' })).toMatchObject({ status: 'needs-you', statusDetail: 'permission: Allow Bash?' })

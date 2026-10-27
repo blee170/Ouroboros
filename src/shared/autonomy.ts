@@ -30,7 +30,7 @@ export const LIMIT_RETRY_MINUTES = 15
 /** A relaunched or new card that shows no session after this long never came up (stale --resume id, trust prompt, crash). */
 export const START_GRACE_MINUTES = 3
 
-export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion' | 'gate' | 'phone' | 'decision'
+export type RunEventKind = 'start' | 'relaunch' | 'closed' | 'park' | 'unpark' | 'dispatch' | 'refused' | 'retry' | 'deny' | 'stall' | 'nudge' | 'limit' | 'turn' | 'stop' | 'notion' | 'gate' | 'phone' | 'decision' | 'relay'
 
 export interface RunEvent {
   at: number
@@ -369,6 +369,12 @@ export function reportMarkdown(state: RunState, events: RunEvent[], agents: Agen
     lines.push(`## Gates · ${auto.length} allowed by policy · ${askedIds.size} waiting on you · ${never.length} refused${approved.length ? ` · ${approved.length} approved by you` : ''}${denied.length ? ` · ${denied.length} denied by you` : ''}`)
     for (const e of never.slice(0, 10)) lines.push(`- Refused: **${oneLine(e.title ?? e.card)}** tried ${cell(oneLine((e.detail ?? '').replace(/^never: /, '')).slice(0, 160))} at ${hhmm(e.at)}`)
     for (const e of auto.filter((x) => !/left to the permission flow/.test(x.detail ?? '')).slice(0, 10)) lines.push(`- Allowed: ${oneLine(e.title ?? e.card)}: ${oneLine((e.detail ?? '').replace(/^auto: /, '')).slice(0, 160)}`)
+    lines.push('')
+  }
+  const relays = events.filter((e) => e.kind === 'relay' && !/^asked the owner/.test(e.detail ?? ''))
+  if (relays.length) {
+    lines.push(`## Fresh starts · ${relays.filter((e) => /^fresh start/.test(e.detail ?? '')).length} of ${relays.length}`)
+    for (const e of relays.slice(0, 20)) lines.push(`- ${oneLine(e.title ?? e.card)} at ${hhmm(e.at)}: ${oneLine(e.detail).slice(0, 200)}`)
     lines.push('')
   }
   const answered = questionEvents.filter((e) => /^answered/.test(e.detail ?? ''))

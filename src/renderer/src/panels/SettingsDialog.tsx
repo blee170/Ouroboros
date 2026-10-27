@@ -9,6 +9,7 @@ import { OuroSettings } from './OuroSettings'
 import { VoiceSettings } from './VoiceSettings'
 import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
+import { RELAY_DEFAULTS, type RelayMode } from '@shared/relay'
 import { DEFAULT_STYLE, TTS_ENGINES, ttsSettings, type TtsEngine } from '@shared/tts'
 import { notionDatabaseId } from '@shared/notion'
 import { grokBotUrl } from '@shared/grokbot'
@@ -321,6 +322,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   <span className="small">min</span>
                 </div>
                 <div className="hint">A card Working with no activity (three times as long inside a tool call), or waiting on you, this long is reported to its Conductor; the third report, or a card with no Conductor, notifies you. 0 = off. Autonomous mode has its own stall rule.</div>
+              </label>
+              <label className="field">
+                <span>Fresh start</span>
+                <div className="ctl">
+                  <input className="text" style={{ width: 80, flex: 'none' }} type="number" min={50} max={900} defaultValue={Math.round((settings.relayTokens ?? RELAY_DEFAULTS.tokens) / 1000)} onBlur={(e) => {
+                      // an emptied field keeps the setting: it would otherwise drop to the 50k floor
+                      const k = Number(e.target.value)
+                      if (e.target.value.trim() && Number.isFinite(k)) void setSettings({ relayTokens: Math.min(900, Math.max(50, Math.round(k))) * 1000 })
+                    }} aria-label="Fresh start threshold in thousands of tokens" />
+                  <span className="small">k tokens · Conductor</span>
+                  <select value={settings.relayConductor ?? RELAY_DEFAULTS.conductor} onChange={(e) => void setSettings({ relayConductor: e.target.value as RelayMode })} aria-label="Fresh start for Conductors">
+                    <option value="ask">ask me</option>
+                    <option value="auto">automatic</option>
+                    <option value="off">off</option>
+                  </select>
+                  <span className="small">workers</span>
+                  <select value={settings.relayWorkers ?? RELAY_DEFAULTS.workers} onChange={(e) => void setSettings({ relayWorkers: e.target.value as RelayMode })} aria-label="Fresh start for worker cards">
+                    <option value="auto">automatic</option>
+                    <option value="ask">ask me</option>
+                    <option value="off">off</option>
+                  </select>
+                </div>
+                <div className="hint">An idle Claude card whose conversation passes this size (never more than 60% of its window) writes a handoff note, is cleared with /clear, and continues from the note. Its tasks and board stay. At most 3 per card in 12 h. &quot;Ask me&quot; puts the question in Today, on the phone and in Discord.</div>
               </label>
               <label className="field">
                 <span>Announce</span>

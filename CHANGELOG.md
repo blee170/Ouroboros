@@ -6,6 +6,22 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Added
+- **Fresh start (context relay).** A Claude card whose conversation has grown large starts a new conversation from a handoff note it writes itself. This replaces compacting the same conversation over and over.
+  - **When:** once a minute, for a card that has been idle or done for at least 2 minutes, has no open question, approval or permission prompt, and whose last turn passed the threshold. The threshold is 250k tokens by default, and never more than 60% of the card's window, so 120k on a 200k model.
+  - **How:**
+    1. The card is asked for a handoff note covering its role, work, task ids, decisions, open questions, files and next steps.
+    2. The note is saved under the app's data folder (`relay/<project>/`), never in the card's folder.
+    3. `/clear` is typed into the card.
+    4. Once the clear lands, the note goes back as the first prompt of the new conversation, with a pointer to `task_list` and `check_inbox`.
+  - The note turn fires no handoff lines and no announcements, and board mail waits until it is over.
+  - **Settings → Announcements → Fresh start:** the threshold in k tokens, plus Conductor (ask me by default) and workers (automatic by default), each automatic / ask me / off. "Ask me" puts a Fresh start / Not now question in Today, on the phone and in Discord, at most once every 6 h per card.
+  - **Limits:** at most 3 per card in 12 h, and 30 minutes of quiet after an attempt that stopped.
+  - **When it stops:** the conversation is kept if the note doesn't come back within 5 minutes, the note turn is cut (Esc or another prompt), the note is under 300 characters, or the card gets busy right after writing it.
+  - **If `/clear` isn't confirmed within 30 s:** no note is sent, and the log and report say where the saved note is.
+  - Every attempt is logged (`[relay]` in main.log). During an Autonomous run the report gets a "Fresh starts" section.
+  - Claude cards only. Codex, Gemini and Grok cards have no `/clear` with hooks.
+
 ### Changed
 - **Phone Graph and Orbit: teams in colour, status as a ring.**
   - Each card's dot takes its team's colour. The team is the title before " · ", so "개발팀 · 구현" and "개발팀 · 헌트" match. There are eight colours, then grey, and the Conductor is white.
@@ -16,10 +32,31 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
   - Graph now fits the width and the height on their own, up to 6:1. A tall, narrow canvas spreads across the phone instead of standing in a thin column with overlapping names.
   - Names are a little larger and bolder.
 
+### Fixed
+- `/clear` in a card no longer marks it Ended. Claude Code sends SessionEnd with reason `clear`, and the card now stays Idle ("cleared").
+- **A second Ouroboros started with `--user-data-dir` (a test or dev launch) no longer rewrites the global external-session hook in `~/.claude/settings.json`,** even when it gets the fixed port.
+  - Before, it put its own token there, and the owner's app lost its external sessions until it restarted.
+  - It also took the fixed port while the owner's app restarted, which pushed the owner's app onto a random port.
+
 ### Verified (phone colours)
 - Local preview with the real page assets and CSP. The fake board was 13 cards in a tall, narrow stack with the Conductor at the bottom, like the owner's board. Shown at 375×812 in Graph and Orbit.
 - No console errors.
 - Typecheck and the phone tests pass.
+
+### Verified (fresh start)
+- **Live probe in the built app**, with a temp data folder and a real Claude card on Haiku:
+  1. The card read about 250k tokens of files and went idle.
+  2. Five minutes later the relay asked for the note and got 2,435 characters back, in 12 s.
+  3. `/clear` was confirmed by SessionEnd(reason `clear`).
+  4. The note went in as the first prompt of a new session, with a new session id.
+  5. The card carried on from it and still knew a codename it had only been told before the clear.
+- **What the hooks actually do:** the note prompt arrives through the inbox, and its UserPromptSubmit carries the prompt text, which arms the capture. Claude Code 2.1.310 sends no SessionStart after `/clear`, only SessionEnd.
+- Unit tests cover: the rules; the runner (note, short note, cut turn, busy after the note, `/clear` not confirmed, no note in time, the Conductor ask with yes/no/expired); and the board capture (arming, a cut by another prompt, a late note swallowed, the clear seen through either hook). Typecheck, build and all tests pass.
+
+### Not verified (fresh start)
+- A Conductor's "ask me" question answered from the phone, Discord or Today in the real app. The intercept is unit-tested only.
+- A real Autonomous run's report section.
+- A card on a 200k model.
 
 ## [0.15.1] — 2026-10-27
 

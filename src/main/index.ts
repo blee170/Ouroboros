@@ -190,7 +190,10 @@ async function main(): Promise<void> {
   await ctx.hookServer.start()
   // the installed global hook carries this launch's port and the external token: write it again (an older one has no token)
   // only the instance on the fixed port owns that hook: a second Ouroboros (another data folder, a dev build) leaves it alone
-  if (ctx.hookServer.port === PREFERRED_HOOK_PORT && ctx.hookServer.externalToken && globalExternalHooksInstalled()) {
+  // an instance on another data folder (a test or dev launch with --user-data-dir) never rewrites it, even on the fixed
+  // port: its token is not the owner's, and the owner's app would lose its external sessions until it restarts
+  const ownDataFolder = !process.argv.some((a) => a.startsWith('--user-data-dir'))
+  if (ownDataFolder && ctx.hookServer.port === PREFERRED_HOOK_PORT && ctx.hookServer.externalToken && globalExternalHooksInstalled()) {
     try {
       setGlobalExternalHooks(true, ctx.hookServer.baseUrl, ctx.hookServer.externalToken)
     } catch (err) {

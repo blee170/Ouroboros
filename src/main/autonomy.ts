@@ -334,6 +334,11 @@ export class Autonomy {
     if (this.on) this.record({ kind: 'decision', card, title, detail })
   }
 
+  /** A fresh start (context relay): asked, done, or stopped. */
+  noteRelay(card: string, title: string, detail: string): void {
+    if (this.on) this.record({ kind: 'relay', card, title, detail })
+  }
+
   /** Something done from the phone (a prompt, an answer, an approval), for the run log and the report. */
   notePhone(detail: string): void {
     if (this.on) this.record({ kind: 'phone', detail })

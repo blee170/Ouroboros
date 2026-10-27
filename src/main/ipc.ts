@@ -84,6 +84,8 @@ import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint 
 import { normalizePath, type SessionRegistry } from './windows'
 import { openMode, resolveOpenPath } from './open-path'
 import { Autonomy, type AutonomyHost } from './autonomy'
+import { Relay } from './relay'
+import { relaySettings } from '@shared/relay'
 import { engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
@@ -109,6 +111,8 @@ export interface WindowSession {
   gate: GateKeeper
   /** Questions this window's cards asked the owner (ask_owner), answered in Today or on the phone. */
   decisions: DecisionDesk
+  /** Fresh starts: a long conversation handed to a new one through a handoff note (set once the window is up). */
+  relay?: Relay
   /** Tasks cards asked to hand to Grok Bot (the last 50): each waits for the owner to send or discard it. */
   grokBot: GrokHandoff[]
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
@@ -778,6 +782,11 @@ function answerDecision(s: WindowSession, id: string, answer: unknown, note: unk
   if (!r.ok) return r
   const d = r.decision
   s.autonomy.noteDecision(d.card, d.title, `answered (${d.id}) by ${by}: ${d.answer}${d.note ? ` — ${d.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`)
+  // a fresh-start question is Ouroboros's own: the card never asked it, so it is not told the answer
+  if (s.relay?.owns(d.id)) {
+    s.relay.answered(d.id, d.answer)
+    return { ok: true }
+  }
   if (r.waited) {
     watchHandedAnswer(s, d)
     return { ok: true }
@@ -1482,6 +1491,63 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
   timer.unref?.()
 }
 
+/**
+ * Fresh starts (context relay), checked once a minute: see main/relay.ts. The note is kept under userData, never in
+ * the card's folder (no permission prompt, nothing for git).
+ */
+function installRelay(ctx: MainContext, s: WindowSession): void {
+  const relay = new Relay({
+    cards: () =>
+      [...s.board.nodes.values()]
+        .filter((n) => ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id))
+        .map((n) => ({
+          id: n.id,
+          title: cleanLine(n.data.title, 80) || n.id,
+          kind: n.data.kind,
+          engine: n.data.engine,
+          status: n.data.status ?? 'starting',
+          statusDetail: n.data.statusDetail,
+          sessionId: n.data.sessionId,
+          lastStopAt: n.data.lastStopAt,
+          lastEventAt: n.data.lastEventAt
+        })),
+    usage: (sessionId) => readSessionUsage(sessionId),
+    pending: (id) => s.decisions.pending().some((d) => d.card === id) || s.gate.pending().some((a) => a.card === id),
+    settings: () => relaySettings(ctx.store.getSettings()),
+    prompt: (id, text) => sendPrompt(ctx, s, id, text),
+    type: (id, text) => ctx.ptys.write(id, text),
+    captureStop: (id, marker, take) => s.board.captureStop(id, marker, take),
+    releaseStop: (id) => s.board.releaseStop(id),
+    watchClear: (id, done) => s.board.watchClear(id, done),
+    ask: (card, question, choices) => {
+      const r = s.decisions.ask(card, question, choices)
+      if (!r.ok) return undefined
+      s.autonomy.noteDecision(card.id, card.title, `asked (${r.decision.id}): ${question}`)
+      return r.decision.id
+    },
+    saveNote: (card, note) => {
+      try {
+        const dir = join(app.getPath('userData'), 'relay', basename(s.projectRoot || 'no-project').replace(/[^\w.-]+/g, '_'))
+        mkdirSync(dir, { recursive: true })
+        const file = join(dir, `${card.id}-${new Date().toISOString().replace(/[:.]/g, '-')}.md`)
+        writeFileSync(file, `# Handoff note: ${card.title}\n\n${note.trim()}\n`)
+        return file
+      } catch (err) {
+        log(`[relay] could not save the note of ${card.id}: ${(err as Error).message}`)
+        return undefined
+      }
+    },
+    record: (card, detail) => s.autonomy.noteRelay(card.id, card.title, detail),
+    log
+  })
+  s.relay = relay
+  const timer = setInterval(() => {
+    if (s.win.isDestroyed()) return clearInterval(timer)
+    relay.tick()
+  }, 60_000)
+  timer.unref?.()
+}
+
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
 function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession['fireHandoff'] {
   const board = s.board
@@ -1612,6 +1678,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
   installWatchdog(ctx, s)
+  installRelay(ctx, s)
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   s.taskSync = new TaskSync({
@@ -1659,6 +1726,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   board.on('stop', (nodeId: string, message: string) => ctx.ouro?.stopped(nodeId, message))
   s.decisions.on('expired', (d: Decision) => {
     s.autonomy.noteDecision(d.card, d.title, `expired (${d.id})`)
+    if (s.relay?.owns(d.id)) return s.relay.answered(d.id, undefined)
     s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
   })
   s.mail.on('mail', (m: { to: string }) => scheduleMailNudge(ctx, s, m.to))
@@ -1804,6 +1872,8 @@ const MAIL_FORMAT = 'Each message is one [header] line (who sent it, and whether
 function mailReply(s: WindowSession, nodeId: string, event: HookEvent): HookReply | undefined {
   const n = s.board.nodes.get(nodeId)
   if (!n || (n.data.engine ?? 'claude') !== 'claude') return undefined
+  // a fresh start's note turn: its Stop is the note, and mail read now would be lost in the /clear that follows
+  if (s.board.capturing(nodeId)) return undefined
   const name = event.hook_event_name
   // the mail nudge is a prompt too, but not a new task: only a real prompt resets the Stop cap
   if (name === 'UserPromptSubmit' && !mailNudgePrompts.delete(nodeId)) mailStopBlocks.delete(nodeId)

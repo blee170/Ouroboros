@@ -78,6 +78,8 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent, prev
       // "failed:" marks a turn that ended in an error (API failure, usage limit): the toast and the sidebar say so
       return { status: 'needs-you', statusDetail: `failed: ${detailOf(event) ?? 'turn failed (API error)'}`, sessionId }
     case 'SessionEnd':
+      // /clear ends the old conversation, but the CLI stays open and ready for the next prompt
+      if (event.reason === 'clear') return { status: 'idle', statusDetail: 'cleared', sessionId }
       return { status: 'ended', statusDetail: 'session ended', sessionId }
     default:
       return null

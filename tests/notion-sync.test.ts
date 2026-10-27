@@ -85,6 +85,16 @@ describe('upsertTask', () => {
     expect(await upsertTask(target(fetch), row, 'p', PAGE)).toEqual({ ok: true, pageId: PAGE2 })
     expect(calls[2].path).toBe('/pages')
   })
+  it("creates a project's first row when Notion doesn't know the project option yet", async () => {
+    const msg = 'select option "chill-shuttle" not found for property "Project". Available options: "Ouroboros".'
+    const { fetch, calls } = fakeFetch([[400, { message: msg }], [200, { id: PAGE }]])
+    expect(await upsertTask(target(fetch), row, 'chill-shuttle')).toEqual({ ok: true, pageId: PAGE })
+    expect(calls.map((c) => c.method + ' ' + c.path)).toEqual([`POST /data_sources/${DS}/query`, 'POST /pages'])
+    expect((calls[1].body.properties as Record<string, unknown>).Project).toEqual({ select: { name: 'chill-shuttle' } })
+    // any other 400 on the query still fails
+    const b = fakeFetch([[400, { message: 'Could not find property with name or id: Project' }]])
+    expect(await upsertTask(target(b.fetch), row, 'chill-shuttle')).toMatchObject({ ok: false, status: 400, stage: 'query' })
+  })
   it('passes a rate limit or a bad token through with its status', async () => {
     const a = fakeFetch([[429, {}]])
     expect(await upsertTask(target(a.fetch), row, 'p', PAGE)).toMatchObject({ ok: false, status: 429 })

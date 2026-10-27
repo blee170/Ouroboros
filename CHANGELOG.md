@@ -4,6 +4,20 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Notion task sync failed at every start for a project the Tasks database had not seen yet.** It showed "Notion sync failed: select option "chill-shuttle" not found for property "Project"".
+  - The cause: to find a task's row, the sync filters by Project. Notion refuses a filter on a select option the database doesn't have yet.
+  - Now that refusal counts as "no row yet": the row is created, which adds the project as an option, and later tasks are found as usual.
+  - Settings → Notion → Test passed all along because it only reads the database's columns.
+
+### Verified
+- Unit tests: a project's first task gets the refusal and is created with that project; any other 400 on the lookup still fails.
+
+### Not verified
+- Against the real Tasks database. Restart Ouroboros with the chill-shuttle board open: no toast, and its tasks appear in Notion.
+
 ## [0.16.0] — 2026-10-27
 
 ### Added

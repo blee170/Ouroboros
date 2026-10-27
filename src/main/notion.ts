@@ -176,8 +176,11 @@ export async function upsertTask(target: NotionTarget, task: TaskRow, project: s
   const ds = await dataSourceOf(target)
   if (!ds.ok) return { ...ds, stage: 'query' }
   const found = await call(target, 'POST', `/data_sources/${ds.id}/query`, taskQuery(task.id, project))
-  if (!found.ok) return { ...found, stage: 'query' }
-  const hit = Array.isArray(found.json.results) ? (found.json.results as Array<Record<string, unknown>>).map(pageIdOf).find(Boolean) : undefined
+  // a project's first task: Notion refuses a filter on a select option the database doesn't have yet, and no row
+  // can hold it, so the row is created (which adds the option)
+  const newOption = !found.ok && found.status === 400 && /select option .* not found/i.test(found.error)
+  if (!found.ok && !newOption) return { ...found, stage: 'query' }
+  const hit = found.ok && Array.isArray(found.json.results) ? (found.json.results as Array<Record<string, unknown>>).map(pageIdOf).find(Boolean) : undefined
   if (hit && hit !== cachedPageId) {
     const r = await call(target, 'PATCH', `/pages/${hit}`, { properties })
     return r.ok ? { ok: true, pageId: hit } : r

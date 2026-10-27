@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.16.0] — 2026-10-27
 
 ### Added
 - **Fresh start (context relay).** A Claude card whose conversation has grown large starts a new conversation from a handoff note it writes itself. This replaces compacting the same conversation over and over.

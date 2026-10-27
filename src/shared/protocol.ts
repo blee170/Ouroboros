@@ -77,6 +77,7 @@ export const IPC = {
   phoneConfigure: 'phone:configure',
   phonePair: 'phone:pair',
   phoneRevoke: 'phone:revoke',
+  phoneNotifyKey: 'phone:notifyKey',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -532,6 +533,8 @@ export interface OuroborosApi {
     /** a fresh one-use pairing link for the QR */
     pair(): Promise<{ url: string; expiresAt: number } | { error: string }>
     revoke(id: string): Promise<PhoneStatus>
+    /** A key for an automation app (MacroDroid) that may only report events (the car connected); shown once. */
+    notifyKey(): Promise<{ ok: true; key: string; url: string } | { ok: false; error: string }>
   }
   gate: {
     /** Autonomous runs: what cards asked the owner to allow (gh pr merge), and what was decided. */

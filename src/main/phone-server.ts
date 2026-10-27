@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { networkInterfaces } from 'node:os'
-import { ANSWER_KEYS, FailureLimiter, PHONE_LIMITS, bindRefusal, cleanDeviceName, pairingUrl, sourceAllowed, type PhoneDevice, type PhoneSettingsView } from '@shared/phone'
+import { ANSWER_KEYS, FailureLimiter, NOTIFY_EVENTS, PHONE_LIMITS, bindRefusal, type NotifyEvent, cleanDeviceName, pairingUrl, sourceAllowed, type PhoneDevice, type PhoneSettingsView } from '@shared/phone'
 import { PHONE_CSS, PHONE_HTML, PHONE_JS, PHONE_MANIFEST } from './phone-page'
 import { PHONE_ICON_PNG } from './phone-icon'
 
@@ -17,6 +17,8 @@ export interface PhoneHandlers {
   /** a card's question (ask_owner), answered from the phone; `device` is the paired phone's name */
   answerDecision(id: string, answer: unknown, note: unknown, device: string): { ok: boolean; error?: string }
   latestReport(): string | undefined
+  /** an automation app on the phone reports an event (the car connected) */
+  notify(event: NotifyEvent): { ok: boolean; error?: string; queued?: boolean }
   /** every action from the phone, for the log and the run's report */
   note(line: string): void
 }
@@ -45,7 +47,8 @@ export class PhoneDevices {
   ) {
     try {
       const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown
-      if (Array.isArray(raw)) this.list = raw.filter((d): d is PhoneDevice => Boolean(d) && typeof d.id === 'string' && typeof d.tokenHash === 'string' && /^[0-9a-f]{64}$/.test(d.tokenHash))
+      // a scope other than notify is dropped with the device: an unknown scope must not read as a full phone
+      if (Array.isArray(raw)) this.list = raw.filter((d): d is PhoneDevice => Boolean(d) && typeof d.id === 'string' && typeof d.tokenHash === 'string' && /^[0-9a-f]{64}$/.test(d.tokenHash) && (d.scope === undefined || d.scope === 'notify'))
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
         // set an unreadable file aside rather than overwrite it with the next pairing
@@ -59,9 +62,9 @@ export class PhoneDevices {
     }
   }
   /** A new device for a fresh token; returns the token (shown to the phone once). */
-  add(name: string, now = Date.now()): { device: PhoneDevice; token: string } {
+  add(name: string, now = Date.now(), scope?: 'notify'): { device: PhoneDevice; token: string } {
     const token = randomBytes(24).toString('base64url')
-    const device: PhoneDevice = { id: randomBytes(6).toString('hex'), name: cleanDeviceName(name), tokenHash: sha(token), createdAt: now }
+    const device: PhoneDevice = { id: randomBytes(6).toString('hex'), name: cleanDeviceName(name), tokenHash: sha(token), createdAt: now, ...(scope ? { scope } : {}) }
     if (this.list.length >= PHONE_LIMITS.maxDevices) throw new Error(`${PHONE_LIMITS.maxDevices} phones are paired already; revoke one in Settings → Phone first`)
     const next = [...this.list, device]
     // the token is handed out only once it is on disk: otherwise the phone would be unpaired by the next restart
@@ -265,6 +268,18 @@ export class PhoneServer {
     }
     this.devices.seen(device.id)
     const from = `phone ${device.name}`
+
+    // an automation app's key (MacroDroid) says that something happened, and nothing else
+    if (method === 'POST' && path === '/m/api/notify') {
+      const body = (await readBody(req, 1024)) as { event?: unknown } | undefined
+      const event = (NOTIFY_EVENTS as readonly unknown[]).includes(body?.event) ? (body!.event as NotifyEvent) : undefined
+      if (!event) return json(res, 400, { error: `event must be one of: ${NOTIFY_EVENTS.join(', ')}` })
+      const r = this.handlers.notify(event)
+      // a repeat inside the quiet time is not news: the log and the report get the first one
+      if (!r.ok || r.queued !== false) this.handlers.note(`${device.scope === 'notify' ? `key ${device.name}` : from}: ${event}${r.ok ? '' : ` (${r.error})`}`)
+      return json(res, r.ok ? 200 : 409, r)
+    }
+    if (device.scope === 'notify') return json(res, 403, { error: 'this key may only call /m/api/notify' })
 
     if (method === 'GET' && path === '/m/api/board') return json(res, 200, this.handlers.board())
     if (method === 'GET' && path === '/m/api/report/latest') return json(res, 200, { markdown: this.handlers.latestReport() ?? '' })

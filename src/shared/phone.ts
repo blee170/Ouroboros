@@ -25,6 +25,8 @@ export interface PhoneDevice {
   tokenHash: string
   createdAt: number
   lastSeen?: number
+  /** 'notify': a key for an automation app (MacroDroid) that may only call /m/api/notify, not a phone */
+  scope?: 'notify'
 }
 
 export interface PhoneSettingsView {
@@ -102,6 +104,10 @@ export class FailureLimiter {
 export function pairingUrl(host: string, port: number, code: string): string {
   return `http://${host}:${port}/m#pair=${encodeURIComponent(code)}`
 }
+
+/** What an automation app may report: the phone connected to the car. */
+export const NOTIFY_EVENTS = ['car'] as const
+export type NotifyEvent = (typeof NOTIFY_EVENTS)[number]
 
 /** The keys a phone may send to a card waiting on a permission prompt. */
 // no "2" ("Yes, and don't ask again"): it writes a lasting allow rule, and the option set differs between prompts

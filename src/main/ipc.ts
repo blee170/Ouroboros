@@ -917,6 +917,12 @@ export function createPhone(ctx: MainContext): PhoneServer {
       const s = m ? ctx.windows.all().find((w) => String(w.id) === m[1]) : undefined
       return s && m ? resolveApproval(s, m[2], approve) : { ok: false, error: 'that request is gone (its window was closed)' }
     },
+    notify: (event) => {
+      // the only event so far: the phone joined the car; Ouro says ready once Discord will push it to the phone
+      const r = ctx.ouro.carReady()
+      if (r.ok) log(`[ouro] car: ${r.queued ? `ready message in ${Math.round(r.inMs / 1000)} s` : 'already told for this drive'}`)
+      return r.ok ? { ok: true, queued: r.queued } : r
+    },
     latestReport: () => {
       const p = win()?.autonomy.public().ended?.reportPath
       if (!p) return undefined
@@ -2444,6 +2450,19 @@ export function registerIpc(ctx: MainContext): void {
     return phoneStatus(ctx)
   })
   ipcMain.handle(IPC.phonePair, () => ctx.phone.newPairing())
+  ipcMain.handle(IPC.phoneNotifyKey, () => {
+    const url = ctx.phone.url
+    if (!url) return { ok: false, error: ctx.phone.error ?? 'turn the phone server on first' }
+    try {
+      // one car key at a time: a new one replaces the old (which then stops working)
+      for (const d of ctx.phone.devices.list.filter((x) => x.scope === 'notify')) ctx.phone.devices.revoke(d.id)
+      const { device, token } = ctx.phone.devices.add('MacroDroid', Date.now(), 'notify')
+      log(`[phone] notify key ${device.id} made`)
+      return { ok: true, key: token, url: `${url}/api/notify` }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
   ipcMain.handle(IPC.phoneRevoke, (_e, id: string) => {
     if (typeof id === 'string' && ctx.phone.devices.revoke(id)) log(`[phone] device ${id} revoked`)
     return phoneStatus(ctx)

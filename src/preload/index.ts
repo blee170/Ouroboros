@@ -166,6 +166,12 @@ const api: OuroborosApi = {
     setKey: (botId, key) => ipcRenderer.invoke(IPC.grokBotSetKey, botId, key),
     test: (botId) => ipcRenderer.invoke(IPC.grokBotTest, botId)
   },
+  grokReply: {
+    status: () => ipcRenderer.invoke(IPC.grokReplyStatus),
+    configure: (input) => ipcRenderer.invoke(IPC.grokReplyConfigure, input),
+    makeKey: () => ipcRenderer.invoke(IPC.grokReplyMakeKey),
+    revoke: () => ipcRenderer.invoke(IPC.grokReplyRevoke)
+  },
   github: {
     protection: () => ipcRenderer.invoke(IPC.githubProtection),
     protect: () => ipcRenderer.invoke(IPC.githubProtect),

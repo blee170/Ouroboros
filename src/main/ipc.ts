@@ -17,6 +17,8 @@ import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, fir
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
+import { GrokReplyServer, ReplyStore } from './grok-reply'
+import { DEFAULT_REPLY_PORT, REPLY_LIMITS, REPLY_PATH, replyMail, routineInstructions, type ReplyKind, type ReplyRecord } from '@shared/grokreply'
 import { applyProtection, checkCardToken, readProtection } from './rulesets'
 import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
@@ -36,7 +38,7 @@ import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
-import { cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
+import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
@@ -134,6 +136,8 @@ export interface MainContext {
   hookServer: HookServer
   /** The phone companion's server (off unless the owner turns it on in Settings → Phone). */
   phone: PhoneServer
+  /** Grok Bot replies (off unless the owner turns it on in Settings → Grok Bot). */
+  grokReply: { store: ReplyStore; server: GrokReplyServer }
   /** Ouro, the owner on Discord (off unless the owner turns it on in Settings → Ouro). */
   ouro: Ouro
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
@@ -940,6 +944,102 @@ export function createPhone(ctx: MainContext): PhoneServer {
   return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), handlers, log)
 }
 
+/** Put one Grok Bot reply in front of the card that asked (or the Conductor when that card is gone). False: no one to tell yet. */
+function deliverGrokReply(s: WindowSession, rec: ReplyRecord, kind: Exclude<ReplyKind, 'test'>, text: string, status?: string): boolean {
+  const asker = s.board.nodes.get(rec.card)
+  const to = asker && asker.data.kind !== 'note' && asker.data.kind !== 'browser' ? rec.card : [...s.board.nodes.values()].find((n) => n.data.kind === 'conductor')?.id
+  if (!to) return false
+  // sent as Grok Bot, not the owner: the card reads it as an outside agent's words, under the agent mail limits
+  const m = s.mail.send({ from: GROK_BOT, to, body: replyMail(rec, kind, text, status), kind: kind === 'question' ? 'question' : 'note' }, mailTopology(s.board))
+  if (!m.ok) {
+    log(`[grok-reply] ${rec.handoffId}: not queued for ${to}: ${m.error}`)
+    return false
+  }
+  s.grokBot = s.grokBot.map((h) => (h.correlationId === rec.correlationId ? { ...h, repliedAt: Date.now(), replyKind: kind } : h))
+  grokBotChanged(s)
+  log(`[grok-reply] ${rec.handoffId} (${rec.botName}): ${kind} queued for ${to === rec.card ? 'the asking card' : 'the Conductor'}`)
+  return true
+}
+
+/** Mail a record's waiting replies in order, stopping at the first that cannot go; saved only when something went. */
+function flushGrokReplies(store: ReplyStore, s: WindowSession, rec: ReplyRecord): number {
+  const list = rec.waiting ?? []
+  let sent = 0
+  while (sent < list.length && deliverGrokReply(s, rec, list[sent].kind, list[sent].text, list[sent].status)) sent++
+  if (sent) store.update(rec.correlationId, { waiting: list.length > sent ? list.slice(sent) : undefined })
+  return list.length - sent
+}
+
+export function createGrokReply(ctx: MainContext): { store: ReplyStore; server: GrokReplyServer } {
+  const store = new ReplyStore(join(app.getPath('userData'), 'grok-replies.json'), log)
+  const stuck = new Set<string>()
+  const server = new GrokReplyServer(store, (r) => {
+    if (r.kind === 'test') {
+      log('[grok-reply] test received')
+      if (Notification.isSupported()) new Notification({ title: 'Grok Bot reply test received', body: r.text ? r.text.slice(0, 120) : 'The way back from Grok Bot works.' }).show()
+      return { status: 200, body: { ok: true, received: 'test' } }
+    }
+    const rec = r.correlationId ? store.find(r.correlationId) : undefined
+    if (!rec) {
+      log('[grok-reply] refused a reply: unknown or expired correlation_id')
+      return { status: 404, body: { ok: false, error: 'unknown or expired correlation_id' } }
+    }
+    if (rec.replies >= REPLY_LIMITS.perHandoff) return { status: 429, body: { ok: false, error: `this handoff already got ${REPLY_LIMITS.perHandoff} replies` } }
+    const now = Date.now()
+    // queued behind any older reply still waiting, so a question never lands after its result
+    store.update(rec.correlationId, { replies: rec.replies + 1, lastReplyAt: now, waiting: [...(rec.waiting ?? []), { kind: r.kind, text: r.text, status: r.status, at: now }] })
+    const s = ctx.windows.forProject(rec.projectRoot)
+    const fresh = store.find(rec.correlationId)
+    const left = s && fresh ? flushGrokReplies(store, s, fresh) : 1
+    if (left) log(`[grok-reply] ${rec.handoffId}: kept until ${basename(rec.projectRoot)} is open with its card or a Conductor`)
+    return { status: 200, body: { ok: true, delivered: left === 0 } }
+  }, log)
+  // replies that came while the project was closed (or before its cards were back on the board)
+  setInterval(() => {
+    for (const s of ctx.windows.all()) {
+      if (!s.board.projectRoot) continue
+      for (const rec of store.waitingFor(s.board.projectRoot)) {
+        const left = flushGrokReplies(store, s, rec)
+        // said once per record, not every 30 s
+        if (left && !stuck.has(rec.correlationId)) {
+          stuck.add(rec.correlationId)
+          log(`[grok-reply] ${left} reply(s) to ${rec.handoffId} wait: no card ${rec.card} and no Conductor on the board, or a mail limit`)
+        } else if (!left) stuck.delete(rec.correlationId)
+      }
+    }
+  }, 30_000).unref()
+  return { store, server }
+}
+
+/** The Funnel address of this PC (https://<name>.ts.net:8443/grok/reply), when Tailscale tells it; the owner can type another. */
+async function suggestedReplyUrl(): Promise<string | undefined> {
+  const { execFile } = await import('node:child_process')
+  return new Promise((resolve) => {
+    execFile('tailscale', ['status', '--self', '--json'], { timeout: 3000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
+      if (err) return resolve(undefined)
+      try {
+        const name = String((JSON.parse(out) as { Self?: { DNSName?: unknown } }).Self?.DNSName ?? '').replace(/\.$/, '')
+        resolve(/^[a-z0-9-]+(\.[a-z0-9-]+)+\.ts\.net$/i.test(name) ? `https://${name}:8443${REPLY_PATH}` : undefined)
+      } catch {
+        resolve(undefined)
+      }
+    })
+  })
+}
+
+export function grokReplyView(ctx: MainContext): { enabled: boolean; port: number; publicUrl: string; listening: boolean; error?: string; hasKey: boolean; keyMadeAt?: number } {
+  const st = ctx.store.getSettings().grokReply
+  return {
+    enabled: st?.enabled === true,
+    port: st?.port ?? DEFAULT_REPLY_PORT,
+    publicUrl: st?.publicUrl ?? '',
+    listening: ctx.grokReply.server.listening,
+    error: ctx.grokReply.server.error,
+    hasKey: ctx.grokReply.store.hasKey,
+    keyMadeAt: ctx.grokReply.store.keyMadeAt
+  }
+}
+
 /** A scoped need id (`<window>-T4`) back to its window and the id inside it. */
 function needWindow(ctx: MainContext, ref: string): { s: WindowSession; id: string } | undefined {
   const m = /^(\d+)-(.+)$/.exec(ref)
@@ -1082,15 +1182,24 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
   if (!key) return { ok: false, error: bot.keyEnc ? `${bot.name}'s saved key could not be decrypted; paste it again in Settings → Grok Bot` : `save ${bot.name}'s routine key in Settings → Grok Bot first` }
   grokSending.add(flight)
   try {
-    const r = await sendToGrokBot({ url, key, payload: handoffPayload(h, basename(s.board.projectRoot || ''), Date.now()) })
+    // with the reply server on, the routine gets an id to answer with; the result then comes back as board mail
+    // only when a reply can actually arrive: a card told to expect mail that cannot come would wait for nothing
+    const replies = ctx.grokReply.server.listening && ctx.grokReply.store.hasKey && Boolean(s.board.projectRoot)
+    const correlationId = replies ? ctx.grokReply.store.remember({ projectRoot: s.board.projectRoot, card: h.card, title: h.title, handoffId: h.id, task: h.task.slice(0, 60), botName: bot.name, sentAt: Date.now() }) : undefined
+    const payload = { ...handoffPayload(h, basename(s.board.projectRoot || ''), Date.now()), ...(correlationId ? { correlation_id: correlationId, reply_expected: true } : {}) }
+    const r = await sendToGrokBot({ url, key, payload })
     if (!r.ok) {
       update({ error: r.error })
       log(`[grok-bot] ${id} not sent: ${r.error}`)
       return { ok: false, error: r.error }
     }
-    update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined })
+    update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined, ...(correlationId ? { correlationId } : {}) })
     log(`[grok-bot] ${id} sent to ${bot.name} by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
-    return tell(`The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`)
+    return tell(
+      correlationId
+        ? `The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result should come back to you as board mail when the routine finishes (minutes, sometimes longer); carry on with other work meanwhile.`
+        : `The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`
+    )
   } finally {
     grokSending.delete(flight)
   }
@@ -2520,10 +2629,42 @@ export function registerIpc(ctx: MainContext): void {
   // the bots and their (encrypted, or plain where the OS has no keyring) keys stay in main: Settings reads grokBot.bots
   const forRenderer = ({ grokBots: _b, grokBotKeyEnc: _k, ...st }: AppSettings): AppSettings => st
   ipcMain.handle(IPC.settingsGet, () => forRenderer(store.getSettings()))
+  ipcMain.handle(IPC.grokReplyStatus, async () => ({ ...grokReplyView(ctx), suggestedUrl: await suggestedReplyUrl() }))
+  ipcMain.handle(IPC.grokReplyConfigure, async (_e, input: { enabled?: unknown; publicUrl?: unknown }) => {
+    const prev = store.getSettings().grokReply
+    const raw = typeof input?.publicUrl === 'string' ? input.publicUrl.trim() : (prev?.publicUrl ?? '')
+    let publicUrl = ''
+    if (raw) {
+      try {
+        const u = new URL(raw)
+        if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return { ok: false, error: 'the address must be https:// with no user, query or #' }
+        publicUrl = u.toString()
+      } catch {
+        return { ok: false, error: 'that is not a web address' }
+      }
+    }
+    const next = { enabled: typeof input?.enabled === 'boolean' ? input.enabled : prev?.enabled === true, port: prev?.port ?? DEFAULT_REPLY_PORT, ...(publicUrl ? { publicUrl } : {}) }
+    store.setSettings({ grokReply: next })
+    const err = await ctx.grokReply.server.apply(next.enabled, next.port)
+    log(`[grok-reply] ${next.enabled ? (err ? `not started: ${err}` : 'on') : 'off'}`)
+    return err ? { ok: false, error: err } : { ok: true }
+  })
+  ipcMain.handle(IPC.grokReplyMakeKey, () => {
+    const key = ctx.grokReply.store.makeKey()
+    log('[grok-reply] a new reply key was made (the old one stops working)')
+    const url = store.getSettings().grokReply?.publicUrl
+    return { ok: true, key, instructions: routineInstructions(url || `https://<this PC>.ts.net:8443${REPLY_PATH}`) }
+  })
+  ipcMain.handle(IPC.grokReplyRevoke, () => {
+    ctx.grokReply.store.revokeKey()
+    log('[grok-reply] the reply key was revoked')
+    return { ok: true }
+  })
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => {
     // the bots and their keys go through grokBot.save / setKey: a stale Settings copy must not drop a key
     if (patch && typeof patch === 'object') {
-      const { grokBots: _b, grokBotKeyEnc: _k, grokBotUrl: _u, ...rest } = patch
+      // the reply server goes through grokReply.configure, which also starts or stops it
+      const { grokBots: _b, grokBotKeyEnc: _k, grokBotUrl: _u, grokReply: _r, ...rest } = patch
       patch = rest
     }
     const next = store.setSettings(patch)

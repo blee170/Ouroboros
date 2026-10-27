@@ -4,6 +4,30 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Grok Bot can answer the card that handed it work.** Before, a routine's result stayed in the Grok Bot app chat. Now it comes back into Ouroboros as board mail, and the Conductor (or the card that asked) carries on with it.
+  - Settings → Grok Bot → *Replies from Grok Bot* turns on a small server that listens only on 127.0.0.1. Tailscale Funnel carries the routine's POST to it from the internet: `tailscale funnel --bg --https=8443 http://127.0.0.1:47920`.
+  - The only route is `POST /grok/reply`, and it needs the reply key. The key is shown once with the steps to paste into the routine; only its hash is kept.
+  - Every handoff sent while this is on carries a random `correlation_id`. A reply must name one to reach a card.
+  - If the asking card is gone, the Conductor gets the reply. A reply that comes while the project is closed waits and is delivered when it opens.
+  - Replies arrive from "Grok Bot, an outside agent". They are never shown as the owner's words, and they fall under the same mail limits as agent mail.
+  - `{"kind":"test"}` checks the way back and shows a notification.
+
+### Verified
+- Unit tests:
+  - parsing (kinds, ids, size limits, hidden characters);
+  - key hashing and the store across a restart;
+  - the server (wrong key, content type, bad JSON, 413, other paths, loopback only);
+  - lockout: wrong keys and scanners cannot lock the routine out;
+  - turning it off and on again quickly;
+  - Grok Bot mail: shown as an outside agent, limited, and kept unread across a reload.
+- Built-app probe (temp userData): off by default; the toggle starts and stops it; the steps show this PC's Funnel address; a keyed test returns 200, no key 401, an unknown id 404; only the hash is on disk; `settings.set` cannot switch it.
+
+### Not verified
+- A real round trip: Grok Bot routine → Funnel → card, with a real handoff.
+
 ## [0.16.1] — 2026-10-28
 
 ### Fixed

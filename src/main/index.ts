@@ -19,7 +19,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, createOuro, applyOuro, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, createGrokReply, createOuro, applyOuro, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -170,6 +170,7 @@ async function main(): Promise<void> {
     roles: new RoleLibrary(join(app.getPath('userData'), 'roles', 'agency-agents')),
     hookServer: null as unknown as HookServer,
     phone: null as unknown as PhoneServer,
+    grokReply: null as unknown as MainContext['grokReply'],
     ouro: null as unknown as Ouro,
     boardTrust: new BoardTrust(join(app.getPath('userData'), 'board-trust.json'), log),
     usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines })
@@ -201,6 +202,7 @@ async function main(): Promise<void> {
     }
   }
   ctx.phone = createPhone(ctx)
+  ctx.grokReply = createGrokReply(ctx)
   ctx.ouro = createOuro(ctx)
   registerIpc(ctx)
   // the microphone is for the app's own window (the voice composer), audio only: a page in a browser card (its own
@@ -227,6 +229,14 @@ async function main(): Promise<void> {
   }
 
   applyOuro(ctx)
+  const replyView = store.getSettings().grokReply
+  if (replyView?.enabled)
+    void ctx.grokReply.server.apply(true, replyView.port).then((err) => {
+      if (!err) return
+      log(`[grok-reply] not started: ${err}`)
+      // Grok Bot's replies would be refused at Funnel until this is fixed: said once, not left in a log
+      if (Notification.isSupported()) new Notification({ title: 'Grok Bot replies are off', body: `The reply server did not start: ${err}. Settings → Grok Bot.` }).show()
+    })
 
   createWindow(ctx, initialProjectArg())
   createTray(ctx)
@@ -250,6 +260,7 @@ async function main(): Promise<void> {
     ptys.killAll()
     ctx.hookServer.stop()
     ctx.phone?.stop()
+    ctx.grokReply?.server.stop()
     ctx.ouro?.stop()
     whisper.stop()
     globalShortcut.unregisterAll()

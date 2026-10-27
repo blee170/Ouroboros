@@ -10,6 +10,18 @@ import type { Mail } from './mail'
 import type { Approval } from './gate'
 import type { Decision } from './decisions'
 import type { GrokBotView, GrokHandoff } from './grokbot'
+
+export interface GrokReplyStatus {
+  enabled: boolean
+  port: number
+  publicUrl: string
+  listening: boolean
+  error?: string
+  hasKey: boolean
+  keyMadeAt?: number
+  /** https://<this PC>.ts.net:8443/grok/reply when Tailscale reports a name */
+  suggestedUrl?: string
+}
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { OuroSettingsView, OuroStatusView } from './ouro'
 import type { ProtectionView } from './rulesets'
@@ -63,6 +75,10 @@ export const IPC = {
   grokBotBots: 'grokBot:bots',
   grokBotSave: 'grokBot:save',
   grokBotTest: 'grokBot:test',
+  grokReplyStatus: 'grokReply:status',
+  grokReplyConfigure: 'grokReply:configure',
+  grokReplyMakeKey: 'grokReply:makeKey',
+  grokReplyRevoke: 'grokReply:revoke',
   githubProtection: 'github:protection',
   githubProtect: 'github:protect',
   githubSetCardToken: 'github:setCardToken',
@@ -562,6 +578,15 @@ export interface OuroborosApi {
     setKey(botId: string, key: string): Promise<{ ok: boolean; hasKey: boolean; error?: string }>
     /** POST a test body ({ source: "ouroboros", kind: "test" }) to one bot's webhook: whether a run started. */
     test(botId: string): Promise<{ ok: true; runUuid?: string } | { ok: false; error: string }>
+  }
+  grokReply: {
+    /** The reply server: on or off, listening, the public address, whether a key exists; suggestedUrl from Tailscale. */
+    status(): Promise<GrokReplyStatus>
+    /** Turn it on or off and/or set the public (Funnel) address; starts or stops the server. */
+    configure(input: { enabled?: boolean; publicUrl?: string }): Promise<{ ok: boolean; error?: string }>
+    /** A new reply key, shown once, with the steps for the routine (the old key stops working). */
+    makeKey(): Promise<{ ok: true; key: string; instructions: string }>
+    revoke(): Promise<{ ok: boolean }>
   }
   github: {
     /** Main-branch protection of the open project's GitHub repository (read with the owner's gh). */

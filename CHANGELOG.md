@@ -4,6 +4,34 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Orbit view on the desktop.** It is the phone's Orbit, drawn over the canvas.
+  - **What it shows:** the board as a turning globe. Each card is a dot in its state's colour, and the Conductor is the larger dot facing you. Handoff lines are solid, and dispatch links are dashed. A line glows while its target works on what it sent, and a card that needs you pulses.
+  - **How to open it:** the toolbar's globe button, or Ctrl+Shift+O. The canvas stays mounted underneath, so every terminal keeps running.
+  - **Controls:**
+    - drag to turn and the wheel to zoom;
+    - click a dot to select it in the Inspector;
+    - double-click a dot to go to it on the canvas;
+    - Esc or the Canvas button to go back.
+  - **Keyboard:** each dot can be focused. Enter selects it, and Shift+Enter goes to it.
+  - The globe turns slowly, about 30 frames a second, until you drag it or pick a card. It doesn't turn with reduced motion. Esc goes to an open dialog or text field first.
+
+### Verified
+- **Built-app probe** with seven terminal cards (no AI sessions). It checked that:
+  - every card was a dot, and the three dispatch links plus one handoff line were drawn;
+  - the canvas stayed mounted;
+  - the globe turned on its own, then held still after a drag;
+  - a click selected a card, and the wheel zoomed;
+  - Esc closed the view, and Ctrl+Shift+O opened it again;
+  - double-click went to the card on the canvas.
+- Unit tests cover the sphere, the layout with the Conductor in front, links (deduplicated, with the Conductor as the hub when there are none), projection and zoom.
+
+### Not verified
+- How the Conductor dot looks with a live Conductor card. The probe used terminal cards only.
+- Speed on a board of 40 or more cards.
+
 ## [0.15.1] — 2026-10-27
 
 ### Changed

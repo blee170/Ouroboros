@@ -13,6 +13,7 @@ import {
   ChevronRight,
   CircleHelp,
   Copy,
+  Earth,
   ExternalLink,
   FileText,
   Folder,
@@ -90,6 +91,7 @@ export type IconName =
   | 'stop'
   | 'play'
   | 'usage'
+  | 'orbit'
 
 const ICONS: Record<IconName, LucideIcon> = {
   usage: Activity,
@@ -132,7 +134,8 @@ const ICONS: Record<IconName, LucideIcon> = {
   pencil: Pencil,
   moon: Moon,
   stop: Square,
-  play: Play
+  play: Play,
+  orbit: Earth
 }
 
 export function Icon({ name, size = 16, className, ...rest }: { name: IconName; size?: number } & Omit<LucideProps, 'size' | 'ref'>) {

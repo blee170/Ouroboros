@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -53,6 +53,7 @@ describe('the phone server', () => {
   const notes: string[] = []
   const prompts: Array<[string, string]> = []
   const answers: Array<[string, string]> = []
+  const events: string[] = []
   const handlers: PhoneHandlers = {
     board: () => ({ project: 'p', autonomous: false, cards: [{ id: 'c1', title: 'Chief' }], approvals: [] }),
     prompt: (id, text) => (prompts.push([id, text]), { ok: true }),
@@ -60,6 +61,7 @@ describe('the phone server', () => {
     resolveApproval: (id) => (id === '1-A1' ? { ok: true } : { ok: false, error: 'no approval' }),
     answerDecision: (id, answer, _note, device) => (id === '1-D1' && answer === 'Approve' && device ? { ok: true } : { ok: false, error: 'no such question' }),
     latestReport: () => '# report',
+    notify: (e) => (events.push(e), { ok: true, queued: true }),
     note: (l) => notes.push(l)
   }
   const devices = new PhoneDevices(join(dir, 'devices.json'))
@@ -100,6 +102,25 @@ describe('the phone server', () => {
     expect(r.text).toContain('<script src="/m/app.js">')
     expect(r.text).not.toMatch(/<script>/)
     expect((await call('/m/app.js')).text).not.toContain('innerHTML')
+  })
+
+  it('gives an automation key the notify route and nothing else', async () => {
+    const { token, device } = devices.add('MacroDroid', Date.now(), 'notify')
+    expect(device.scope).toBe('notify')
+    const r = await call('/m/api/notify', { token, body: { event: 'car' } })
+    expect(r.status).toBe(200)
+    expect(events).toEqual(['car'])
+    expect((await call('/m/api/notify', { token, body: { event: 'boom' } })).status).toBe(400)
+    expect((await call('/m/api/board', { token })).status).toBe(403)
+    expect((await call('/m/api/cards/c1/prompt', { token, body: { text: 'hi' } })).status).toBe(403)
+    expect(notes.some((n) => n.includes('key MacroDroid: car'))).toBe(true)
+    // an unknown scope on disk is not read as a full phone
+    const f2 = join(dir, 'scoped.json')
+    writeFileSync(f2, JSON.stringify([{ id: 'a', name: 'x', tokenHash: 'a'.repeat(64), createdAt: 1, scope: 'admin' }, { id: 'b', name: 'y', tokenHash: 'b'.repeat(64), createdAt: 1, scope: 'notify' }]))
+    expect(new PhoneDevices(f2).list.map((d) => d.id)).toEqual(['b'])
+    // revoked like a phone (no 401 calls here: they would count against this address for the next test)
+    devices.revoke(device.id)
+    expect(devices.match(token)).toBeUndefined()
   })
 
   it('pairs once with a fresh code, then takes only the device token', async () => {

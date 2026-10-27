@@ -271,3 +271,48 @@ describe('bug-hunt regressions (bridge)', () => {
     expect(h.bot.sent.length).toBe(n)
   })
 })
+
+describe('Ouro car ready', () => {
+  it('says ready with the board after the mobile-notification delay, once per drive', async () => {
+    const h = harness([q])
+    const n = h.bot.sent.length
+    expect(h.ouro.carReady()).toEqual({ ok: true, queued: true, inMs: 75_000 })
+    // a reconnect while it waits, or soon after, schedules nothing new
+    expect(h.ouro.carReady()).toMatchObject({ ok: true, queued: false })
+    h.advance(74_000)
+    expect(h.bot.sent.length).toBe(n)
+    h.advance(2_000)
+    expect(h.bot.sent.length).toBe(n + 1)
+    expect(h.bot.sent.at(-1)).toContain('🚗 우로 준비됐어요')
+    expect(h.bot.sent.at(-1)).toContain('Redis, SQLite')
+    expect(h.ouro.carReady()).toMatchObject({ ok: true, queued: false })
+    // what it listed is the focus: a yes-path answer goes to it
+    expect(await h.say('Redis')).toContain('Redis')
+    h.advance(10 * 60_000)
+    expect(h.ouro.carReady()).toMatchObject({ ok: true, queued: true })
+  })
+  it('says nothing when the bot is off or not connected', () => {
+    const h = harness()
+    h.ouro.stop()
+    expect(h.ouro.carReady()).toEqual({ ok: false, error: 'Ouro is off (Settings → Ouro)' })
+    const g = harness()
+    g.ouro.carReady()
+    g.bot.state = 'off'
+    const n = g.bot.sent.length
+    g.advance(80_000)
+    expect(g.bot.sent.length).toBe(n)
+    // nothing was said, so the next car event may try again at once
+    g.bot.state = 'ready'
+    expect(g.ouro.carReady()).toMatchObject({ ok: true, queued: true })
+  })
+  it('announces later needs as new, and leaves a waiting read-back alone', async () => {
+    const h = harness([task, q])
+    expect(await h.say('허가')).toContain('허가할까요?')
+    h.ouro.carReady()
+    h.advance(76_000)
+    expect(h.bot.sent.at(-1)).toContain('🚗')
+    // the read-back still waits: the yes goes to what the owner heard
+    expect(await h.say('응')).toBeTruthy()
+    expect(h.calls.some((c) => c.startsWith('approve 1-T4'))).toBe(true)
+  })
+})

@@ -12,7 +12,7 @@ import type { HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
-import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
+import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf } from '@shared/status'
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
@@ -21,7 +21,7 @@ import { applyProtection, checkCardToken, readProtection } from './rulesets'
 import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
-import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
+import { botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, type GrokBot, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
@@ -84,6 +84,8 @@ import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint 
 import { normalizePath, type SessionRegistry } from './windows'
 import { openMode, resolveOpenPath } from './open-path'
 import { Autonomy, type AutonomyHost } from './autonomy'
+import { Relay } from './relay'
+import { relaySettings } from '@shared/relay'
 import { engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
@@ -109,6 +111,8 @@ export interface WindowSession {
   gate: GateKeeper
   /** Questions this window's cards asked the owner (ask_owner), answered in Today or on the phone. */
   decisions: DecisionDesk
+  /** Fresh starts: a long conversation handed to a new one through a handoff note (set once the window is up). */
+  relay?: Relay
   /** Tasks cards asked to hand to Grok Bot (the last 50): each waits for the owner to send or discard it. */
   grokBot: GrokHandoff[]
   fireHandoff: (edgeId: string, manual: boolean) => { ok: boolean; error?: string }
@@ -176,6 +180,11 @@ function throttledSpawn<T>(fn: () => T): Promise<T> {
 const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** length of the launch command typed into each card's shell (its echo is not TUI output) */
 const launchLineLength = new Map<string, number>()
+/** the line each card's shell was given at launch: what its output is read against until the CLI is up */
+const launchCommands = new Map<string, string>()
+/** a starting card's output went quiet: is the shell back on its prompt? */
+const exitChecks = new Map<string, NodeJS.Timeout>()
+const EXIT_CHECK_MS = 6000
 /** the first output of each card's latest launch (its own buffer: the board's is capped and trimmed from the front) */
 const launchOut = new Map<string, string>()
 const LAUNCH_OUT_CAP = 16_000
@@ -374,13 +383,19 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
+    grokBotList: () => {
+      const bots = grokBots(ctx.store.getSettings())
+      return bots.length ? `The owner's Grok Bots (pass the name as bot):\n${botMenu(bots)}` : 'The owner has not set up a Grok Bot (Settings → Grok Bot).'
+    },
     grokBotHandoff: (self, input) => {
       const n = board.nodes.get(self)
       if (!n) return { ok: false, error: 'unknown card' }
       // the agent cards that have the tool, and that board mail can tell the outcome to
       if (n.data.kind !== 'claude' && n.data.kind !== 'conductor') return { ok: false, error: 'only agent cards can hand tasks to Grok Bot' }
+      const picked = pickBot(grokBots(ctx.store.getSettings()), input.bot)
+      if (!picked.ok) return picked
       const last = s.grokBot.at(-1)
-      const r = newHandoff({ card: self, title: n.data.title, task: input.task, context: input.context }, s.grokBot, `G${last ? Number(last.id.slice(1)) + 1 : 1}`, Date.now())
+      const r = newHandoff({ card: self, title: n.data.title, task: input.task, context: input.context, bot: picked.bot }, s.grokBot, `G${last ? Number(last.id.slice(1)) + 1 : 1}`, Date.now())
       if (!r.ok) return r
       s.grokBot = [...s.grokBot.slice(-49), r.handoff]
       grokBotChanged(s)
@@ -778,6 +793,11 @@ function answerDecision(s: WindowSession, id: string, answer: unknown, note: unk
   if (!r.ok) return r
   const d = r.decision
   s.autonomy.noteDecision(d.card, d.title, `answered (${d.id}) by ${by}: ${d.answer}${d.note ? ` — ${d.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`)
+  // a fresh-start question is Ouroboros's own: the card never asked it, so it is not told the answer
+  if (s.relay?.owns(d.id)) {
+    s.relay.answered(d.id, d.answer)
+    return { ok: true }
+  }
   if (r.waited) {
     watchHandedAnswer(s, d)
     return { ok: true }
@@ -896,6 +916,12 @@ export function createPhone(ctx: MainContext): PhoneServer {
       const m = /^(\d+)-(A\d+)$/.exec(scoped)
       const s = m ? ctx.windows.all().find((w) => String(w.id) === m[1]) : undefined
       return s && m ? resolveApproval(s, m[2], approve) : { ok: false, error: 'that request is gone (its window was closed)' }
+    },
+    notify: (event) => {
+      // the only event so far: the phone joined the car; Ouro says ready once Discord will push it to the phone
+      const r = ctx.ouro.carReady()
+      if (r.ok) log(`[ouro] car: ${r.queued ? `ready message in ${Math.round(r.inMs / 1000)} s` : 'already told for this drive'}`)
+      return r.ok ? { ok: true, queued: r.queued } : r
     },
     latestReport: () => {
       const p = win()?.autonomy.public().ended?.reportPath
@@ -1048,11 +1074,12 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
     log(`[grok-bot] ${id} discarded by the owner`)
     return tell(`The owner did not send your Grok Bot handoff ${id}. Do not ask again for the same task; carry on without it:\n${h.task}`)
   }
-  const st = ctx.store.getSettings()
-  const url = grokBotUrl(st.grokBotUrl)
-  const key = decryptToken(st.grokBotKeyEnc)
-  if (!url) return { ok: false, error: 'set the routine\'s webhook URL in Settings → Grok Bot first' }
-  if (!key) return { ok: false, error: st.grokBotKeyEnc ? 'the saved Grok Bot key could not be decrypted; paste it again in Settings → Grok Bot' : 'save the routine\'s key in Settings → Grok Bot first' }
+  const bot = botOf(grokBots(ctx.store.getSettings()), h)
+  if (!bot) return { ok: false, error: `the bot ${h.botName ? `"${h.botName}" ` : ''}is no longer in Settings → Grok Bot (removed or renamed); discard this handoff` }
+  const url = grokBotUrl(bot.url)
+  const key = decryptToken(bot.keyEnc)
+  if (!url) return { ok: false, error: `set ${bot.name}'s webhook URL in Settings → Grok Bot first` }
+  if (!key) return { ok: false, error: bot.keyEnc ? `${bot.name}'s saved key could not be decrypted; paste it again in Settings → Grok Bot` : `save ${bot.name}'s routine key in Settings → Grok Bot first` }
   grokSending.add(flight)
   try {
     const r = await sendToGrokBot({ url, key, payload: handoffPayload(h, basename(s.board.projectRoot || ''), Date.now()) })
@@ -1062,8 +1089,8 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
       return { ok: false, error: r.error }
     }
     update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined })
-    log(`[grok-bot] ${id} sent by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
-    return tell(`The owner sent your handoff ${id} to Grok Bot${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`)
+    log(`[grok-bot] ${id} sent to ${bot.name} by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
+    return tell(`The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`)
   } finally {
     grokSending.delete(flight)
   }
@@ -1482,6 +1509,63 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
   timer.unref?.()
 }
 
+/**
+ * Fresh starts (context relay), checked once a minute: see main/relay.ts. The note is kept under userData, never in
+ * the card's folder (no permission prompt, nothing for git).
+ */
+function installRelay(ctx: MainContext, s: WindowSession): void {
+  const relay = new Relay({
+    cards: () =>
+      [...s.board.nodes.values()]
+        .filter((n) => ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id))
+        .map((n) => ({
+          id: n.id,
+          title: cleanLine(n.data.title, 80) || n.id,
+          kind: n.data.kind,
+          engine: n.data.engine,
+          status: n.data.status ?? 'starting',
+          statusDetail: n.data.statusDetail,
+          sessionId: n.data.sessionId,
+          lastStopAt: n.data.lastStopAt,
+          lastEventAt: n.data.lastEventAt
+        })),
+    usage: (sessionId) => readSessionUsage(sessionId),
+    pending: (id) => s.decisions.pending().some((d) => d.card === id) || s.gate.pending().some((a) => a.card === id),
+    settings: () => relaySettings(ctx.store.getSettings()),
+    prompt: (id, text) => sendPrompt(ctx, s, id, text),
+    type: (id, text) => ctx.ptys.write(id, text),
+    captureStop: (id, marker, take) => s.board.captureStop(id, marker, take),
+    releaseStop: (id) => s.board.releaseStop(id),
+    watchClear: (id, done) => s.board.watchClear(id, done),
+    ask: (card, question, choices) => {
+      const r = s.decisions.ask(card, question, choices)
+      if (!r.ok) return undefined
+      s.autonomy.noteDecision(card.id, card.title, `asked (${r.decision.id}): ${question}`)
+      return r.decision.id
+    },
+    saveNote: (card, note) => {
+      try {
+        const dir = join(app.getPath('userData'), 'relay', basename(s.projectRoot || 'no-project').replace(/[^\w.-]+/g, '_'))
+        mkdirSync(dir, { recursive: true })
+        const file = join(dir, `${card.id}-${new Date().toISOString().replace(/[:.]/g, '-')}.md`)
+        writeFileSync(file, `# Handoff note: ${card.title}\n\n${note.trim()}\n`)
+        return file
+      } catch (err) {
+        log(`[relay] could not save the note of ${card.id}: ${(err as Error).message}`)
+        return undefined
+      }
+    },
+    record: (card, detail) => s.autonomy.noteRelay(card.id, card.title, detail),
+    log
+  })
+  s.relay = relay
+  const timer = setInterval(() => {
+    if (s.win.isDestroyed()) return clearInterval(timer)
+    relay.tick()
+  }, 60_000)
+  timer.unref?.()
+}
+
 /** Auto-fire lines on Stop, open briefs, relay needs-input to conductors. Returns the manual fire function. */
 function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession['fireHandoff'] {
   const board = s.board
@@ -1612,6 +1696,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
   installWatchdog(ctx, s)
+  installRelay(ctx, s)
   s.ledger.attach(board)
   s.ledger.on('change', (tasks) => sendToRenderer(s, IPC.tasksChanged, tasks))
   s.taskSync = new TaskSync({
@@ -1659,6 +1744,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
   board.on('stop', (nodeId: string, message: string) => ctx.ouro?.stopped(nodeId, message))
   s.decisions.on('expired', (d: Decision) => {
     s.autonomy.noteDecision(d.card, d.title, `expired (${d.id})`)
+    if (s.relay?.owns(d.id)) return s.relay.answered(d.id, undefined)
     s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
   })
   s.mail.on('mail', (m: { to: string }) => scheduleMailNudge(ctx, s, m.to))
@@ -1680,6 +1766,8 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   if (!s) return
   noteActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
+  // a card that reports from its CLI is running: a "failed at launch" read from its output was wrong
+  if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
     handedAnswers.delete(nodeId)
@@ -1804,6 +1892,8 @@ const MAIL_FORMAT = 'Each message is one [header] line (who sent it, and whether
 function mailReply(s: WindowSession, nodeId: string, event: HookEvent): HookReply | undefined {
   const n = s.board.nodes.get(nodeId)
   if (!n || (n.data.engine ?? 'claude') !== 'claude') return undefined
+  // a fresh start's note turn: its Stop is the note, and mail read now would be lost in the /clear that follows
+  if (s.board.capturing(nodeId)) return undefined
   const name = event.hook_event_name
   // the mail nudge is a prompt too, but not a new task: only a real prompt resets the Stop cap
   if (name === 'UserPromptSubmit' && !mailNudgePrompts.delete(nodeId)) mailStopBlocks.delete(nodeId)
@@ -1976,20 +2066,53 @@ export function registerIpc(ctx: MainContext): void {
       const out = ((launchOut.get(nodeId) ?? '') + data).slice(-LAUNCH_OUT_CAP)
       launchOut.set(nodeId, out)
       const missing = detectMissingCommand(out, engine)
+      // the CLI started and quit at once (an option it does not know, a bad config): its error, and no prompt typed into the shell
+      const command = launchCommands.get(nodeId) ?? ''
+      const exited = missing || !command ? null : detectLaunchExit(out, command)
       if (missing) {
         launchFailed.add(nodeId)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
+      } else if (exited) {
+        launchFailed.add(nodeId)
+        clearTimeout(readyTimers.get(nodeId))
+        log(`launch: ${nodeId} ${engine} exited at launch: ${exited}`)
+        board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} exited at launch (${exited.slice(0, 160)}). Check the card's options, then Restart it.` })
       } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
-      else if ((n.data.engine === 'codex' || n.data.engine === 'grok') && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
-        // Codex sends no session-start event (and a Grok card whose plugin hooks did not load sends none either):
+      else if (engine === 'grok' && detectTrustQuestion(out, command)) {
+        // the owner answers it in the card; its SessionStart hook then makes the card idle
+        clearTimeout(readyTimers.get(nodeId))
+        clearTimeout(exitChecks.get(nodeId))
+        board.setStatus(nodeId, { status: 'needs-you', statusDetail: 'permission: Grok asks whether to trust this folder. Answer in the card (y), and it starts.' })
+      } else if (command) {
+        // any engine: a CLI that quit without an error we know leaves the shell on its prompt, and then goes quiet
+        clearTimeout(exitChecks.get(nodeId))
+        exitChecks.set(
+          nodeId,
+          setTimeout(() => {
+            exitChecks.delete(nodeId)
+            const cur = board.nodes.get(nodeId)
+            if (cur?.data.status !== 'starting' || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
+            if (!endsAtShellPrompt(launchOut.get(nodeId) ?? '', command)) return
+            launchFailed.add(nodeId)
+            clearTimeout(readyTimers.get(nodeId))
+            log(`launch: ${nodeId} ${cur.data.engine ?? 'claude'} gave the shell back at launch`)
+            board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${cur.data.engine ?? 'claude'} exited at launch (the shell came back). Check the card's options, then Restart it.` })
+          }, EXIT_CHECK_MS)
+        )
+      }
+      if (!missing && !exited && !launchFailed.has(nodeId) && board.nodes.get(nodeId)?.data.status === 'starting' && (n.data.engine === 'codex' || n.data.engine === 'grok') && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
+        // Codex sends no session-start event (and a Grok card whose agent-file hooks did not load sends none either):
         // once it has printed more than the echoed launch line, treat 4s of quiet as "ready"
         clearTimeout(readyTimers.get(nodeId))
         readyTimers.set(
           nodeId,
           setTimeout(() => {
             const cur = board.nodes.get(nodeId)
-            // a Grok card sends SessionStart from its plugin hooks: ready without one means the hooks did not load
-            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: cur.data.engine === 'grok' ? 'ready (no hooks yet: status and lines may not work)' : 'ready' })
+            // a Grok card sends SessionStart from its agent-file hooks: ready without one means the hooks did not load
+            if (cur?.data.status !== 'starting' || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
+            // quiet on the shell's own prompt: the CLI is not running; the exit check says so
+            if (endsAtShellPrompt(launchOut.get(nodeId) ?? '', launchCommands.get(nodeId) ?? '')) return
+            board.setStatus(nodeId, { status: 'idle', statusDetail: cur.data.engine === 'grok' ? 'ready (no hooks yet: status and lines may not work)' : 'ready' })
           }, 4000)
         )
       }
@@ -2001,6 +2124,9 @@ export function registerIpc(ctx: MainContext): void {
     transcripts.delete(nodeId)
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
+    launchCommands.delete(nodeId)
+    clearTimeout(exitChecks.get(nodeId))
+    exitChecks.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
     const ended = s?.board.nodes.get(nodeId)
     if (s && ended?.data.doing) {
@@ -2122,6 +2248,7 @@ export function registerIpc(ctx: MainContext): void {
         sendToRenderer(s, IPC.boardUpdateNode, { nodeId: opts.nodeId, data: { initialPrompt }, restart: false })
       }
       launchLineLength.set(opts.nodeId, prepared.command.length)
+      launchCommands.set(opts.nodeId, prepared.command)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -2250,20 +2377,32 @@ export function registerIpc(ctx: MainContext): void {
     if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
     return resolveGrokHandoff(ctx, s, id, send === true)
   })
-  ipcMain.handle(IPC.grokBotSetKey, (_e, key: string) => {
+  // the list is written here and nowhere else (settings.set ignores it), and the older single-bot fields go once it is
+  const writeBots = (bots: GrokBot[]): void => void ctx.store.setSettings({ grokBots: bots, grokBotUrl: undefined, grokBotKeyEnc: undefined })
+  ipcMain.handle(IPC.grokBotBots, () => botViews(grokBots(ctx.store.getSettings())))
+  ipcMain.handle(IPC.grokBotSave, (_e, list: unknown) => {
+    const r = saveBots(grokBots(ctx.store.getSettings()), list)
+    if (!r.ok) return r
+    writeBots(r.bots)
+    log(`[grok-bot] bots saved: ${r.bots.map((b) => b.name).join(', ') || '(none)'}`)
+    return { ok: true, bots: botViews(r.bots) }
+  })
+  ipcMain.handle(IPC.grokBotSetKey, (_e, botId: string, key: string) => {
+    const bots = grokBots(ctx.store.getSettings())
+    if (!bots.some((b) => b.id === botId)) return { ok: false, hasKey: false, error: 'save the bot first' }
     const enc = encryptToken(String(key ?? '').replace(/\s+/g, ''))
-    ctx.store.setSettings({ grokBotKeyEnc: enc || undefined })
+    writeBots(bots.map((b) => (b.id === botId ? { ...b, keyEnc: enc || undefined } : b)))
     return { ok: true, hasKey: Boolean(enc) }
   })
-  ipcMain.handle(IPC.grokBotStatus, () => ({ hasKey: Boolean(decryptToken(ctx.store.getSettings().grokBotKeyEnc)) }))
-  ipcMain.handle(IPC.grokBotTest, async () => {
-    const st = ctx.store.getSettings()
-    const url = grokBotUrl(st.grokBotUrl)
-    const key = decryptToken(st.grokBotKeyEnc)
+  ipcMain.handle(IPC.grokBotTest, async (_e, botId: string) => {
+    const bot = grokBots(ctx.store.getSettings()).find((b) => b.id === botId)
+    if (!bot) return { ok: false, error: 'save the bot first' }
+    const url = grokBotUrl(bot.url)
+    const key = decryptToken(bot.keyEnc)
     if (!url) return { ok: false, error: 'the webhook URL is not a Grok Bot routine webhook (https://api2.cursor.sh/automations/webhook/…)' }
     if (!key) return { ok: false, error: 'no key saved' }
     const r = await sendToGrokBot({ url, key, payload: { source: 'ouroboros', kind: 'test', note: 'Connection test from Ouroboros: no task, nothing to do.', sentAt: new Date().toISOString() } })
-    log(`[grok-bot] test: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
+    log(`[grok-bot] test ${bot.name}: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
     return r.ok ? r : { ok: false, error: r.error }
   })
   ipcMain.handle(IPC.githubProtection, (e) => readProtection(sessionOf(e)?.board.projectRoot ?? ''))
@@ -2311,6 +2450,19 @@ export function registerIpc(ctx: MainContext): void {
     return phoneStatus(ctx)
   })
   ipcMain.handle(IPC.phonePair, () => ctx.phone.newPairing())
+  ipcMain.handle(IPC.phoneNotifyKey, () => {
+    const url = ctx.phone.url
+    if (!url) return { ok: false, error: ctx.phone.error ?? 'turn the phone server on first' }
+    try {
+      // one car key at a time: a new one replaces the old (which then stops working)
+      for (const d of ctx.phone.devices.list.filter((x) => x.scope === 'notify')) ctx.phone.devices.revoke(d.id)
+      const { device, token } = ctx.phone.devices.add('MacroDroid', Date.now(), 'notify')
+      log(`[phone] notify key ${device.id} made`)
+      return { ok: true, key: token, url: `${url}/api/notify` }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
   ipcMain.handle(IPC.phoneRevoke, (_e, id: string) => {
     if (typeof id === 'string' && ctx.phone.devices.revoke(id)) log(`[phone] device ${id} revoked`)
     return phoneStatus(ctx)
@@ -2365,11 +2517,18 @@ export function registerIpc(ctx: MainContext): void {
     return err ? { ok: false, path: r.abs, error: err } : { ok: true, path: r.abs }
   })
 
-  ipcMain.handle(IPC.settingsGet, () => store.getSettings())
+  // the bots and their (encrypted, or plain where the OS has no keyring) keys stay in main: Settings reads grokBot.bots
+  const forRenderer = ({ grokBots: _b, grokBotKeyEnc: _k, ...st }: AppSettings): AppSettings => st
+  ipcMain.handle(IPC.settingsGet, () => forRenderer(store.getSettings()))
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => {
+    // the bots and their keys go through grokBot.save / setKey: a stale Settings copy must not drop a key
+    if (patch && typeof patch === 'object') {
+      const { grokBots: _b, grokBotKeyEnc: _k, grokBotUrl: _u, ...rest } = patch
+      patch = rest
+    }
     const next = store.setSettings(patch)
     if (patch && typeof patch === 'object' && 'voice' in patch) registerVoiceHotkey(ctx)
-    return next
+    return forRenderer(next)
   })
 
   ipcMain.handle(IPC.worktreeCreate, async (_e, projectRoot: string, name: string) => {

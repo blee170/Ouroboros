@@ -9,7 +9,7 @@ import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
 import type { Approval } from './gate'
 import type { Decision } from './decisions'
-import type { GrokHandoff } from './grokbot'
+import type { GrokBotView, GrokHandoff } from './grokbot'
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { OuroSettingsView, OuroStatusView } from './ouro'
 import type { ProtectionView } from './rulesets'
@@ -60,7 +60,8 @@ export const IPC = {
   grokBotResolve: 'grokBot:resolve',
   grokBotChanged: 'grokBot:changed',
   grokBotSetKey: 'grokBot:setKey',
-  grokBotStatus: 'grokBot:status',
+  grokBotBots: 'grokBot:bots',
+  grokBotSave: 'grokBot:save',
   grokBotTest: 'grokBot:test',
   githubProtection: 'github:protection',
   githubProtect: 'github:protect',
@@ -76,6 +77,7 @@ export const IPC = {
   phoneConfigure: 'phone:configure',
   phonePair: 'phone:pair',
   phoneRevoke: 'phone:revoke',
+  phoneNotifyKey: 'phone:notifyKey',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -531,6 +533,8 @@ export interface OuroborosApi {
     /** a fresh one-use pairing link for the QR */
     pair(): Promise<{ url: string; expiresAt: number } | { error: string }>
     revoke(id: string): Promise<PhoneStatus>
+    /** A key for an automation app (MacroDroid) that may only report events (the car connected); shown once. */
+    notifyKey(): Promise<{ ok: true; key: string; url: string } | { ok: false; error: string }>
   }
   gate: {
     /** Autonomous runs: what cards asked the owner to allow (gh pr merge), and what was decided. */
@@ -550,11 +554,14 @@ export interface OuroborosApi {
     /** Send it to the routine's webhook, or discard it; the asking card is told by board mail. */
     resolve(id: string, send: boolean): Promise<{ ok: boolean; error?: string; warning?: string }>
     onChange(cb: (handoffs: GrokHandoff[]) => void): () => void
-    /** Store (encrypted) the routine's key; empty string clears it. */
-    setKey(key: string): Promise<{ ok: boolean; hasKey: boolean }>
-    status(): Promise<{ hasKey: boolean }>
-    /** POST a test body ({ source: "ouroboros", kind: "test" }) to the saved webhook: whether a run started. */
-    test(): Promise<{ ok: true; runUuid?: string } | { ok: false; error: string }>
+    /** The owner's bots for Settings: names, purposes, webhooks and whether a key is saved (never the key). */
+    bots(): Promise<GrokBotView[]>
+    /** Save the list as edited in Settings (no keys: each bot keeps its own by id); the saved list, or why not. */
+    save(bots: Array<{ id?: string; name: string; purpose?: string; url?: string }>): Promise<{ ok: true; bots: GrokBotView[] } | { ok: false; error: string }>
+    /** Store (encrypted) one bot's routine key; empty string clears it. */
+    setKey(botId: string, key: string): Promise<{ ok: boolean; hasKey: boolean; error?: string }>
+    /** POST a test body ({ source: "ouroboros", kind: "test" }) to one bot's webhook: whether a run started. */
+    test(botId: string): Promise<{ ok: true; runUuid?: string } | { ok: false; error: string }>
   }
   github: {
     /** Main-branch protection of the open project's GitHub repository (read with the owner's gh). */

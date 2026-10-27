@@ -58,7 +58,7 @@ export function needsYou(o: { cards: TodayCard[]; tasks: Task[]; approvals: Appr
   for (const h of o.handoffs ?? []) {
     if (h.state !== 'pending') continue
     const text = oneLine(h.task).slice(0, 300)
-    out.push({ key: `g:${h.id}`, kind: 'handoff', title: `${h.title} → Grok Bot`, text: h.error ? `${text} (last try: ${oneLine(h.error)})` : text, at: h.createdAt, cardId: h.card, handoffId: h.id })
+    out.push({ key: `g:${h.id}`, kind: 'handoff', title: `${h.title} → ${h.botName ?? 'Grok Bot'}`, text: h.error ? `${text} (last try: ${oneLine(h.error)})` : text, at: h.createdAt, cardId: h.card, handoffId: h.id })
   }
   for (const a of o.approvals) {
     if (a.state === 'pending') out.push({ key: `a:${a.id}`, kind: 'approval', title: a.title, text: oneLine(a.command), at: a.createdAt, cardId: a.card, approvalId: a.id })

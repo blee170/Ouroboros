@@ -339,13 +339,27 @@ server.registerTool(
   {
     title: 'Hand a task to Grok Bot',
     description:
-      "Ask the owner to send a task to Grok Bot (xAI's cloud teammate with its own browser and computer) through their routine's webhook. It waits for the owner: nothing leaves this machine until they press Send, and you get a board message either way (with Grok Bot's run id when sent). Use it for work that needs a cloud browser or long web research, not for code in this repo. Never put secrets, keys or private data in task or context. Results come back where the owner's routine puts them (often Notion), not as a reply here.",
+      "Ask the owner to send a task to one of their Grok Bots (xAI's cloud teammates, each with its own instructions, memory and connected apps such as email and calendar) through that bot's routine webhook. Pick the bot by name for the job (list_grok_bots shows each bot's purpose); with one bot, bot may be left out. It waits for the owner: nothing leaves this machine until they press Send, and you get a board message either way (with the run id when sent). Use it for the owner's errands (email, replies, calendar), cloud-browser work or long web research, never for code in this repo. Never put passwords, keys or tokens in task or context, and only the personal details the task needs. Results come back in that bot's chat or where its routine puts them, not as a reply here.",
     inputSchema: {
-      task: z.string().max(4000).describe('what Grok Bot should do, self-contained, in plain words'),
-      context: z.string().max(12000).optional().describe('links, findings or constraints it needs; no secrets')
+      task: z.string().max(4000).describe('what the bot should do, self-contained, in plain words'),
+      context: z.string().max(12000).optional().describe('links, findings or constraints it needs; no passwords or keys'),
+      bot: z.string().max(40).optional().describe("the bot's name from list_grok_bots")
     }
   },
-  async ({ task, context }) => text(await api('POST', '/api/grok-bot', { task, context }))
+  async ({ task, context, bot }) => text(await api('POST', '/api/grok-bot', { task, context, bot }))
+)
+
+server.registerTool(
+  'list_grok_bots',
+  {
+    title: "List the owner's Grok Bots",
+    description: "The owner's Grok Bots: each one's name, what it is for, and whether it is set up. Read it before handoff_to_grok_bot to pick the bot whose purpose fits the task.",
+    inputSchema: {}
+  },
+  async () => {
+    const r = (await api('GET', '/api/grok-bots')) as { text?: string }
+    return text(r?.text ?? r)
+  }
 )
 
 const TASK_STATE = z.enum(['todo', 'doing', 'blocked', 'done', 'dropped'])

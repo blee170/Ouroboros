@@ -4,6 +4,175 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Fresh start (context relay).** A Claude card whose conversation has grown large starts a new conversation from a handoff note it writes itself. This replaces compacting the same conversation over and over.
+  - **When:** once a minute, for a card that has been idle or done for at least 2 minutes, has no open question, approval or permission prompt, and whose last turn passed the threshold. The threshold is 250k tokens by default, and never more than 60% of the card's window, so 120k on a 200k model.
+  - **How:**
+    1. The card is asked for a handoff note covering its role, work, task ids, decisions, open questions, files and next steps.
+    2. The note is saved under the app's data folder (`relay/<project>/`), never in the card's folder.
+    3. `/clear` is typed into the card.
+    4. Once the clear lands, the note goes back as the first prompt of the new conversation, with a pointer to `task_list` and `check_inbox`.
+  - The note turn fires no handoff lines and no announcements, and board mail waits until it is over.
+  - **Settings → Announcements → Fresh start:** the threshold in k tokens, plus Conductor (ask me by default) and workers (automatic by default), each automatic / ask me / off. "Ask me" puts a Fresh start / Not now question in Today, on the phone and in Discord, at most once every 6 h per card.
+  - **Limits:** at most 3 per card in 12 h, and 30 minutes of quiet after an attempt that stopped.
+  - **When it stops:** the conversation is kept if the note doesn't come back within 5 minutes, the note turn is cut (Esc or another prompt), the note is under 300 characters, or the card gets busy right after writing it.
+  - **If `/clear` isn't confirmed within 30 s:** no note is sent, and the log and report say where the saved note is.
+  - Every attempt is logged (`[relay]` in main.log). During an Autonomous run the report gets a "Fresh starts" section.
+  - Claude cards only. Codex, Gemini and Grok cards have no `/clear` with hooks.
+- **Several Grok Bots, one per purpose.** For example: Personal (email, vendor replies, calendar) and Business (marketing research).
+  - **Settings → Grok Bot** now holds a list of up to 8 bots. Each has a name, a one-line purpose, its own routine webhook and its own key (stored encrypted).
+  - Names, purposes and webhooks save when a field loses focus. Each key saves with its own button.
+  - Your single bot from earlier versions shows up as the first entry, keeping its URL and key.
+  - **The Conductor picks the bot.** A new tool, `list_grok_bots`, lists each bot's name and purpose. `handoff_to_grok_bot` takes `bot` (a name).
+  - The Conductor's prompt now says that code stays with the cards on the board, while errands and long web research go to the bot whose purpose fits.
+  - With only one bot, `bot` can be left out.
+  - **Every send still waits for you.** The Today tab names the bot in the row, the review panel and the Send button.
+  - **A handoff is never sent to a bot other than the one it named:** if that bot was removed or renamed since, the send is refused. A freed id can go to a new bot.
+- The tool description now allows the personal details a task needs, but still no passwords or keys.
+- **Orbit view on the desktop.** It is the phone's Orbit, drawn over the canvas.
+  - **What it shows:** the board as a turning globe. Each card is a dot in its state's colour, and the Conductor is the larger dot facing you. Handoff lines are solid, and dispatch links are dashed. A line glows while its target works on what it sent, and a card that needs you pulses.
+  - **How to open it:** the toolbar's globe button, or Ctrl+Shift+O. The canvas stays mounted underneath, so every terminal keeps running.
+  - **Controls:**
+    - drag to turn and the wheel to zoom;
+    - click a dot to select it in the Inspector;
+    - double-click a dot to go to it on the canvas;
+    - Esc or the Canvas button to go back.
+  - **Keyboard:** each dot can be focused. Enter selects it, and Shift+Enter goes to it.
+  - The globe turns slowly, about 30 frames a second, until you drag it or pick a card. It doesn't turn with reduced motion. Esc goes to an open dialog or text field first.
+- **Ouro can tell you it's ready when you get in the car.** Settings → Phone → *Make a MacroDroid key* makes a key that can do one thing: `POST /m/api/notify {"event":"car"}`. Any other phone route with that key answers 403. The panel shows the URL, the `Authorization: Bearer` header to copy, and the MacroDroid steps:
+  - trigger: Bluetooth connected to the car;
+  - action: HTTP POST over Tailscale.
+- **About 75 s after the call, Ouro DMs:** "🚗 Ouro is ready. Reply to this message to give me work." plus the usual status line. The wait gives Discord's mobile push time to work when the desktop client was active a moment ago.
+- **Repeat calls:**
+  - Another call while that message is waiting, or within 10 minutes of it, does nothing.
+  - If the bot isn't connected when the time comes, nothing is said, and the next call may try again.
+- The key is shown once and stored only as a hash. Making a new one ends the old one, and the device list labels it a car-alert key, with Revoke.
+
+### Changed
+- **Phone Graph and Orbit: teams in colour, status as a ring.**
+  - Each card's dot takes its team's colour. The team is the title before " · ", so "개발팀 · 구현" and "개발팀 · 헌트" match. There are eight colours, then grey, and the Conductor is white.
+  - A coloured line shows which team sent it. A handoff fired in the last minute stays white. Tapping a card turns its lines white; in Orbit the other lines dim again.
+  - A key under the map names the teams.
+  - Status moved from the dot's colour to a ring around it: a turning amber ring for Working, orange for Needs you, green for Done.
+  - The stand-in lines from the Conductor on a board with no real links no longer light up while the Conductor works.
+  - Graph now fits the width and the height on their own, up to 6:1. A tall, narrow canvas spreads across the phone instead of standing in a thin column with overlapping names.
+  - Names are a little larger and bolder.
+
+### Fixed
+- `/clear` in a card no longer marks it Ended. Claude Code sends SessionEnd with reason `clear`, and the card now stays Idle ("cleared").
+- **A second Ouroboros started with `--user-data-dir` (a test or dev launch) no longer rewrites the global external-session hook in `~/.claude/settings.json`,** even when it gets the fixed port.
+  - Before, it put its own token there, and the owner's app lost its external sessions until it restarted.
+  - It also took the fixed port while the owner's app restarted, which pushed the owner's app onto a random port.
+- **Grok cards start again, as worker or Conductor.**
+  - **What was wrong:** Grok Build 1.0.70 has no `--plugin-dir`. The card's CLI quit on the launch line, and the role prompt was then typed into PowerShell.
+  - **New launch:** `grok --agent <file>`. The per-card agent file carries:
+    - the lifecycle hooks;
+    - the board MCP server (mail-only for workers);
+    - the role, as the file's body, which Grok adds to its own coding prompt.
+
+    The role is no longer typed as a first message on Windows.
+  - `GROK_CONFIG_PATH` can't carry hooks or MCP servers: Grok's overlay keeps only soft settings. Agent files can.
+  - **Your Claude Code setup stays out of Grok cards:** the card turns off Grok's Claude-compatible hooks and MCP servers (`GROK_CLAUDE_HOOKS_ENABLED=0`, `GROK_CLAUDE_MCPS_ENABLED=0`). Otherwise a Grok card's events also hit the global external-session hook, and your Claude MCP servers load beside the board's. Claude Code plugins still load in Grok.
+  - **Grok hook events reach the board.** Grok sends its event name in snake_case (`user_prompt_submit`) next to the Claude-style one, and the hook helper now reads both. Before, every Grok hook was dropped.
+- **A CLI that quits at launch is no longer taken for a running card (any engine).**
+  - Each card's output is read after its own launch line.
+  - It counts as an exit when there is an `error:` line, then the shell's prompt again or a usage text, or when the output goes quiet for 6 s on the shell's prompt (any prompt style, read from the line in front of the launch command).
+  - The card shows "failed: … exited at launch" and takes no prompts.
+  - A wrong reading clears itself at the card's first hook event.
+- **A Grok card asking "trust this folder?" now needs you.** It used to sit on "starting · launching grok". Grok asks this in a folder it hasn't seen. The card now shows "permission: Grok asks whether to trust this folder"; answer in the card and its SessionStart hook makes it idle. Live-probed: needs-you while asked, idle after the answer.
+- A test or dev launch with `--user-data-dir` leaves the global external-session hook in `~/.claude/settings.json` alone. This is the same commit as on `claude/context-relay`.
+
+### Security
+- Bots and keys can be written only through the Grok Bot settings calls. `settings.set` ignores them, so a stale Settings copy can't drop a key. `settings.get` leaves them out, so not even an encrypted key reaches the window.
+
+### Verified (phone colours)
+- Local preview with the real page assets and CSP. The fake board was 13 cards in a tall, narrow stack with the Conductor at the bottom, like the owner's board. Shown at 375×812 in Graph and Orbit.
+- No console errors.
+- Typecheck and the phone tests pass.
+
+### Verified (fresh start)
+- **Live probe in the built app**, with a temp data folder and a real Claude card on Haiku:
+  1. The card read about 250k tokens of files and went idle.
+  2. Five minutes later the relay asked for the note and got 2,435 characters back, in 12 s.
+  3. `/clear` was confirmed by SessionEnd(reason `clear`).
+  4. The note went in as the first prompt of a new session, with a new session id.
+  5. The card carried on from it and still knew a codename it had only been told before the clear.
+- **What the hooks actually do:** the note prompt arrives through the inbox, and its UserPromptSubmit carries the prompt text, which arms the capture. Claude Code 2.1.310 sends no SessionStart after `/clear`, only SessionEnd.
+- Unit tests cover: the rules; the runner (note, short note, cut turn, busy after the note, `/clear` not confirmed, no note in time, the Conductor ask with yes/no/expired); and the board capture (arming, a cut by another prompt, a late note swallowed, the clear seen through either hook). Typecheck, build and all tests pass.
+
+### Verified (Grok)
+- **Live probe in the built app:** a Grok Conductor card on Grok 4.7 through SuperGrok, with a temp data folder. All of these went through:
+  - SessionStart came from the card's hooks;
+  - owner mail, then `check_inbox`, then a board tool (`SPIKE-M1 cards=1`) and an ack;
+  - `task_create` reached the ledger;
+  - it answered "ROLE: Conductor";
+  - the board saw working → idle;
+  - the Stop hook brought the reply in.
+- **Live probe in the built app:** a Grok worker card, same setup. All of these went through:
+  - it started from its hooks and went idle;
+  - owner mail was read and acked;
+  - its ouroboros tools were the mail set only (`send_message`, `check_inbox`, `ack`, `ask_owner`), with no board tools;
+  - a message to a non-agent card was refused;
+  - the board saw working → done, and the Stop hook brought the reply in.
+- `~/.claude/settings.json` was unchanged by either probe (checked by hash).
+- **By hand, with the real CLI:** agent-file hooks fire, and `mcpServers` must be a list with names (a map is refused). The env reaches the server, and hook commands can reach 127.0.0.1.
+- Unit tests cover the agent file, the launch line, snake_case hook names, and launch-exit detection (a profile `error:`, a repainted prompt, a TUI error, a wrapped launch line, an oh-my-posh prompt).
+
+### Verified (Grok Bots)
+- **Built-app probe**, with a temp data folder seeded with an older single-bot URL, checked:
+  - that bot read as the first entry;
+  - two named bots saved, with the key encrypted on disk and the older fields removed;
+  - the Settings list never carried a key;
+  - `settings.set` could not overwrite the list;
+  - the Settings page showed both bots.
+- **Same probe, merged with `claude/grok-launcher`** (Grok cards don't start on main without it): a Grok Conductor got "find 10 badminton clubs for CSB marketing outreach". It read `list_grok_bots` and handed the task to **CSB**, not Personal. The handoff was discarded, so nothing went to Cursor.
+- Unit tests cover the list, the migration, picking a bot and the removed-or-renamed refusal.
+
+### Verified (Orbit)
+- **Built-app probe** with seven terminal cards (no AI sessions). It checked that:
+  - every card was a dot, and the three dispatch links plus one handoff line were drawn;
+  - the canvas stayed mounted;
+  - the globe turned on its own, then held still after a drag;
+  - a click selected a card, and the wheel zoomed;
+  - Esc closed the view, and Ctrl+Shift+O opened it again;
+  - double-click went to the card on the canvas.
+- Unit tests cover the sphere, the layout with the Conductor in front, links (deduplicated, with the Conductor as the hub when there are none), projection and zoom.
+
+### Verified (car key)
+- Unit tests:
+  - the notify-only route: 200 on car, 400 on a bad event, 403 elsewhere;
+  - an unknown scope in the devices file is dropped;
+  - the delay, the 10-minute gap, and a read-back still waiting when the car message goes out.
+- Built-app probe (temp userData, the phone server on the Tailscale address):
+  - the key panel shows the URL and steps;
+  - the key is listed as a car-alert key;
+  - a call from the PC itself is refused.
+
+### Not verified (fresh start)
+- A Conductor's "ask me" question answered from the phone, Discord or Today in the real app. The intercept is unit-tested only.
+- A real Autonomous run's report section.
+- A card on a 200k model.
+
+### Not verified (Grok)
+- The worker topology rule (parent, Conductor, handoff line) live: the probe's refusal came from the target not being an agent card. Unit tests cover the rule.
+- `--always-approve` cards, and Autonomous mode, which still closes Grok cards at run start.
+- How long a role an agent file accepts. The Conductor's 13 KB file loaded.
+
+### Not verified (Grok Bots)
+- The Today tab's bot name in the built app. The probe looked while the tab was closed; the handoff did carry the name.
+- A real send to two different routines. The probe saved fake webhooks and discarded the handoff instead of sending it.
+- Apps you connect in Grok (Gmail, Calendar) are shared by every bot on that Grok account, which is how Grok works. To keep personal and business apps apart, use separate Grok accounts.
+
+### Not verified (Orbit)
+- How the Conductor dot looks with a live Conductor card. The probe used terminal cards only.
+- Speed on a board of 40 or more cards.
+
+### Not verified (car key)
+- **The real phone → PC call** from MacroDroid over Tailscale, and the DM reaching Android Auto.
+- **The 75 s timing.** It is matched to a Discord *mobile push delay* of 1 minute.
+
 ## [0.15.1] — 2026-10-27
 
 ### Changed

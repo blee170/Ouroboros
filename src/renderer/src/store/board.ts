@@ -67,6 +67,8 @@ interface BoardState {
   selectedNodeId: string | null
   selectedEdgeId: string | null
   rosterOpen: boolean
+  /** the board drawn as a turning globe over the canvas (the canvas, and its terminals, stay underneath) */
+  orbitOpen: boolean
   inspectorOpen: boolean
   viewport?: Viewport
   /** When each card last entered "working" (ms). Runtime only (never synced or saved); drives the line glow. */
@@ -143,6 +145,7 @@ interface BoardState {
   restartNode(id: string): Promise<void>
   select(nodeId: string | null, edgeId: string | null): void
   toggleRoster(): void
+  setOrbitOpen(open: boolean): void
   toggleInspector(): void
   setViewport(v: Viewport): void
   setSettings(patch: Partial<AppSettings>): Promise<void>
@@ -181,6 +184,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   selectedNodeId: null,
   selectedEdgeId: null,
   rosterOpen: true,
+  orbitOpen: false,
   inspectorOpen: true,
   viewport: undefined,
   workingSince: {},
@@ -431,6 +435,9 @@ export const useBoard = create<BoardState>((set, get) => ({
     })
     // selecting a card while the window has focus is looking at it
     if (nodeId && document.hasFocus()) get().markViewed(nodeId)
+  },
+  setOrbitOpen(open) {
+    set({ orbitOpen: open })
   },
   toggleRoster() {
     set({ rosterOpen: !get().rosterOpen })

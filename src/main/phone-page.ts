@@ -122,38 +122,44 @@ main { padding: 14px 16px calc(100px + var(--safe-b)); max-width: 680px; margin:
 .map .hint { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: var(--faint); font-size: 12px; pointer-events: none; }
 .map .tools { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .map .tools button { width: 36px; height: 36px; border-radius: 12px; color: var(--muted); font-size: 18px; font-weight: 600; }
-.ln { stroke: rgba(255,255,255,.16); stroke-width: 1.4; fill: none; }
-.ln.hub { stroke: rgba(255,255,255,.07); stroke-dasharray: 2 5; }
+.ln { stroke: rgba(255,255,255,.16); stroke-opacity: .5; stroke-width: 1.4; fill: none; }
+.ln.hub { stroke: rgba(255,255,255,.07); stroke-opacity: 1; stroke-dasharray: 2 5; }
 .ln.dispatch { stroke-dasharray: 5 5; }
-.ln.live { stroke: rgba(255,255,255,.55); stroke-width: 1.8; stroke-dasharray: 3 9; animation: flow .9s linear infinite; filter: drop-shadow(0 0 3px rgba(255,255,255,.55)); }
+.ln.live { stroke: rgba(255,255,255,.55); stroke-opacity: .95; stroke-width: 1.8; stroke-dasharray: 3 9; animation: flow .9s linear infinite; filter: drop-shadow(0 0 3px rgba(255,255,255,.55)); }
 .ln.fired { stroke: #fff; stroke-width: 2.4; stroke-dasharray: none; animation: fire 1.4s ease-out infinite; filter: drop-shadow(0 0 6px rgba(255,255,255,.8)); }
 @keyframes flow { to { stroke-dashoffset: -24; } }
 @keyframes fire { 0% { stroke-opacity: 1; } 70%,100% { stroke-opacity: .35; } }
 /* cards are dots: grey when idle, status colour when they matter, a lit sphere once zoomed in */
 .od { cursor: pointer; }
 .od .hit { fill: transparent; }
-.od .glow { fill: #fff; opacity: .1; }
+.od .glow { fill: #fff; opacity: .14; }
 .od .dot { fill: #d4d4d4; }
+.od .ring { fill: none; stroke: transparent; stroke-width: 1.6; }
+.od.working .ring { stroke: var(--working); stroke-dasharray: 3 2.4; animation: spin 2.4s linear infinite; transform-box: fill-box; transform-origin: center; }
+.od.needs-you .ring { stroke: var(--needs); stroke-width: 2.2; }
+.od.done .ring { stroke: var(--ok); }
+.od.ended .dot, .od.ended .glow { opacity: .3; }
 .od .shine { fill: #fff; opacity: 0; pointer-events: none; }
 .od.lead .dot { fill: #fff; } .od.lead .glow { opacity: .22; }
-.od.working .dot { fill: var(--working); } .od.needs-you .dot { fill: var(--needs); } .od.done .dot { fill: var(--ok); } .od.ended .dot { fill: #525252; }
-.od.working .glow { fill: var(--working); opacity: .3; animation: breathe 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-.od.needs-you .glow { fill: var(--needs); opacity: .4; animation: ping 1.8s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.od.working .glow { opacity: .32; animation: breathe 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.od.needs-you .glow { fill: var(--needs) !important; opacity: .4; animation: ping 1.8s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .od.sel .dot { stroke: #fff; stroke-width: 1.6; }
 .od.sel .glow { opacity: .35; }
 @keyframes breathe { 0%,100% { transform: scale(.85); } 50% { transform: scale(1.25); } }
 @keyframes ping { 0% { transform: scale(.8); opacity: .6; } 100% { transform: scale(1.9); opacity: 0; } }
 .od .tag.under { text-anchor: middle; }
-.od .tag { font-size: 9.5px; fill: #e5e5e5; font-weight: 500; paint-order: stroke; stroke: rgba(10,10,10,.85); stroke-width: 2.5px; transition: opacity .25s; pointer-events: none; }
+.od .tag { font-size: 10px; fill: #fafafa; font-weight: 600; paint-order: stroke; stroke: rgba(10,10,10,.9); stroke-width: 3px; transition: opacity .25s; pointer-events: none; }
 .dust { fill: #fff; pointer-events: none; }
 .spark { fill: #fff; pointer-events: none; filter: drop-shadow(0 0 3px rgba(255,255,255,.9)); }
 .ln, .ln.hl, .ln.dim { pointer-events: none; transition: stroke-opacity .25s; }
-.map svg .ln.hl { stroke: #fff; stroke-opacity: 1; stroke-width: 1.8; filter: drop-shadow(0 0 4px rgba(255,255,255,.75)); }
+.map svg .ln.hl { stroke: #fff !important; stroke-opacity: 1; stroke-width: 1.8; filter: drop-shadow(0 0 4px rgba(255,255,255,.75)); }
 .ln.dim { stroke-opacity: .2; }
 /* Orbit: a round globe with a header and a status bar */
 .map.orbit { height: auto; aspect-ratio: 1 / 1.12; max-height: 72vh; background: radial-gradient(circle at 50% 46%, rgba(255,255,255,.06), transparent 62%), var(--glass); }
-.map.orbit .ln { stroke: rgba(255,255,255,.2); stroke-width: 1; }
-.map.orbit .ln.live { stroke: rgba(255,255,255,.5); stroke-width: 1.3; }
+.map.orbit .ln { stroke: rgba(255,255,255,.2); stroke-opacity: .45; stroke-width: 1; }
+.map.orbit .ln.live { stroke: rgba(255,255,255,.5); stroke-opacity: .95; stroke-width: 1.3; }
+.map.orbit .ln.dim { stroke-opacity: .2; }
 .map.orbit .hint { bottom: 54px; }
 .map .hint { animation: hintout .8s 5s forwards; }
 @keyframes hintout { to { opacity: 0; } }
@@ -177,6 +183,8 @@ main { padding: 14px 16px calc(100px + var(--safe-b)); max-width: 680px; margin:
 .legend i { width: 8px; height: 8px; border-radius: 50%; background: #d4d4d4; display: inline-block; }
 .legend i.working { background: var(--working); } .legend i.needs { background: var(--needs); } .legend i.done { background: var(--ok); }
 .legend i.line { width: 18px; height: 2px; border-radius: 2px; background: rgba(255,255,255,.6); }
+.legend i.ring, .map .foot i.ring { background: transparent; border: 1.6px solid #d4d4d4; width: 9px; height: 9px; }
+.legend i.ring.working, .map .foot i.ring.working { border-color: var(--working); border-style: dashed; } .legend i.ring.needs-you, .map .foot i.ring.needs-you { border-color: var(--needs); } .legend i.ring.done { border-color: var(--ok); }
 
 .item { border-radius: var(--r); padding: 16px; margin-bottom: 12px; }
 .kind { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
@@ -423,15 +431,27 @@ function drawBoard(v, b) {
     return
   }
   v.appendChild(mapView(b))
-  // the globe carries its own key in its status bar
-  if (state.view === 'orbit') return
   var legend = el('div', 'legend')
-  ;[['working', 'Working'], ['needs', 'Needs you'], ['', 'Idle'], ['line', 'Active line']].forEach(function (l) {
-    var s = el('span')
-    s.appendChild(el('i', l[0]))
-    s.appendChild(document.createTextNode(l[1]))
+  var colors = teamColors(b.cards)
+  var present = {}
+  b.cards.forEach(function (c) { present[teamOf(c)] = true })
+  Object.keys(colors).forEach(function (t) {
+    if (!present[t]) return
+    var s = el('span'), i = el('i')
+    i.style.background = colors[t]
+    s.appendChild(i)
+    s.appendChild(document.createTextNode(t))
     legend.appendChild(s)
   })
+  // the globe shows the status rings in its own status bar
+  if (state.view === 'graph') {
+    ;[['ring working', 'Working'], ['ring needs-you', 'Needs you'], ['ring done', 'Done'], ['line', 'Active line']].forEach(function (l) {
+      var s = el('span')
+      s.appendChild(el('i', l[0]))
+      s.appendChild(document.createTextNode(l[1]))
+      legend.appendChild(s)
+    })
+  }
   v.appendChild(legend)
 }
 
@@ -496,19 +516,38 @@ function layout(b, mode) {
   return pos
 }
 /* a card is a dot: from afar a point of light, zoomed in a small lit sphere with its name */
-function dotNode(c, flat) {
+/* a card's team: its title before " · " ("개발팀 · 구현" → "개발팀"); the Conductor stands apart */
+var TEAM_COLORS = ['#60a5fa', '#a78bfa', '#22d3ee', '#f472b6', '#818cf8', '#fb7185', '#38bdf8', '#e879f9']
+function teamOf(c) {
+  if (c.conductor) return 'Conductor'
+  var name = split(c.title).name, i = name.indexOf(' · ')
+  return (i > 0 ? name.slice(0, i) : name).trim() || name
+}
+/* one colour per team, in name order so a team keeps its colour while cards come and go; past eight, grey */
+function teamColors(cards) {
+  var names = []
+  cards.forEach(function (c) { var t = teamOf(c); if (t !== 'Conductor' && names.indexOf(t) < 0) names.push(t) })
+  names.sort()
+  var out = { Conductor: '#f5f5f5' }
+  names.forEach(function (t, i) { out[t] = TEAM_COLORS[i] || '#a3a3a3' })
+  return out
+}
+function dotNode(c, flat, color) {
   var g = sv('g', 'od ' + c.status + (c.conductor ? ' lead' : ''))
   var r = c.conductor ? 5.5 : 3.8
   var hit = sv('circle', 'hit'); hit.setAttribute('r', '16')
   var glow = sv('circle', 'glow'); glow.setAttribute('r', String(r * 2.1))
+  var ring = sv('circle', 'ring'); ring.setAttribute('r', String(r + 2.6))
   var dot = sv('circle', 'dot'); dot.setAttribute('r', String(r))
+  dot.style.fill = color
+  glow.style.fill = color
   var shine = sv('circle', 'shine'); shine.setAttribute('r', String(r * .42)); shine.setAttribute('cx', String(-r * .34)); shine.setAttribute('cy', String(-r * .34))
   // the flat Graph puts a short name under the dot so neighbours don't collide; the globe puts it beside
   var lbl = sv('text', flat ? 'tag under' : 'tag')
   if (flat) lbl.setAttribute('y', String(r + 12)); else { lbl.setAttribute('x', String(r + 4)); lbl.setAttribute('y', '3.5') }
   var name = split(c.title).name, max = flat ? 11 : 18
   lbl.textContent = name.length > max ? name.slice(0, max - 1) + '…' : name
-  ;[hit, glow, dot, shine, lbl].forEach(function (x) { g.appendChild(x) })
+  ;[hit, glow, ring, dot, shine, lbl].forEach(function (x) { g.appendChild(x) })
   return { g: g, lbl: lbl, shine: shine }
 }
 function mapView(b) {
@@ -540,13 +579,16 @@ function mapView(b) {
     spin: keep ? keep.spin : true, raf: 0, painted: false, ptrs: {}, moved: 0 }
   b.cards.forEach(function (c) { map.cards[c.id] = c })
   if (orbit) DUST.forEach(function (p) { var d = sv('circle', 'dust'); d.setAttribute('r', '1'); dustG.appendChild(d); map.dust.push({ el: d, p: p }) })
+  var colors = teamColors(b.cards)
   var now = Date.now()
   var links = linksOf(b).filter(function (l) { return map.cards[l.from] && map.cards[l.to] })
   links.forEach(function (l) {
     var a = map.cards[l.from], z = map.cards[l.to]
     var fired = l.firedAt && now - l.firedAt < 60000
-    var live = a.status === 'working' || z.status === 'working'
+    // the stand-in lines from the Conductor (a board with no real links) never light up: they carry no work
+    var live = l.kind !== 'hub' && (a.status === 'working' || z.status === 'working')
     var line = sv('line', 'ln ' + l.kind + (fired ? ' fired' : live ? ' live' : ''))
+    if (!fired && l.kind !== 'hub') line.style.stroke = colors[teamOf(a)]
     linesG.appendChild(line)
     // a light runs along a working or just-fired line, from the sender to the receiver
     var spark = null
@@ -554,7 +596,7 @@ function mapView(b) {
     map.lines.push({ el: line, from: l.from, to: l.to, spark: spark, speed: fired ? 900 : 1600, phase: Math.random() })
   })
   b.cards.forEach(function (c) {
-    var n = dotNode(c, !orbit)
+    var n = dotNode(c, !orbit, colors[teamOf(c)])
     n.g.setAttribute('data-id', c.id)
     nodesG.appendChild(n.g)
     map.nodes[c.id] = n
@@ -575,7 +617,7 @@ function mapView(b) {
     count.appendChild(document.createTextNode(links.length === 1 ? ' link' : ' links'))
     foot.appendChild(count)
     var keys = el('span', 'keys')
-    ;[['working', 'Working'], ['needs-you', 'Needs you'], ['', 'Idle']].forEach(function (k) { var s = el('span'); s.appendChild(el('i', k[0])); s.appendChild(document.createTextNode(k[1])); keys.appendChild(s) })
+    ;[['working', 'Working'], ['needs-you', 'Needs you']].forEach(function (k) { var s = el('span'); s.appendChild(el('i', 'ring ' + k[0])); s.appendChild(document.createTextNode(k[1])); keys.appendChild(s) })
     foot.appendChild(keys)
     box.appendChild(foot)
     map.tip = el('div', 'tip')
@@ -638,9 +680,17 @@ function project(p) {
   }
   var w = m.svg.clientWidth || 340, h = m.svg.clientHeight || 400
   // Graph: one scale that fits the canvas with room for the labels, the right edge clear of the zoom buttons; Orbit: a round globe above the footer
-  var scale = (orbit ? Math.min(w / 2 - 26, h / 2 - 50) : Math.min((w / 2 - 64) / m.fit.hx, (h / 2 - 56) / m.fit.hy)) * m.zoom
+  var sx, sy
+  if (orbit) sx = sy = Math.min(w / 2 - 26, h / 2 - 50) * m.zoom
+  else {
+    // each axis fills the box on its own (a tall narrow canvas still spreads across the phone), within 6:1
+    sx = (w / 2 - 64) / m.fit.hx
+    sy = (h / 2 - 56) / m.fit.hy
+    sx = Math.min(sx, sy * 6) * m.zoom
+    sy = Math.min(sy, sx * 6 / m.zoom) * m.zoom
+  }
   var persp = orbit ? 3.2 / (3.2 + z) : 1
-  return { x: w / 2 + m.panX + x * scale * persp, y: h / 2 - (orbit ? 12 : 0) + m.panY + y * scale * persp, s: persp, z: z }
+  return { x: w / 2 + m.panX + x * sx * persp, y: h / 2 - (orbit ? 12 : 0) + m.panY + y * sy * persp, s: persp, z: z }
 }
 function paint() {
   if (!map || !map.svg.isConnected) return

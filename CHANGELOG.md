@@ -4,6 +4,23 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Changed
+- **Phone Graph and Orbit: teams in colour, status as a ring.**
+  - Each card's dot takes its team's colour. The team is the title before " · ", so "개발팀 · 구현" and "개발팀 · 헌트" match. There are eight colours, then grey, and the Conductor is white.
+  - A coloured line shows which team sent it. A handoff fired in the last minute stays white. Tapping a card turns its lines white; in Orbit the other lines dim again.
+  - A key under the map names the teams.
+  - Status moved from the dot's colour to a ring around it: a turning amber ring for Working, orange for Needs you, green for Done.
+  - The stand-in lines from the Conductor on a board with no real links no longer light up while the Conductor works.
+  - Graph now fits the width and the height on their own, up to 6:1. A tall, narrow canvas spreads across the phone instead of standing in a thin column with overlapping names.
+  - Names are a little larger and bolder.
+
+### Verified (phone colours)
+- Local preview with the real page assets and CSP. The fake board was 13 cards in a tall, narrow stack with the Conductor at the bottom, like the owner's board. Shown at 375×812 in Graph and Orbit.
+- No console errors.
+- Typecheck and the phone tests pass.
+
 ## [0.15.1] — 2026-10-27
 
 ### Changed

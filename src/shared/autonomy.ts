@@ -154,6 +154,20 @@ const withOptionsBefore = (p: string): string[] => {
   return m ? [p, `${m[1]} * ${m[2]}`] : [p]
 }
 
+/**
+ * The app's own settings (a program path there is run by the app, a switch there lets Grok Bot send without asking) and
+ * data, on Windows and macOS. Denied to every Claude card, in a run or not. Edit rules only: a shell command that writes
+ * the file is not caught (outside a run the owner still sees Claude Code's prompt for it).
+ */
+export const DATA_DIR_DENY_RULES = ['Edit(~/AppData/Roaming/Ouroboros/**)', 'Edit(~/Library/Application Support/Ouroboros/**)']
+
+/** A Claude card's extra `--settings`: the run's fragment when one is on, and the data-folder rules always. */
+export function cardSettingsExtra(runFragment?: Record<string, unknown>): Record<string, unknown> {
+  const run = (runFragment ?? {}) as { permissions?: { deny?: string[] } }
+  const deny = [...new Set([...(run.permissions?.deny ?? []), ...DATA_DIR_DENY_RULES])]
+  return { ...run, permissions: { ...run.permissions, deny } }
+}
+
 export const WORKER_DENY_RULES: string[] = [
   // Claude Code's PowerShell tool has its own rule namespace (the CLI itself writes every rule twice); a run must hold in both
   ...SHELL_DENY_PREFIXES.flatMap(withOptionsBefore).flatMap((p) => [`Bash(${p}*)`, `PowerShell(${p}*)`]),
@@ -167,9 +181,7 @@ export const WORKER_DENY_RULES: string[] = [
   // "except" (a `~/.claude/*` would match the projects folder as a whole; `[!x]` classes did not work on 2.1.310), so this is
   // a list: a folder nobody listed is not covered.
   'Edit(**/.ouroboros.json)',
-  // the app's own settings (a program path there is run by the app) and data, on Windows and macOS
-  'Edit(~/AppData/Roaming/Ouroboros/**)',
-  'Edit(~/Library/Application Support/Ouroboros/**)',
+  ...DATA_DIR_DENY_RULES,
   'Edit(**/.claude/settings.json)',
   'Edit(**/.claude/settings.local.json)',
   ...['*.json', '*.md', '*.sh', '*.ps1', '*.cmd', '*.bat', '*.js', '*.cjs', '*.mjs', '*.ts', '*.py', 'statusline*', '.claude.json', '.credentials.json'].map((f) => `Edit(~/.claude/${f})`),

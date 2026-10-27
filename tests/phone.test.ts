@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { FailureLimiter, bindRefusal, cleanDeviceName, isPrivateLan, isTailscale, pairingUrl, sourceAllowed } from '../src/shared/phone'
-import { PhoneDevices, PhoneServer, type PhoneHandlers } from '../src/main/phone-server'
+import { PhoneDevices, PhoneServer, authRefusal, type PhoneHandlers } from '../src/main/phone-server'
+import net from 'node:net'
 
 describe('network rules', () => {
   it('knows Tailscale and home-network addresses', () => {
@@ -193,5 +194,53 @@ describe('the phone server', () => {
     expect(s.url).toBeUndefined()
     expect(await s.apply({ enabled: true, host: '0.0.0.0', port: 0, allowLan: true })).toMatch(/every interface/)
     expect(s.newPairing()).toHaveProperty('error')
+  })
+})
+
+describe('refused requests are logged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ouro-phone-log-'))
+  const lines: string[] = []
+  const handlers = { notify: () => ({ ok: true, queued: true }), note: () => {} } as unknown as PhoneHandlers
+  const devices = new PhoneDevices(join(dir, 'devices.json'))
+  const server = new PhoneServer(devices, handlers, (l) => lines.push(l), { sourceAllowed: () => true, bindRefusal: () => undefined, isLocal: () => false })
+  let port = 0
+  const send = (raw: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const s = net.connect(port, '127.0.0.1', () => s.end(raw))
+      let out = ''
+      s.on('data', (c) => (out += c))
+      s.on('close', () => resolve(out))
+      s.on('error', reject)
+    })
+  const post = (headers: string, body = '{"event":"car"}'): Promise<string> =>
+    send(`POST /m/api/notify HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\n${headers}Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`)
+  beforeAll(async () => {
+    expect(await server.apply({ enabled: true, host: '127.0.0.1', port: 0, allowLan: false })).toBeUndefined()
+    port = Number(new URL(server.url!).port)
+  })
+  afterAll(() => {
+    server.stop()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('says why a key was refused, without the key', () => {
+    expect(authRefusal(undefined)).toMatch(/no Authorization header/)
+    expect(authRefusal('secret-without-bearer')).toMatch(/does not start with "Bearer "/)
+    expect(authRefusal('secret-without-bearer')).not.toContain('secret')
+    expect(authRefusal('Bearer abc123')).toBe('unknown or revoked key')
+  })
+
+  it('logs a missing header, an unknown key, a bad body and a header name with a space', async () => {
+    const { token } = devices.add('MacroDroid', Date.now(), 'notify')
+    expect(await post('')).toMatch(/^HTTP\/1.1 401/)
+    expect(await post('Authorization: Bearer nope-not-a-key\r\n')).toMatch(/^HTTP\/1.1 401/)
+    expect(await post(`Authorization: Bearer ${token}\r\n`, '{"event":"boat"}')).toMatch(/^HTTP\/1.1 400/)
+    expect(await post(`Header Authorization: Bearer ${token}\r\n`)).toMatch(/^HTTP\/1.1 400/)
+    expect(lines.some((l) => /refused POST \/m\/api\/notify .*401 no Authorization header/.test(l))).toBe(true)
+    expect(lines.some((l) => /401 unknown or revoked key/.test(l))).toBe(true)
+    expect(lines.some((l) => /400 the body has no known event .*key MacroDroid/.test(l))).toBe(true)
+    expect(lines.some((l) => /refused a malformed request from .*HPE_INVALID_HEADER_TOKEN/.test(l))).toBe(true)
+    expect(lines.join('\n')).not.toContain(token)
+    expect(lines.join('\n')).not.toContain('nope-not-a-key')
   })
 })

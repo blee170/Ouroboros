@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IDLE_END_MINUTES, START_GRACE_MINUTES, WORKER_DENY_RULES, autonomyDispatchRefusal, autonomyRetryRefusal, autonomySettingsFragment, endsEarly, isUsageLimit, newRunState, relaunchAction, reportMarkdown, stallActions, staleStarting } from '@shared/autonomy'
+import { DATA_DIR_DENY_RULES, IDLE_END_MINUTES, cardSettingsExtra, START_GRACE_MINUTES, WORKER_DENY_RULES, autonomyDispatchRefusal, autonomyRetryRefusal, autonomySettingsFragment, endsEarly, isUsageLimit, newRunState, relaunchAction, reportMarkdown, stallActions, staleStarting } from '@shared/autonomy'
 import type { AgentSnapshot } from '@shared/types'
 
 const now = 10_000_000
@@ -189,5 +189,18 @@ describe('reportMarkdown', () => {
     expect(md).not.toContain('turn 49\n')
     expect(md).toContain('turn 50')
     expect(md).toContain('turn 349')
+  })
+})
+
+describe('card settings extra', () => {
+  it('denies the app data folder to every Claude card, in a run or not', () => {
+    const off = cardSettingsExtra(undefined) as { permissions: { deny: string[] } }
+    expect(off.permissions.deny).toEqual(DATA_DIR_DENY_RULES)
+    const run = autonomySettingsFragment('node gate.js')
+    const on = cardSettingsExtra(run) as typeof run
+    expect(on.hooks).toEqual(run.hooks)
+    expect(on.permissions.deny).toEqual(run.permissions.deny)
+    expect(new Set(on.permissions.deny).size).toBe(on.permissions.deny.length)
+    for (const r of DATA_DIR_DENY_RULES) expect(WORKER_DENY_RULES).toContain(r)
   })
 })

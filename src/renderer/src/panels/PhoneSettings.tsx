@@ -150,17 +150,25 @@ export function PhoneSettings() {
               </button>
             </li>
             <li>
-              Header <code>Authorization</code> = <code>Bearer {notifyKey.key.slice(0, 6)}…</code>{' '}
+              Add a header. Name: <code>Authorization</code>{' '}
+              <button className="btn small" onClick={() => void navigator.clipboard.writeText('Authorization')}>
+                Copy
+              </button>{' '}
+              (just this word, not "Header Authorization")
+            </li>
+            <li>
+              Value: <code>Bearer {notifyKey.key.slice(0, 6)}…</code>{' '}
               <button className="btn small" onClick={() => void navigator.clipboard.writeText(`Bearer ${notifyKey.key}`)}>
                 Copy
-              </button>
+              </button>{' '}
+              (starts with "Bearer" and a space)
             </li>
             <li>
               Body (content type <code>application/json</code>): <code>{'{"event":"car"}'}</code>
             </li>
           </ol>
           <div className="muted">
-            Ouro waits 75 seconds before it writes, so Discord's mobile notification delay (set it to 1 minute) has passed. Tailscale must be on on the phone. A car that reconnects within 10 minutes is not greeted again.
+            Ouro waits 75 seconds before it writes, so Discord's mobile notification delay (set it to 1 minute) has passed. Tailscale must be on on the phone. A car that reconnects within 10 minutes is not greeted again. If nothing arrives, the app log (main.log) says why each refused request was refused.
           </div>
         </div>
       )}

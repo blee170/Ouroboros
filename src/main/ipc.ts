@@ -89,7 +89,7 @@ import { openMode, resolveOpenPath } from './open-path'
 import { Autonomy, type AutonomyHost } from './autonomy'
 import { Relay } from './relay'
 import { relaySettings } from '@shared/relay'
-import { engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
+import { cardSettingsExtra, engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -2378,7 +2378,7 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))),
+        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl)))),
         autonomous: s.autonomy.on,
         wsl
       })

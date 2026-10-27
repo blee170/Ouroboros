@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.2] — 2026-10-28
 
 ### Security
 - **Claude cards can no longer edit the app's own data folder, in a run or not.** Before, the deny rule for `%APPDATA%\Ouroboros` (settings.json, keys, the Grok Bot "Send without asking me" switch) was written into cards only during an autonomous run. Now every Claude card gets it. It covers the file-editing tools only: a shell command that writes the file is not caught. Outside a run, Claude Code still asks the owner before running one.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { GROK_BOT_LIST, type GrokBotView } from '@shared/grokbot'
+import { GROK_BOT_LIMITS, GROK_BOT_LIST, type GrokBotView } from '@shared/grokbot'
 
 /**
  * Settings → Grok Bot: the owner's bots, one per purpose (a personal one for email and calendar, a business one for
@@ -24,7 +24,7 @@ export function GrokBotsSettings() {
   const reload = (): void => void window.ouroboros.grokBot.bots().then(setRows, () => undefined)
   const commit = async (next: GrokBotView[], done?: string): Promise<void> => {
     try {
-      const r = await window.ouroboros.grokBot.save(next.map(({ id, name, purpose, url }) => ({ id, name, purpose, url })))
+      const r = await window.ouroboros.grokBot.save(next.map(({ id, name, purpose, url, autoSend }) => ({ id, name, purpose, url, autoSend })))
       if (!r.ok) {
         setNote({ ok: false, text: `${r.error} (not saved; the saved list is shown again)` })
         return reload()
@@ -113,6 +113,19 @@ export function GrokBotsSettings() {
               </button>
             </div>
           </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={b.autoSend === true}
+              onChange={(e) => void commit(rows.map((x) => (x.id === b.id ? { ...x, autoSend: e.target.checked } : x)))}
+            />{' '}
+            Send without asking me
+          </label>
+          {b.autoSend && (
+            <div className="hint">
+              A card's handoff to {b.name} leaves at once, and you get a notification for each one. Not sent without you: more than {GROK_BOT_LIMITS.autoPerDay} in 24 hours, or a task that looks like it holds a key, token or password. Leave this off for a bot that can send mail, pay or delete.
+            </div>
+          )}
         </div>
       ))}
       {rows.length < GROK_BOT_LIST.max && (

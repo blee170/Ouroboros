@@ -581,7 +581,7 @@ export interface OuroborosApi {
     /** The owner's bots for Settings: names, purposes, webhooks and whether a key is saved (never the key). */
     bots(): Promise<GrokBotView[]>
     /** Save the list as edited in Settings (no keys: each bot keeps its own by id); the saved list, or why not. */
-    save(bots: Array<{ id?: string; name: string; purpose?: string; url?: string }>): Promise<{ ok: true; bots: GrokBotView[] } | { ok: false; error: string }>
+    save(bots: Array<{ id?: string; name: string; purpose?: string; url?: string; autoSend?: boolean }>): Promise<{ ok: true; bots: GrokBotView[] } | { ok: false; error: string }>
     /** Store (encrypted) one bot's routine key; empty string clears it. */
     setKey(botId: string, key: string): Promise<{ ok: boolean; hasKey: boolean; error?: string }>
     /** POST a test body ({ source: "ouroboros", kind: "test" }) to one bot's webhook: whether a run started. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GROK_BOT_LIMITS, botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, scrubKey, type GrokBot, type GrokHandoff } from '@shared/grokbot'
+import { GROK_BOT_LIMITS, autoSendHold, secretLike, botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, scrubKey, type GrokBot, type GrokHandoff } from '@shared/grokbot'
 import { sendToGrokBot } from '../src/main/grokbot'
 import { needsYou } from '@shared/today'
 
@@ -181,5 +181,49 @@ describe('sendToGrokBot', () => {
   })
   it('scrubs Cursor keys and Bearer values', () => {
     expect(scrubKey('k=crsr_abc-1 Authorization: Bearer xyz other', 'other')).toBe('k=[key] Authorization: Bearer [key] [key]')
+  })
+})
+
+describe('sending without asking', () => {
+  const bot: GrokBot = { id: 'b1', name: 'Research', url: URL_OK, keyEnc: 'enc', autoSend: true }
+  it('goes only for a bot the owner allowed, that is set up, under its daily cap', () => {
+    expect(autoSendHold(bot, { task: 'find three vendors for shuttlecocks' }, 0)).toBeUndefined()
+    expect(autoSendHold({ ...bot, autoSend: undefined }, { task: 'x' }, 0)).toContain('waits for Send')
+    expect(autoSendHold({ ...bot, keyEnc: undefined }, { task: 'x' }, 0)).toContain('not set up')
+    expect(autoSendHold(bot, { task: 'x' }, GROK_BOT_LIMITS.autoPerDay)).toContain('24 hours')
+    expect(autoSendHold(undefined, { task: 'x' }, 0)).toBeDefined()
+  })
+  it('never sends a task or context that looks like it holds a secret', () => {
+    expect(autoSendHold(bot, { task: 'log in', context: 'password: hunter22' }, 0)).toContain('a password')
+    expect(autoSendHold(bot, { task: 'use ghp_' + 'a'.repeat(36) }, 0)).toContain('GitHub token')
+    expect(secretLike('비밀번호: 1234abcd')).toBe('a password')
+    expect(secretLike('key crsr_' + 'b'.repeat(20))).toBe('an API key')
+    expect(secretLike('Authorization: Bearer abcdefghijklmnop1234')).toBe('a bearer token')
+    expect(secretLike('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N')).toBe('a token (JWT)')
+    expect(secretLike('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe('a private key')
+    expect(secretLike('reply to the vendor about the password reset email they sent')).toBeUndefined()
+    expect(secretLike('book the sk-8 court for Tuesday')).toBeUndefined()
+  })
+  it('keeps the switch when the list is saved, and tells the cards which bots send without asking', () => {
+    const r = saveBots([bot], [{ id: 'b1', name: 'Research', url: URL_OK, autoSend: true }, { name: 'Personal', url: URL_OK, autoSend: 'yes' }])
+    expect(r.ok && r.bots.map((b) => b.autoSend)).toEqual([true, undefined])
+    expect(botMenu([bot, { ...bot, id: 'b2', name: 'Personal', autoSend: false }])).toMatch(/Research.*sends without asking[\s\S]*Personal(?!.*without asking)/)
+  })
+})
+
+describe('secretLike after the bug hunt', () => {
+  it('catches assignments, passwords in addresses and "password is"', () => {
+    expect(secretLike('api_key=AbCdEf123456')).toBe('an API key')
+    expect(secretLike('client_secret: "s3cr3tvalue99"')).toBe('an API key')
+    expect(secretLike('connect to postgres://admin:hunter22@db.example.com/app')).toBe('a password in an address')
+    expect(secretLike('the password is hunter22')).toBe('a password')
+    expect(secretLike('비밀번호는 abcd1234')).toBe('a password')
+  })
+  it('leaves ordinary words alone', () => {
+    expect(secretLike('pwd: /home/brian/project')).toBeUndefined()
+    expect(secretLike('the bearer certification-processing step')).toBeUndefined()
+    expect(secretLike('a password reset link is required')).toBeUndefined()
+    expect(secretLike('open https://example.com/docs and summarise it')).toBeUndefined()
+    expect(secretLike('count the tokens: 1200')).toBeUndefined()
   })
 })

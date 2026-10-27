@@ -1,12 +1,13 @@
 /**
  * Handing a task to Grok Bot (xAI + Cursor's cloud teammate) through one of its routines' webhook. A card asks
- * (`handoff_to_grok_bot`), the owner sends or discards each one: the text leaves this machine, so it is never sent
- * without them. Pure: main keeps the list and does the POST.
+ * (`handoff_to_grok_bot`), the owner sends or discards each one: the text leaves this machine, so it is not sent
+ * without them, unless the owner let that bot send without asking (then within a daily cap, and never a text that
+ * looks like it holds a key or password). Pure: main keeps the list and does the POST.
  */
 
 /** The only host a webhook may point at: the key goes in its Authorization header. */
 export const GROK_BOT_HOST = 'api2.cursor.sh'
-export const GROK_BOT_LIMITS = { task: 4000, context: 12000, pending: 10, pendingPerCard: 3 }
+export const GROK_BOT_LIMITS = { task: 4000, context: 12000, pending: 10, pendingPerCard: 3, autoPerDay: 20 }
 
 /**
  * Characters that can hide or reorder what the owner reads before Send: bidi controls, zero-width characters,
@@ -25,6 +26,8 @@ export interface GrokBot {
   url?: string
   /** its routine's key (crsr_…), encrypted; main fills and reads it, the Settings list never sends it */
   keyEnc?: string
+  /** the owner lets a card's handoff to this bot go without pressing Send */
+  autoSend?: boolean
 }
 export const GROK_BOT_LIST = { max: 8, name: 40, purpose: 200 }
 /** A bot as Settings shows it: no key, only whether one is saved. */
@@ -66,7 +69,7 @@ export function saveBots(prev: GrokBot[], input: unknown): { ok: true; bots: Gro
     if (urlRaw && !url) return { ok: false, error: `the webhook of "${name}" is not a routine webhook (https://${GROK_BOT_HOST}/automations/webhook/…)` }
     const old = typeof raw.id === 'string' ? prev.find((b) => b.id === raw.id) : undefined
     if (old && out.some((b) => b.id === old.id)) return { ok: false, error: `bot ${old.id} is listed twice` }
-    out.push({ id: old ? old.id : nextId(), name, ...(purpose ? { purpose } : {}), ...(url ? { url } : {}), ...(old?.keyEnc ? { keyEnc: old.keyEnc } : {}) })
+    out.push({ id: old ? old.id : nextId(), name, ...(purpose ? { purpose } : {}), ...(url ? { url } : {}), ...(old?.keyEnc ? { keyEnc: old.keyEnc } : {}), ...(raw.autoSend === true ? { autoSend: true } : {}) })
   }
   return { ok: true, bots: out }
 }
@@ -100,7 +103,7 @@ export function botOf(bots: GrokBot[], h: Pick<GrokHandoff, 'bot' | 'botName'>):
 
 /** One line per bot for a card: name, what it is for, and whether it can be sent to yet. */
 export function botMenu(bots: GrokBot[]): string {
-  return bots.map((b) => `- ${b.name}${b.purpose ? ` — ${b.purpose}` : ''}${b.url && b.keyEnc ? '' : ' (not set up yet: no webhook or key)'}`).join('\n')
+  return bots.map((b) => `- ${b.name}${b.purpose ? ` — ${b.purpose}` : ''}${b.url && b.keyEnc ? (b.autoSend ? ' (sends without asking the owner)' : '') : ' (not set up yet: no webhook or key)'}`).join('\n')
 }
 
 export type GrokHandoffState = 'pending' | 'sent' | 'failed' | 'discarded'
@@ -126,6 +129,45 @@ export interface GrokHandoff {
   /** a reply came back through the reply server and was queued for a card */
   repliedAt?: number
   replyKind?: 'result' | 'question'
+  /** sent without the owner's Send: the bot was allowed to */
+  auto?: boolean
+}
+
+/** Shapes of keys, tokens and passwords: a handoff holding one never goes without the owner looking at it. */
+const SECRET_SHAPES: [RegExp, string][] = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'a private key'],
+  [/\b(?:crsr|sk|rk|pk)_(?:live_|test_)?[A-Za-z0-9_-]{16,}/, 'an API key'],
+  [/\bsk-[A-Za-z0-9_-]{20,}/, 'an API key'],
+  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{30,}/, 'a GitHub token'],
+  [/\bxox[abposr]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
+  [/\bAKIA[0-9A-Z]{16}\b/, 'an AWS key'],
+  [/\bAIza[0-9A-Za-z_-]{35}\b/, 'a Google API key'],
+  [/\bsb_secret_[A-Za-z0-9_-]{10,}/, 'a Supabase secret'],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'a token (JWT)'],
+  // a token after Bearer has a digit in it ("Bearer certification-processing" is a sentence)
+  [/\bBearer\s+(?=[A-Za-z._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}/, 'a bearer token'],
+  [/\b(?:api[_-]?key|access[_-]?key|secret(?:[_-]?key)?|client[_-]?secret|auth[_-]?token|access[_-]?token|token)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}/i, 'an API key'],
+  [/[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^@\s/]+@/i, 'a password in an address'],
+  // "password: x", "password is x", "비밀번호는 x"; a pwd: path is not one
+  [/(?:\bpassword|\bpasswd|\bpassphrase|비밀번호|암호)\s*(?:[:=]|\bis\b|는|은)\s*["']?[^\s"']{4,}/i, 'a password']
+]
+
+/** What in a text looks like a secret, or undefined. */
+export function secretLike(text: string): string | undefined {
+  return SECRET_SHAPES.find(([re]) => re.test(text))?.[1]
+}
+
+/**
+ * Whether a new handoff goes without the owner's Send: undefined when it may, else why it waits. Only a bot the owner
+ * allowed, set up, under its daily cap, with nothing that looks like a secret in it.
+ */
+export function autoSendHold(bot: GrokBot | undefined, h: Pick<GrokHandoff, 'task' | 'context'>, sentToday: number): string | undefined {
+  if (!bot?.autoSend) return 'the bot waits for Send'
+  if (!bot.url || !bot.keyEnc) return 'the bot is not set up (no webhook or key)'
+  if (sentToday >= GROK_BOT_LIMITS.autoPerDay) return `${bot.name} already sent ${sentToday} without asking in the last 24 hours`
+  const secret = secretLike(`${h.task}\n${h.context ?? ''}`)
+  if (secret) return `it looks like it holds ${secret}`
+  return undefined
 }
 
 /** The routine's webhook URL as typed, or undefined unless it is `https://api2.cursor.sh/automations/webhook/<id>`. */

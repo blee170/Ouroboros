@@ -24,7 +24,7 @@ import { applyProtection, checkCardToken, readProtection, runGh } from './rulese
 import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
-import { botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, type GrokBot, type GrokHandoff } from '@shared/grokbot'
+import { autoSendHold, botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, type GrokBot, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
@@ -409,12 +409,29 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (!r.ok) return r
       s.grokBot = [...s.grokBot.slice(-49), r.handoff]
       grokBotChanged(s)
-      log(`[grok-bot] ${r.handoff.id} from ${n.data.title} waits for the owner`)
-      // one notification per card a minute: a card that keeps asking is listed, not shouted
       const now = Date.now()
+      // a bot the owner let send without asking: it goes now, within the daily cap and only without anything secret-looking
+      const sent = readAutoSent()
+      const sentToday = (sent[picked.bot.id] ?? []).filter((t) => now - t < 24 * 3600_000)
+      const hold = autoSendHold(picked.bot, r.handoff, sentToday.length)
+      if (!hold) {
+        writeAutoSent({ ...sent, [picked.bot.id]: [...sentToday, now] }, now)
+        log(`[grok-bot] ${r.handoff.id} from ${n.data.title} goes to ${picked.bot.name} without asking (the owner allowed it)`)
+        void resolveGrokHandoff(ctx, s, r.handoff.id, true, 'auto').then((res) => {
+          if (res.ok) return
+          // not sent: it waits for the owner's Send like any other, and the card hears so
+          s.mail.send({ from: OWNER, to: self, body: `Your Grok Bot handoff ${r.handoff.id} could not be sent without asking; it waits for the owner's Send now (the owner sees why). Carry on with other work.`, kind: 'note' }, mailTopology(s.board))
+          if (Notification.isSupported()) new Notification({ title: `Grok Bot ${r.handoff.id} was not sent`, body: `${res.error ?? 'unknown error'} — it waits for Send in the Today tab` }).show()
+        })
+        return { ok: true, id: r.handoff.id, note: `The owner lets ${picked.bot.name} take handoffs without asking, so it is being sent now. You will get a board message when it has gone (or if it could not go and waits for the owner). Carry on with other work.` }
+      }
+      if (picked.bot.autoSend) log(`[grok-bot] ${r.handoff.id} from ${n.data.title} waits for the owner: ${hold}`)
+      else log(`[grok-bot] ${r.handoff.id} from ${n.data.title} waits for the owner`)
+      // one notification per card a minute: a card that keeps asking is listed, not shouted
       if (Notification.isSupported() && now - (grokNotified.get(self) ?? 0) >= 60_000) {
         grokNotified.set(self, now)
-        const note = new Notification({ title: `${n.data.title} wants to hand a task to Grok Bot`, body: `${r.handoff.task.split('\n')[0].slice(0, 140)} — Send or Discard in the Today tab` })
+        const why = picked.bot.autoSend ? ` (not sent without asking: ${hold})` : ''
+        const note = new Notification({ title: `${n.data.title} wants to hand a task to Grok Bot`, body: `${r.handoff.task.split('\n')[0].slice(0, 140)}${why} — Send or Discard in the Today tab` })
         note.on('click', () => {
           if (!s.win.isDestroyed()) {
             s.win.show()
@@ -1164,12 +1181,36 @@ function grokBotChanged(s: WindowSession): void {
 const grokSending = new Set<string>()
 /** card id → when the owner was last notified of one of its handoffs */
 const grokNotified = new Map<string, number>()
+/** bot id → when it sent without asking: the last 24 hours count against its cap, kept on disk so a restart does not reset it */
+const autoSentFile = (): string => join(app.getPath('userData'), 'grok-autosent.json')
+function readAutoSent(): Record<string, number[]> {
+  try {
+    const raw = JSON.parse(readFileSync(autoSentFile(), 'utf8')) as Record<string, unknown>
+    const out: Record<string, number[]> = {}
+    for (const [id, list] of Object.entries(raw ?? {})) if (Array.isArray(list)) out[id] = list.filter((t): t is number => typeof t === 'number')
+    return out
+  } catch {
+    return {}
+  }
+}
+function writeAutoSent(all: Record<string, number[]>, now: number): void {
+  const kept: Record<string, number[]> = {}
+  for (const [id, list] of Object.entries(all)) {
+    const recent = list.filter((t) => now - t < 24 * 3600_000)
+    if (recent.length) kept[id] = recent
+  }
+  try {
+    writeFileSync(autoSentFile(), JSON.stringify(kept))
+  } catch (e) {
+    log(`[grok-bot] could not save the without-asking count: ${(e as Error).message}`)
+  }
+}
 
 /**
  * The owner decided a Grok Bot handoff. Send: POST it to the routine's webhook; a failure leaves it waiting (fix the
  * key, send again). Discard: it is dropped. The asking card is told by board mail once it is sent or discarded.
  */
-async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string, send: boolean): Promise<{ ok: boolean; error?: string; warning?: string }> {
+async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string, send: boolean, by: 'owner' | 'auto' = 'owner'): Promise<{ ok: boolean; error?: string; warning?: string }> {
   const h = s.grokBot.find((x) => x.id === id && x.state === 'pending')
   if (!h) return { ok: false, error: 'that handoff is not waiting any more' }
   const flight = `${s.id}:${id}`
@@ -1208,12 +1249,18 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
       log(`[grok-bot] ${id} not sent: ${r.error}`)
       return { ok: false, error: r.error }
     }
-    update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined, ...(correlationId ? { correlationId } : {}) })
-    log(`[grok-bot] ${id} sent to ${bot.name} by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
+    update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined, ...(correlationId ? { correlationId } : {}), ...(by === 'auto' ? { auto: true } : {}) })
+    log(`[grok-bot] ${id} sent to ${bot.name} ${by === 'auto' ? 'without asking (the owner allowed this bot)' : 'by the owner'}${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
+    if (by === 'auto') {
+      s.autonomy.noteDecision(h.card, h.title, `Grok Bot ${id} sent to ${bot.name} without asking: ${h.task.split('\n')[0].slice(0, 120)}`)
+      // the owner sees every one that went without them
+      if (Notification.isSupported()) new Notification({ title: `${h.title} → Grok Bot "${bot.name}" (sent without asking)`, body: h.task.split('\n')[0].slice(0, 160) }).show()
+    }
+    const who = by === 'auto' ? `Ouroboros sent your handoff ${id} to Grok Bot "${bot.name}" without asking the owner (they allowed this bot)` : `The owner sent your handoff ${id} to Grok Bot "${bot.name}"`
     return tell(
       correlationId
-        ? `The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result should come back to you as board mail when the routine finishes (minutes, sometimes longer); carry on with other work meanwhile.`
-        : `The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`
+        ? `${who}${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result should come back to you as board mail when the routine finishes (minutes, sometimes longer); carry on with other work meanwhile.`
+        : `${who}${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`
     )
   } finally {
     grokSending.delete(flight)

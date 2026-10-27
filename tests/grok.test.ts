@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { buildGrokLaunch, buildGrokPlugin, type EngineLaunchInput } from '../src/main/agent-launcher'
+import { buildGrokAgent, buildGrokLaunch, type EngineLaunchInput } from '../src/main/agent-launcher'
 import { mapGrokHook } from '../src/main/agent-hook'
 import { credentialEnvKeys, signedInFromFiles } from '../src/main/engines'
 import { relaunchAction } from '../src/shared/autonomy'
@@ -24,38 +24,43 @@ const base: EngineLaunchInput = {
   shell: 'powershell'
 }
 
-describe('Grok engine: plugin folder and launch line', () => {
-  it('writes both plugin manifests, the hooks and the board MCP server without the token itself', () => {
-    const files = buildGrokPlugin({ ...base, claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
-    expect(Object.keys(files).sort()).toEqual(['.claude-plugin/plugin.json', '.grok-plugin/plugin.json', '.mcp.json', 'hooks/hooks.json'])
-    const hooks = JSON.parse(files['hooks/hooks.json']).hooks as Record<string, Array<{ hooks: Array<{ type: string; command: string; timeout: number }> }>>
-    expect(Object.keys(hooks).sort()).toEqual(['Notification', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'StopFailure', 'UserPromptSubmit'])
-    const cmd = hooks.Stop[0].hooks[0].command
+/** The frontmatter of a card agent file: its JSON lines, parsed. */
+function frontmatter(text: string): { name: string; mcpServers: Array<Record<string, any>>; hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string; timeout: number }> }>>; body: string } {
+  const [, head, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text) ?? []
+  const line = (k: string): string => (head.split('\n').find((l) => l.startsWith(`${k}: `)) ?? '').slice(k.length + 2)
+  return { name: line('name'), mcpServers: JSON.parse(line('mcpServers')), hooks: JSON.parse(line('hooks')), body }
+}
+
+describe('Grok engine: agent file and launch line', () => {
+  it('declares the hooks and the board MCP server without the token itself, with the role as the body', () => {
+    const fm = frontmatter(buildGrokAgent({ ...base, rolePrompt: 'You review.\nLine two.', claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } }))
+    expect(fm.name).toBe('ouroboros-card-n1')
+    expect(fm.body).toBe('You review.\nLine two.\n')
+    expect(Object.keys(fm.hooks).sort()).toEqual(['Notification', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'StopFailure', 'UserPromptSubmit'])
     // the first word is never quoted (PowerShell and cmd /c both misread a leading quote): node by name when its path has a space
-    expect(cmd).toBe('node C:/App/out/main/agent-hook.js grok --url http://127.0.0.1:47821 --node n1 --token-file C:/data/n1.token')
-    const spaced = JSON.parse(buildGrokPlugin({ ...base, nodeBin: 'C:\\node\\node.exe', tokenFile: 'C:\\Users\\Jo Smith\\n1.token' })['hooks/hooks.json']).hooks.Stop[0].hooks[0].command
+    expect(fm.hooks.Stop[0].hooks[0].command).toBe('node C:/App/out/main/agent-hook.js grok --url http://127.0.0.1:47821 --node n1 --token-file C:/data/n1.token')
+    const spaced = frontmatter(buildGrokAgent({ ...base, nodeBin: 'C:\\node\\node.exe', tokenFile: 'C:\\Users\\Jo Smith\\n1.token' })).hooks.Stop[0].hooks[0].command
     expect(spaced).toBe('C:/node/node.exe C:/App/out/main/agent-hook.js grok --url http://127.0.0.1:47821 --node n1 --token-file "C:/Users/Jo Smith/n1.token"')
-    const mcp = JSON.parse(files['.mcp.json']).mcpServers
-    expect(mcp.ouroboros).toMatchObject({ command: base.nodeBin, args: [base.mcpScriptPath], env: { OUROBOROS_SELF_ID: 'n1', OUROBOROS_TOOLS: 'mail', OUROBOROS_TOKEN_FILE: base.mcpTokenFile } })
-    expect(mcp.aside.command).toBe('aside')
-    expect(JSON.parse(buildGrokPlugin({ ...base, boardTools: true })['.mcp.json']).mcpServers.ouroboros.env.OUROBOROS_TOOLS).toBeUndefined()
+    // servers go as a list with a name (Grok refuses a map in an agent file)
+    expect(fm.mcpServers[0]).toMatchObject({ name: 'ouroboros', command: base.nodeBin, args: [base.mcpScriptPath], env: { OUROBOROS_SELF_ID: 'n1', OUROBOROS_TOOLS: 'mail', OUROBOROS_TOKEN_FILE: base.mcpTokenFile } })
+    expect(fm.mcpServers[1]).toEqual({ name: 'aside', command: 'aside', args: ['mcp'] })
+    expect(frontmatter(buildGrokAgent({ ...base, boardTools: true })).mcpServers[0].env.OUROBOROS_TOOLS).toBeUndefined()
   })
-  it('passes the plugin folder, model, approval and resume flags; the role is typed on Windows', () => {
-    const l = buildGrokLaunch({ ...base, rolePrompt: 'You review.', claude: { model: 'grok-4.7', permissionMode: 'bypassPermissions', resume: 'abc' } }, 'C:\\tmp\\n1.grok')
-    expect(l.command).toBe('& grok --plugin-dir C:\\tmp\\n1.grok -m grok-4.7 --always-approve -r abc')
-    expect(l.initialPrompt).toContain('You review.')
-    expect(Object.keys(l.files ?? {})).toContain('C:\\tmp\\n1.grok/hooks/hooks.json')
-    // plan / acceptEdits have no Grok flag: the card starts in Grok's own default mode
-    expect(buildGrokLaunch({ ...base, claude: { permissionMode: 'plan', continue: true } }, 'C:\\p').command).toBe('& grok --plugin-dir C:\\p -c')
+  it('gives a card without a role a short body, and an odd node id a safe name', () => {
+    const fm = frontmatter(buildGrokAgent({ ...base, nodeId: 'a b:c' }))
+    expect(fm.name).toBe('ouroboros-card-abc')
+    expect(fm.body.trim().length).toBeGreaterThan(10)
   })
-  it('puts the role in --rules on posix and falls back to a message when the line would be too long', () => {
-    const posix = { ...base, shell: 'posix' as const, nodeBin: '/usr/bin/node', hookScriptPath: '/app/h.js', mcpScriptPath: '/app/m.js', tokenFile: '/d/t', mcpTokenFile: '/d/m' }
-    const l = buildGrokLaunch({ ...posix, rolePrompt: 'a role\nline two' }, '/tmp/n1.grok')
-    expect(l.command).toBe("grok --plugin-dir /tmp/n1.grok --rules 'a role\nline two'")
+  it('passes the agent file, model, approval and resume flags, and turns off the owner Claude hooks and MCP servers', () => {
+    const l = buildGrokLaunch({ ...base, rolePrompt: 'You review.', claude: { model: 'grok-4.7', permissionMode: 'bypassPermissions', resume: 'abc' } }, 'C:\\tmp\\n1.grok-agent.md')
+    expect(l.command).toBe('& grok --agent C:\\tmp\\n1.grok-agent.md -m grok-4.7 --always-approve -r abc')
     expect(l.initialPrompt).toBeUndefined()
-    const long = buildGrokLaunch({ ...posix, rolePrompt: 'x'.repeat(200000) }, '/tmp/n1.grok')
-    expect(long.command).toBe('grok --plugin-dir /tmp/n1.grok')
-    expect(long.initialPrompt).toContain('xxx')
+    expect(l.env).toEqual({ GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CLAUDE_MCPS_ENABLED: '0' })
+    expect(frontmatter(l.files?.['C:\\tmp\\n1.grok-agent.md'] ?? '').body).toBe('You review.\n')
+    // plan / acceptEdits have no Grok flag: the card starts in Grok's own default mode
+    expect(buildGrokLaunch({ ...base, claude: { permissionMode: 'plan', continue: true } }, 'C:\\p.md').command).toBe('& grok --agent C:\\p.md -c')
+    const posix = { ...base, shell: 'posix' as const, nodeBin: '/usr/bin/node', hookScriptPath: '/app/h.js', mcpScriptPath: '/app/m.js', tokenFile: '/d/t', mcpTokenFile: '/d/m' }
+    expect(buildGrokLaunch({ ...posix, rolePrompt: 'x'.repeat(200000) }, '/tmp/n1.md').command).toBe('grok --agent /tmp/n1.md')
   })
 })
 
@@ -73,6 +78,11 @@ describe('Grok engine: hook mapping', () => {
     expect(mapGrokHook({ ...b, hookEventName: 'Notification', notificationType: 'idle', message: 'waiting' })).toMatchObject({ notification_type: 'idle' })
     expect(mapGrokHook({ ...b, hookEventName: 'SessionEnd' })).toMatchObject({ hook_event_name: 'SessionEnd' })
     expect(mapGrokHook({ ...b, hookEventName: 'PreCompact' })).toBeNull()
+    // what Grok 1.0.70 actually sends: snake_case hookEventName beside the Claude-style name
+    expect(mapGrokHook({ ...b, hookEventName: 'user_prompt_submit' })).toMatchObject({ hook_event_name: 'UserPromptSubmit' })
+    expect(mapGrokHook({ ...b, hookEventName: 'stop', hook_event_name: 'Stop', last_assistant_message: 'hi' })).toMatchObject({ hook_event_name: 'Stop', last_assistant_message: 'hi' })
+    expect(mapGrokHook({ ...b, hookEventName: 'pre_tool_use', tool_name: 'bash' })).toMatchObject({ hook_event_name: 'PreToolUse', tool_name: 'bash' })
+    expect(mapGrokHook({ ...b }, 'session_start')).toMatchObject({ hook_event_name: 'SessionStart' })
     // the event name from GROK_HOOK_EVENT when the payload has none
     expect(mapGrokHook({ ...b }, 'SessionStart')).toMatchObject({ hook_event_name: 'SessionStart' })
   })

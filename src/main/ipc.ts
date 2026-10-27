@@ -12,7 +12,7 @@ import type { HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
-import { detectClaudeReady, detectMissingCommand, failureOf } from '@shared/status'
+import { detectClaudeReady, detectLaunchExit, detectMissingCommand, endsAtShellPrompt, failureOf } from '@shared/status'
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
@@ -176,6 +176,11 @@ function throttledSpawn<T>(fn: () => T): Promise<T> {
 const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** length of the launch command typed into each card's shell (its echo is not TUI output) */
 const launchLineLength = new Map<string, number>()
+/** the line each card's shell was given at launch: what its output is read against until the CLI is up */
+const launchCommands = new Map<string, string>()
+/** a starting card's output went quiet: is the shell back on its prompt? */
+const exitChecks = new Map<string, NodeJS.Timeout>()
+const EXIT_CHECK_MS = 6000
 /** the first output of each card's latest launch (its own buffer: the board's is capped and trimmed from the front) */
 const launchOut = new Map<string, string>()
 const LAUNCH_OUT_CAP = 16_000
@@ -1680,6 +1685,8 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   if (!s) return
   noteActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
+  // a card that reports from its CLI is running: a "failed at launch" read from its output was wrong
+  if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
     handedAnswers.delete(nodeId)
@@ -1976,20 +1983,48 @@ export function registerIpc(ctx: MainContext): void {
       const out = ((launchOut.get(nodeId) ?? '') + data).slice(-LAUNCH_OUT_CAP)
       launchOut.set(nodeId, out)
       const missing = detectMissingCommand(out, engine)
+      // the CLI started and quit at once (an option it does not know, a bad config): its error, and no prompt typed into the shell
+      const command = launchCommands.get(nodeId) ?? ''
+      const exited = missing || !command ? null : detectLaunchExit(out, command)
       if (missing) {
         launchFailed.add(nodeId)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
+      } else if (exited) {
+        launchFailed.add(nodeId)
+        clearTimeout(readyTimers.get(nodeId))
+        log(`launch: ${nodeId} ${engine} exited at launch: ${exited}`)
+        board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} exited at launch (${exited.slice(0, 160)}). Check the card's options, then Restart it.` })
       } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
-      else if ((n.data.engine === 'codex' || n.data.engine === 'grok') && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
-        // Codex sends no session-start event (and a Grok card whose plugin hooks did not load sends none either):
+      else if (command) {
+        // any engine: a CLI that quit without an error we know leaves the shell on its prompt, and then goes quiet
+        clearTimeout(exitChecks.get(nodeId))
+        exitChecks.set(
+          nodeId,
+          setTimeout(() => {
+            exitChecks.delete(nodeId)
+            const cur = board.nodes.get(nodeId)
+            if (cur?.data.status !== 'starting' || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
+            if (!endsAtShellPrompt(launchOut.get(nodeId) ?? '', command)) return
+            launchFailed.add(nodeId)
+            clearTimeout(readyTimers.get(nodeId))
+            log(`launch: ${nodeId} ${cur.data.engine ?? 'claude'} gave the shell back at launch`)
+            board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${cur.data.engine ?? 'claude'} exited at launch (the shell came back). Check the card's options, then Restart it.` })
+          }, EXIT_CHECK_MS)
+        )
+      }
+      if (!missing && !exited && !launchFailed.has(nodeId) && board.nodes.get(nodeId)?.data.status === 'starting' && (n.data.engine === 'codex' || n.data.engine === 'grok') && board.getOutput(nodeId).length > (launchLineLength.get(nodeId) ?? 0) + 300) {
+        // Codex sends no session-start event (and a Grok card whose agent-file hooks did not load sends none either):
         // once it has printed more than the echoed launch line, treat 4s of quiet as "ready"
         clearTimeout(readyTimers.get(nodeId))
         readyTimers.set(
           nodeId,
           setTimeout(() => {
             const cur = board.nodes.get(nodeId)
-            // a Grok card sends SessionStart from its plugin hooks: ready without one means the hooks did not load
-            if (cur?.data.status === 'starting' && ctx.ptys.isAlive(nodeId)) board.setStatus(nodeId, { status: 'idle', statusDetail: cur.data.engine === 'grok' ? 'ready (no hooks yet: status and lines may not work)' : 'ready' })
+            // a Grok card sends SessionStart from its agent-file hooks: ready without one means the hooks did not load
+            if (cur?.data.status !== 'starting' || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
+            // quiet on the shell's own prompt: the CLI is not running; the exit check says so
+            if (endsAtShellPrompt(launchOut.get(nodeId) ?? '', launchCommands.get(nodeId) ?? '')) return
+            board.setStatus(nodeId, { status: 'idle', statusDetail: cur.data.engine === 'grok' ? 'ready (no hooks yet: status and lines may not work)' : 'ready' })
           }, 4000)
         )
       }
@@ -2001,6 +2036,9 @@ export function registerIpc(ctx: MainContext): void {
     transcripts.delete(nodeId)
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
+    launchCommands.delete(nodeId)
+    clearTimeout(exitChecks.get(nodeId))
+    exitChecks.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
     const ended = s?.board.nodes.get(nodeId)
     if (s && ended?.data.doing) {
@@ -2122,6 +2160,7 @@ export function registerIpc(ctx: MainContext): void {
         sendToRenderer(s, IPC.boardUpdateNode, { nodeId: opts.nodeId, data: { initialPrompt }, restart: false })
       }
       launchLineLength.set(opts.nodeId, prepared.command.length)
+      launchCommands.set(opts.nodeId, prepared.command)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }

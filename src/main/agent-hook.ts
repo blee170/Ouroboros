@@ -70,9 +70,12 @@ function pick(input: Record<string, unknown>, ...keys: string[]): string | undef
   return undefined
 }
 
-/** Grok Build hook input (stdin JSON) → Ouroboros hook event. Grok uses Claude Code's event names. */
+/** Grok Build hook input (stdin JSON) → Ouroboros hook event, by Claude Code's event names. */
 export function mapGrokHook(input: Record<string, unknown>, envEvent?: string): OuroHook | null {
-  const name = pick(input, 'hookEventName', 'hook_event_name') ?? envEvent ?? ''
+  // Grok 1.0.70 sends hookEventName in snake_case ("user_prompt_submit") and the Claude-style hook_event_name as
+  // "UserPromptSubmit": either is read, snake_case turned into the Claude name
+  const raw = pick(input, 'hook_event_name', 'hookEventName') ?? envEvent ?? ''
+  const name = raw.includes('_') ? raw.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('') : raw
   const base = { session_id: pick(input, 'sessionId', 'session_id'), cwd: pick(input, 'cwd', 'workspaceRoot') }
   switch (name) {
     case 'SessionStart':

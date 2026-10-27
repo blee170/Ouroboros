@@ -4,6 +4,27 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Several Grok Bots, one per purpose.** For example: Personal (email, vendor replies, calendar) and Business (marketing research).
+  - **Settings → Grok Bot** now holds a list of up to 8 bots. Each has a name, a one-line purpose, its own routine webhook and its own key (stored encrypted).
+  - Names, purposes and webhooks save when a field loses focus. Each key saves with its own button.
+  - Your single bot from earlier versions shows up as the first entry, keeping its URL and key.
+  - **The Conductor picks the bot.** A new tool, `list_grok_bots`, lists each bot's name and purpose. `handoff_to_grok_bot` takes `bot` (a name).
+  - The Conductor's prompt now says that code stays with the cards on the board, while errands and long web research go to the bot whose purpose fits.
+  - With only one bot, `bot` can be left out.
+  - **Every send still waits for you.** The Today tab names the bot in the row, the review panel and the Send button.
+  - **A handoff is never sent to a bot other than the one it named:** if that bot was removed or renamed since, the send is refused. A freed id can go to a new bot.
+- The tool description now allows the personal details a task needs, but still no passwords or keys.
+
+### Security
+- Bots and keys can be written only through the Grok Bot settings calls. `settings.set` ignores them, so a stale Settings copy can't drop a key. `settings.get` leaves them out, so not even an encrypted key reaches the window.
+
+### Not verified
+- A real send to two different routines. The probe saved fake webhooks and discarded the handoff instead of sending it.
+- Apps you connect in Grok (Gmail, Calendar) are shared by every bot on that Grok account, which is how Grok works. To keep personal and business apps apart, use separate Grok accounts.
+
 ## [0.15.1] — 2026-10-27
 
 ### Changed

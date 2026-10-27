@@ -1,6 +1,7 @@
 import type { VoiceSettings } from './voice'
 import type { Task } from './ledger'
 import type { OuroSettingsView } from './ouro'
+import type { GrokBot } from './grokbot'
 
 /** Which CLI a Claude/Conductor card runs. Codex, Gemini and Grok get the same hooks, lines and board tools. */
 export type AgentEngine = 'claude' | 'codex' | 'gemini' | 'grok'
@@ -263,6 +264,8 @@ export interface AppSettings {
   grokBotUrl?: string
   /** That routine's key (crsr_…), stored encrypted (same scheme as notionTokenEnc). */
   grokBotKeyEnc?: string
+  /** The owner's Grok Bots, one per purpose (each its own routine and key). Absent: the single bot above, from an older version. Written only through grokBot.save / setKey, never by settings.set. */
+  grokBots?: GrokBot[]
   /** A card-only fine-grained GitHub token (stored encrypted): agent cards push and open pull requests with it instead of the owner's sign-in. */
   cardGithubTokenEnc?: string
   /** The WSL distribution WSL cards run in (empty: the first one that is not Docker Desktop's). */

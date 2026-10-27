@@ -4,6 +4,27 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Security
+- **Claude cards can no longer edit the app's own data folder, in a run or not.** Before, the deny rule for `%APPDATA%\Ouroboros` (settings.json, keys, the Grok Bot "Send without asking me" switch) was written into cards only during an autonomous run. Now every Claude card gets it. It covers the file-editing tools only: a shell command that writes the file is not caught. Outside a run, Claude Code still asks the owner before running one.
+
+### Changed
+- **Refused phone and car-alert requests are logged.** main.log now says why: no `Authorization` header (the name must be just "Authorization"), a header that does not start with "Bearer ", an unknown or revoked key, a body without a known event, a wrong content type, or a request Node could not parse (a header name with a space). Each line has the address and the path, never the key. A refused or unparsable request counts as a failed attempt, so one address is logged at most five times a minute.
+- **Settings → Phone → MacroDroid steps give the header name and its value as two separate steps**, each with a Copy button and a note ("just this word", "starts with Bearer and a space").
+
+### Verified
+- Typecheck, build and the vitest suite (695 tests).
+- Unit tests:
+  - the data-folder rules are on a card with no run and are not duplicated with one;
+  - refused requests are logged with the reason and without the key: missing header, unknown key, bad event, and "Header Authorization" (`HPE_INVALID_HEADER_TOKEN`).
+- The log test goes red with the log line removed.
+- A security review found no high issues. Its two low findings were fixed: unparsable requests and wrong content types are now rate-limited, and the logged path is capped.
+
+### Not verified
+- The deny rule against a live Claude card outside a run.
+- The log lines in the packaged app with a real MacroDroid request.
+
 ## [0.18.1] — 2026-10-28
 
 ### Added

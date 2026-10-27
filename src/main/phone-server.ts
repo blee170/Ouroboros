@@ -1,4 +1,6 @@
 import http from 'node:http'
+import type { Socket } from 'node:net'
+import type { Duplex } from 'node:stream'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -129,6 +131,13 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<unknown> {
   })
 }
 
+/** Why a request's key was refused, for the log; it never holds the header's value. */
+export function authRefusal(header: string | undefined): string {
+  if (!header) return 'no Authorization header (the header name must be just "Authorization")'
+  if (!header.startsWith('Bearer ')) return 'the Authorization header does not start with "Bearer "'
+  return 'unknown or revoked key'
+}
+
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(JSON.stringify(body))
 }
@@ -196,6 +205,19 @@ export class PhoneServer {
       return this.error
     }
     server.on('error', (e) => this.log(`[phone] server error: ${(e as Error).message}`))
+    // a request Node cannot parse (a header name with a space, as an automation app's "Header Authorization") never
+    // reaches handle(): say so, then answer as Node would. A client that hung up is not news. It counts as a failed
+    // attempt, so an address sending garbage is logged five times a minute at most.
+    server.on('clientError', (e: NodeJS.ErrnoException, socket: Duplex) => {
+      const ip = (socket as Socket).remoteAddress ?? '?'
+      if (e.code !== 'ECONNRESET' && !this.failures.blocked(ip)) {
+        this.failures.fail(ip)
+        this.log(`[phone] refused a malformed request from ${ip}: ${e.code ?? 'parse error'}`)
+      }
+      const status = e.code === 'HPE_HEADER_OVERFLOW' ? '431 Request Header Fields Too Large' : e.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? '408 Request Timeout' : '400 Bad Request'
+      if (socket.writable) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
+      else socket.destroy()
+    })
     this.server = server
     this.boundPort = (server.address() as { port: number }).port
     this.log(`[phone] listening on ${this.url}`)
@@ -237,8 +259,19 @@ export class PhoneServer {
     if (method === 'GET' && path === '/m/icon.png') return this.asset(res, 'image/png', PHONE_ICON_PNG)
     if (method === 'GET' && path === '/m/manifest.json') return this.asset(res, 'application/manifest+json', PHONE_MANIFEST)
     if (!path.startsWith('/m/api/')) return void res.writeHead(404).end()
+    // a refused API call goes in main.log with why (never the key): an automation app's setup is otherwise blind
+    const refuse = (status: number, error: string, why = error): void => {
+      this.log(`[phone] refused ${method} ${path.slice(0, 80)} from ${ip}: ${status} ${why}`)
+      json(res, status, { error })
+    }
+    // not logged: the failures that led here were, and a blocked address must not fill the log
     if (this.failures.blocked(ip)) return json(res, 429, { error: 'too many failed attempts; wait a minute' })
-    if (method === 'POST' && !(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' })
+    const type = req.headers['content-type'] ?? ''
+    // a failed attempt too: before any key is checked, so it must not log without limit
+    if (method === 'POST' && !type.startsWith('application/json')) {
+      this.failures.fail(ip)
+      return refuse(415, 'application/json only', `content type ${type ? `"${type.slice(0, 60)}"` : 'missing'}, needs application/json`)
+    }
 
     if (method === 'POST' && path === '/m/api/pair') {
       const body = (await readBody(req, 4096)) as { code?: unknown; name?: unknown } | undefined
@@ -246,7 +279,7 @@ export class PhoneServer {
       const ok = p && typeof body?.code === 'string' && Date.now() < p.expiresAt && timingSafeEqual(Buffer.from(sha(body.code), 'hex'), Buffer.from(p.codeHash, 'hex'))
       if (!ok) {
         this.failures.fail(ip)
-        return json(res, 401, { error: 'this pairing code is wrong, used or expired; make a new one in Settings → Phone' })
+        return refuse(401, 'this pairing code is wrong, used or expired; make a new one in Settings → Phone', 'pairing code wrong, used or expired')
       }
       this.pairing = null // one use
       let added: ReturnType<PhoneDevices['add']>
@@ -264,7 +297,7 @@ export class PhoneServer {
     const device = this.devices.match(auth.startsWith('Bearer ') ? auth.slice(7).trim() : '')
     if (!device) {
       this.failures.fail(ip)
-      return json(res, 401, { error: 'not paired' })
+      return refuse(401, 'not paired', authRefusal(req.headers.authorization))
     }
     this.devices.seen(device.id)
     const from = `phone ${device.name}`
@@ -273,13 +306,13 @@ export class PhoneServer {
     if (method === 'POST' && path === '/m/api/notify') {
       const body = (await readBody(req, 1024)) as { event?: unknown } | undefined
       const event = (NOTIFY_EVENTS as readonly unknown[]).includes(body?.event) ? (body!.event as NotifyEvent) : undefined
-      if (!event) return json(res, 400, { error: `event must be one of: ${NOTIFY_EVENTS.join(', ')}` })
+      if (!event) return refuse(400, `event must be one of: ${NOTIFY_EVENTS.join(', ')}`, `the body has no known event (needs {"event":"car"}), key ${device.name}`)
       const r = this.handlers.notify(event)
       // a repeat inside the quiet time is not news: the log and the report get the first one
       if (!r.ok || r.queued !== false) this.handlers.note(`${device.scope === 'notify' ? `key ${device.name}` : from}: ${event}${r.ok ? '' : ` (${r.error})`}`)
       return json(res, r.ok ? 200 : 409, r)
     }
-    if (device.scope === 'notify') return json(res, 403, { error: 'this key may only call /m/api/notify' })
+    if (device.scope === 'notify') return refuse(403, 'this key may only call /m/api/notify', `key ${device.name} may only call /m/api/notify`)
 
     if (method === 'GET' && path === '/m/api/board') return json(res, 200, this.handlers.board())
     if (method === 'GET' && path === '/m/api/report/latest') return json(res, 200, { markdown: this.handlers.latestReport() ?? '' })

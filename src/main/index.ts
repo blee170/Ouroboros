@@ -29,6 +29,7 @@ import { Updater, decryptToken } from './updater'
 import { SessionRegistry } from './windows'
 import { UsageMonitor } from './usage'
 import { detectEngines } from './engines'
+import { issueRef } from '@shared/grokreply'
 import { homedir } from 'node:os'
 
 const isDev = !app.isPackaged
@@ -236,6 +237,13 @@ async function main(): Promise<void> {
       log(`[grok-reply] not started: ${err}`)
       // Grok Bot's replies would be refused at Funnel until this is fixed: said once, not left in a log
       if (Notification.isSupported()) new Notification({ title: 'Grok Bot replies are off', body: `The reply server did not start: ${err}. Settings → Grok Bot.` }).show()
+    })
+
+  const replyIssue = replyView?.githubIssue ? issueRef(replyView.githubIssue) : undefined
+  if (replyIssue)
+    void ctx.grokReply.mailbox.use(replyIssue).then((err) => {
+      if (!err) return
+      if (Notification.isSupported()) new Notification({ title: 'Grok Bot replies are off', body: `The GitHub issue cannot be read: ${err}. Settings → Grok Bot.` }).show()
     })
 
   createWindow(ctx, initialProjectArg())

@@ -6,7 +6,7 @@ import { open } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
-import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, GrokReplyStatus, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
@@ -17,9 +17,10 @@ import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, fir
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
-import { GrokReplyServer, ReplyStore } from './grok-reply'
-import { DEFAULT_REPLY_PORT, REPLY_LIMITS, REPLY_PATH, replyMail, routineInstructions, type ReplyKind, type ReplyRecord } from '@shared/grokreply'
-import { applyProtection, checkCardToken, readProtection } from './rulesets'
+import { GrokReplyServer, ReplyStore, type ReplyHandler } from './grok-reply'
+import { GitHubMailbox, checkIssue } from './grok-mailbox'
+import { DEFAULT_REPLY_PORT, REPLY_LIMITS, REPLY_PATH, issueInstructions, issueRef, issueUrl, replyMail, routineInstructions, type ReplyKind, type ReplyRecord } from '@shared/grokreply'
+import { applyProtection, checkCardToken, readProtection, runGh } from './rulesets'
 import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
@@ -137,7 +138,7 @@ export interface MainContext {
   /** The phone companion's server (off unless the owner turns it on in Settings → Phone). */
   phone: PhoneServer
   /** Grok Bot replies (off unless the owner turns it on in Settings → Grok Bot). */
-  grokReply: { store: ReplyStore; server: GrokReplyServer }
+  grokReply: { store: ReplyStore; server: GrokReplyServer; mailbox: GitHubMailbox }
   /** Ouro, the owner on Discord (off unless the owner turns it on in Settings → Ouro). */
   ouro: Ouro
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
@@ -975,10 +976,11 @@ function flushGrokReplies(store: ReplyStore, s: WindowSession, rec: ReplyRecord)
   return list.length - sent
 }
 
-export function createGrokReply(ctx: MainContext): { store: ReplyStore; server: GrokReplyServer } {
+export function createGrokReply(ctx: MainContext): MainContext['grokReply'] {
   const store = new ReplyStore(join(app.getPath('userData'), 'grok-replies.json'), log)
   const stuck = new Set<string>()
-  const server = new GrokReplyServer(store, (r) => {
+  // one handler for both ways back: the reply server (Funnel) and the GitHub issue
+  const handle: ReplyHandler = (r) => {
     if (r.kind === 'test') {
       log('[grok-reply] test received')
       if (Notification.isSupported()) new Notification({ title: 'Grok Bot reply test received', body: r.text ? r.text.slice(0, 120) : 'The way back from Grok Bot works.' }).show()
@@ -998,9 +1000,12 @@ export function createGrokReply(ctx: MainContext): { store: ReplyStore; server: 
     const left = s && fresh ? flushGrokReplies(store, s, fresh) : 1
     if (left) log(`[grok-reply] ${rec.handoffId}: kept until ${basename(rec.projectRoot)} is open with its card or a Conductor`)
     return { status: 200, body: { ok: true, delivered: left === 0 } }
-  }, log)
+  }
+  const server = new GrokReplyServer(store, handle, log)
+  const mailbox = new GitHubMailbox(runGh, store, handle, log)
   // replies that came while the project was closed (or before its cards were back on the board)
   setInterval(() => {
+    void mailbox.poll()
     for (const s of ctx.windows.all()) {
       if (!s.board.projectRoot) continue
       for (const rec of store.waitingFor(s.board.projectRoot)) {
@@ -1013,7 +1018,7 @@ export function createGrokReply(ctx: MainContext): { store: ReplyStore; server: 
       }
     }
   }, 30_000).unref()
-  return { store, server }
+  return { store, server, mailbox }
 }
 
 /** The Funnel address of this PC (https://<name>.ts.net:8443/grok/reply), when Tailscale tells it; the owner can type another. */
@@ -1032,7 +1037,7 @@ async function suggestedReplyUrl(): Promise<string | undefined> {
   })
 }
 
-export function grokReplyView(ctx: MainContext): { enabled: boolean; port: number; publicUrl: string; listening: boolean; error?: string; hasKey: boolean; keyMadeAt?: number } {
+export function grokReplyView(ctx: MainContext): Omit<GrokReplyStatus, 'suggestedUrl'> {
   const st = ctx.store.getSettings().grokReply
   return {
     enabled: st?.enabled === true,
@@ -1041,7 +1046,12 @@ export function grokReplyView(ctx: MainContext): { enabled: boolean; port: numbe
     listening: ctx.grokReply.server.listening,
     error: ctx.grokReply.server.error,
     hasKey: ctx.grokReply.store.hasKey,
-    keyMadeAt: ctx.grokReply.store.keyMadeAt
+    keyMadeAt: ctx.grokReply.store.keyMadeAt,
+    githubIssue: st?.githubIssue ?? '',
+    mailReady: ctx.grokReply.mailbox.ready,
+    mailError: ctx.grokReply.mailbox.error,
+    mailCheckedAt: ctx.grokReply.mailbox.lastCheckAt,
+    ...(st?.githubIssue ? { mailInstructions: issueInstructions(st.githubIssue) } : {})
   }
 }
 
@@ -1189,7 +1199,7 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
   try {
     // with the reply server on, the routine gets an id to answer with; the result then comes back as board mail
     // only when a reply can actually arrive: a card told to expect mail that cannot come would wait for nothing
-    const replies = ctx.grokReply.server.listening && ctx.grokReply.store.hasKey && Boolean(s.board.projectRoot)
+    const replies = ((ctx.grokReply.server.listening && ctx.grokReply.store.hasKey) || ctx.grokReply.mailbox.ready) && Boolean(s.board.projectRoot)
     const correlationId = replies ? ctx.grokReply.store.remember({ projectRoot: s.board.projectRoot, card: h.card, title: h.title, handoffId: h.id, task: h.task.slice(0, 60), botName: bot.name, sentAt: Date.now() }) : undefined
     const payload = { ...handoffPayload(h, basename(s.board.projectRoot || ''), Date.now()), ...(correlationId ? { correlation_id: correlationId, reply_expected: true } : {}) }
     const r = await sendToGrokBot({ url, key, payload })
@@ -2635,7 +2645,7 @@ export function registerIpc(ctx: MainContext): void {
   const forRenderer = ({ grokBots: _b, grokBotKeyEnc: _k, ...st }: AppSettings): AppSettings => st
   ipcMain.handle(IPC.settingsGet, () => forRenderer(store.getSettings()))
   ipcMain.handle(IPC.grokReplyStatus, async () => ({ ...grokReplyView(ctx), suggestedUrl: await suggestedReplyUrl() }))
-  ipcMain.handle(IPC.grokReplyConfigure, async (_e, input: { enabled?: unknown; publicUrl?: unknown }) => {
+  ipcMain.handle(IPC.grokReplyConfigure, async (_e, input: { enabled?: unknown; publicUrl?: unknown; githubIssue?: unknown }) => {
     const prev = store.getSettings().grokReply
     const raw = typeof input?.publicUrl === 'string' ? input.publicUrl.trim() : (prev?.publicUrl ?? '')
     let publicUrl = ''
@@ -2648,8 +2658,25 @@ export function registerIpc(ctx: MainContext): void {
         return { ok: false, error: 'that is not a web address' }
       }
     }
-    const next = { enabled: typeof input?.enabled === 'boolean' ? input.enabled : prev?.enabled === true, port: prev?.port ?? DEFAULT_REPLY_PORT, ...(publicUrl ? { publicUrl } : {}) }
+    const rawIssue = typeof input?.githubIssue === 'string' ? input.githubIssue.trim() : undefined
+    const issue = rawIssue ? issueRef(rawIssue) : undefined
+    if (rawIssue && !issue) return { ok: false, error: 'the issue must be https://github.com/<owner>/<repo>/issues/<number>' }
+    // an issue that is public or unreadable is not saved: nothing is left half on
+    const checkErr = issue ? await checkIssue(runGh, issue) : undefined
+    if (checkErr) {
+      log(`[grok-mail] ${issueUrl(issue!)} not used: ${checkErr}`)
+      return { ok: false, error: checkErr }
+    }
+    const githubIssue = rawIssue === undefined ? prev?.githubIssue : issue ? issueUrl(issue) : undefined
+    const next = { enabled: typeof input?.enabled === 'boolean' ? input.enabled : prev?.enabled === true, port: prev?.port ?? DEFAULT_REPLY_PORT, ...(publicUrl ? { publicUrl } : {}), ...(githubIssue ? { githubIssue } : {}) }
     store.setSettings({ grokReply: next })
+    if (rawIssue !== undefined) {
+      const mailErr = await ctx.grokReply.mailbox.use(issue)
+      log(`[grok-mail] ${issue ? (mailErr ? `not used: ${mailErr}` : `reading ${githubIssue}`) : 'off'}`)
+      if (mailErr) return { ok: false, error: mailErr }
+    }
+    // only the issue changed: the reply server keeps running as it is
+    if (input?.enabled === undefined && input?.publicUrl === undefined) return { ok: true }
     const err = await ctx.grokReply.server.apply(next.enabled, next.port)
     log(`[grok-reply] ${next.enabled ? (err ? `not started: ${err}` : 'on') : 'off'}`)
     return err ? { ok: false, error: err } : { ok: true }

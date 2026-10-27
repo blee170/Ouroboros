@@ -21,6 +21,14 @@ export interface GrokReplyStatus {
   keyMadeAt?: number
   /** https://<this PC>.ts.net:8443/grok/reply when Tailscale reports a name */
   suggestedUrl?: string
+  /** the GitHub issue replies can come through instead ('' when none) */
+  githubIssue: string
+  /** checked private and readable: handoffs are told a reply can come */
+  mailReady: boolean
+  mailError?: string
+  mailCheckedAt?: number
+  /** the steps for the routine, when an issue is set */
+  mailInstructions?: string
 }
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { OuroSettingsView, OuroStatusView } from './ouro'
@@ -583,7 +591,8 @@ export interface OuroborosApi {
     /** The reply server: on or off, listening, the public address, whether a key exists; suggestedUrl from Tailscale. */
     status(): Promise<GrokReplyStatus>
     /** Turn it on or off and/or set the public (Funnel) address; starts or stops the server. */
-    configure(input: { enabled?: boolean; publicUrl?: string }): Promise<{ ok: boolean; error?: string }>
+    /** githubIssue: '' turns the issue off; a URL is checked (private repository, readable with gh) before it is used. */
+    configure(input: { enabled?: boolean; publicUrl?: string; githubIssue?: string }): Promise<{ ok: boolean; error?: string }>
     /** A new reply key, shown once, with the steps for the routine (the old key stops working). */
     makeKey(): Promise<{ ok: true; key: string; instructions: string }>
     revoke(): Promise<{ ok: boolean }>

@@ -18,6 +18,8 @@ interface StoreData {
   keyHash?: string
   keyMadeAt?: number
   records: ReplyRecord[]
+  /** issue comments already mailed whose delete has not gone through yet: not mailed again */
+  doneComments?: number[]
 }
 
 export class ReplyStore {
@@ -36,7 +38,8 @@ export class ReplyStore {
           ? raw.records
               .filter((r): r is ReplyRecord => !!r && typeof r.correlationId === 'string' && typeof r.projectRoot === 'string' && typeof r.card === 'string' && typeof r.sentAt === 'number')
               .map((r) => ({ ...r, replies: Number(r.replies) || 0, waiting: Array.isArray(r.waiting) ? r.waiting.filter(waitingOk) : undefined }))
-          : []
+          : [],
+        doneComments: Array.isArray(raw.doneComments) ? raw.doneComments.filter((n): n is number => Number.isSafeInteger(n)).slice(-200) : undefined
       }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -92,6 +95,17 @@ export class ReplyStore {
 
   update(correlationId: string, patch: Partial<ReplyRecord>): void {
     this.data = { ...this.data, records: this.data.records.map((r) => (r.correlationId === correlationId ? { ...r, ...patch } : r)) }
+    this.save()
+  }
+
+  commentDone(id: number): boolean {
+    return this.data.doneComments?.includes(id) === true
+  }
+
+  /** Mailed (true: remember it until its delete goes through) or deleted (false: forget it). */
+  markComment(id: number, done: boolean): void {
+    const list = (this.data.doneComments ?? []).filter((x) => x !== id)
+    this.data = { ...this.data, doneComments: done ? [...list, id].slice(-200) : list.length ? list : undefined }
     this.save()
   }
 

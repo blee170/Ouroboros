@@ -23,6 +23,7 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
   - It counts as an exit when there is an `error:` line, then the shell's prompt again or a usage text, or when the output goes quiet for 6 s on the shell's prompt (any prompt style, read from the line in front of the launch command).
   - The card shows "failed: … exited at launch" and takes no prompts.
   - A wrong reading clears itself at the card's first hook event.
+- **A Grok card asking "trust this folder?" now needs you.** It used to sit on "starting · launching grok". Grok asks this in a folder it hasn't seen. The card now shows "permission: Grok asks whether to trust this folder"; answer in the card and its SessionStart hook makes it idle. Live-probed: needs-you while asked, idle after the answer.
 - A test or dev launch with `--user-data-dir` leaves the global external-session hook in `~/.claude/settings.json` alone. This is the same commit as on `claude/context-relay`.
 
 ### Verified (Grok)
@@ -45,7 +46,6 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ### Not verified (Grok)
 - The worker topology rule (parent, Conductor, handoff line) live: the probe's refusal came from the target not being an agent card. Unit tests cover the rule.
-- While Grok asks "trust this folder?" in a new folder, the card stays on "starting · launching grok" instead of needing you. The question shows in the card's terminal.
 - `--always-approve` cards, and Autonomous mode, which still closes Grok cards at run start.
 - How long a role an agent file accepts. The Conductor's 13 KB file loaded.
 

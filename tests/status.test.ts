@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectClaudeReady, detectLaunchExit, detectMissingCommand, endsAtShellPrompt, failureOf, reduceHook } from '@shared/status'
+import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf, reduceHook } from '@shared/status'
 
 describe('reduceHook', () => {
   it('maps lifecycle events to statuses', () => {
@@ -115,6 +115,19 @@ describe('detectMissingCommand', () => {
   it('stays quiet on a normal launch and on the echoed command line', () => {
     expect(detectMissingCommand('PS C:\proj> claude --name "x" --append-system-prompt "if a command is not found, say so"\r\nClaude Code v2.1')).toBeNull()
     expect(detectMissingCommand('')).toBeNull()
+  })
+})
+
+describe('detectTrustQuestion', () => {
+  const cmd = '& grok --agent C:\\a\\n1.grok-agent.md'
+  it("reads Grok's folder-trust question after the launch line, drawn with or without spaces", () => {
+    // what the probe saw on 2026-10-27: the TUI draws the words joined
+    expect(detectTrustQuestion(`PS C:\\p> ${cmd}\r\n~/A/L/Temp/x Doyoutrustthecontentsofthisdirectory?C:\\p GrokBuildmayrunormodify… Yes, proceedyNo, quitn`, cmd)).toBe(true)
+    expect(detectTrustQuestion(`PS C:\\p> ${cmd}\r\nDo you trust the contents of this directory?\r\n Yes, proceed (y)`, cmd)).toBe(true)
+  })
+  it('ignores the question before the launch line and a card that has not echoed it yet', () => {
+    expect(detectTrustQuestion(`Do you trust this folder?\r\nPS C:\\p> ${cmd}\r\n╭─ Grok ─╮`, cmd)).toBe(false)
+    expect(detectTrustQuestion('Do you trust this folder?', cmd)).toBe(false)
   })
 })
 

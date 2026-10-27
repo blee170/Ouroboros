@@ -12,7 +12,7 @@ import type { HeldCard } from '@shared/board-trust'
 import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
-import { detectClaudeReady, detectLaunchExit, detectMissingCommand, endsAtShellPrompt, failureOf } from '@shared/status'
+import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf } from '@shared/status'
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
@@ -1995,7 +1995,12 @@ export function registerIpc(ctx: MainContext): void {
         log(`launch: ${nodeId} ${engine} exited at launch: ${exited}`)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} exited at launch (${exited.slice(0, 160)}). Check the card's options, then Restart it.` })
       } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
-      else if (command) {
+      else if (engine === 'grok' && detectTrustQuestion(out, command)) {
+        // the owner answers it in the card; its SessionStart hook then makes the card idle
+        clearTimeout(readyTimers.get(nodeId))
+        clearTimeout(exitChecks.get(nodeId))
+        board.setStatus(nodeId, { status: 'needs-you', statusDetail: 'permission: Grok asks whether to trust this folder. Answer in the card (y), and it starts.' })
+      } else if (command) {
         // any engine: a CLI that quit without an error we know leaves the shell on its prompt, and then goes quiet
         clearTimeout(exitChecks.get(nodeId))
         exitChecks.set(

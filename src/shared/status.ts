@@ -172,6 +172,15 @@ function wrapped(text: string): RegExp {
  * The shell's prompt (the text in front of the echoed launch line) and the output after that line. Null while the
  * echo is not there yet. The line may be echoed more than once (the shell redraws it): the last copy counts.
  */
+/**
+ * The CLI, after its own launch line, asks whether to trust the folder (Grok Build in a folder it has not seen:
+ * "Do you trust the contents of this directory?"). Its TUI draws words without spaces, so they are read joined.
+ */
+export function detectTrustQuestion(output: string, command: string): boolean {
+  const s = splitAtLaunch(output, command)
+  return Boolean(s) && /doyoutrust(this|the)(folder|directory|contentsofthis|filesinthis)/i.test(s!.after.replace(/\s+/g, '').slice(-3000))
+}
+
 function splitAtLaunch(output: string, command: string): { prompt: string; after: string } | null {
   const clean = stripAnsi(output)
   const cmd = command.trim()

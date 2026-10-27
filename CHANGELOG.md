@@ -4,6 +4,37 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **A Grok Bot can take a card's handoff without the owner pressing Send.**
+  - In Settings → Grok Bot, every bot has a "Send without asking me" switch. It is off unless the owner turns it on, so a research bot can be trusted while a bot with email or payments still waits.
+  - A handoff to a bot with the switch on goes at once.
+  - The owner gets a notification for each one, and it is logged. During an Autonomous run it also shows in the run report.
+  - The card is told it was sent "without asking the owner (they allowed this bot)".
+  - The handoff still waits for the owner's Send when:
+    - the bot has already sent 20 in 24 hours (the count is kept on disk, so a restart does not reset it);
+    - the task or context looks like it holds a key, token or password (API keys, GitHub/Slack/AWS/Google tokens, JWTs, bearer tokens, `key=`/`secret=` assignments, a password in an address, "password is …");
+    - the bot is not set up.
+  - If an automatic send fails, the handoff goes back to waiting for Send and the card is told.
+
+### Changed
+- The Conductor and the `handoff_to_grok_bot` tool no longer say that Grok Bot's results stay in its chat. With replies set up, they come back to the asking card as board mail. The tool also says which bots send without asking.
+
+### Verified
+- Unit tests:
+  - the hold rules: switch, setup, cap, secrets;
+  - secret shapes, including ordinary text left alone;
+  - the switch surviving a save;
+  - the bot menu.
+- A bug hunt (security) found no critical or high issues. Fixed from it:
+  - the cap resetting on restart;
+  - the remote error text reaching the card;
+  - secret patterns that missed some secrets and flagged ordinary text.
+- Not verified:
+  - a live automatic send;
+  - a card with file-write access editing `settings.json` in userData could turn the switch on. This exposure already existed for the saved bot keys.
+
 ## [0.18.0] — 2026-10-28
 
 ### Added

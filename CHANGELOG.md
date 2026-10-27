@@ -21,6 +21,16 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
   - **If `/clear` isn't confirmed within 30 s:** no note is sent, and the log and report say where the saved note is.
   - Every attempt is logged (`[relay]` in main.log). During an Autonomous run the report gets a "Fresh starts" section.
   - Claude cards only. Codex, Gemini and Grok cards have no `/clear` with hooks.
+- **Several Grok Bots, one per purpose.** For example: Personal (email, vendor replies, calendar) and Business (marketing research).
+  - **Settings → Grok Bot** now holds a list of up to 8 bots. Each has a name, a one-line purpose, its own routine webhook and its own key (stored encrypted).
+  - Names, purposes and webhooks save when a field loses focus. Each key saves with its own button.
+  - Your single bot from earlier versions shows up as the first entry, keeping its URL and key.
+  - **The Conductor picks the bot.** A new tool, `list_grok_bots`, lists each bot's name and purpose. `handoff_to_grok_bot` takes `bot` (a name).
+  - The Conductor's prompt now says that code stays with the cards on the board, while errands and long web research go to the bot whose purpose fits.
+  - With only one bot, `bot` can be left out.
+  - **Every send still waits for you.** The Today tab names the bot in the row, the review panel and the Send button.
+  - **A handoff is never sent to a bot other than the one it named:** if that bot was removed or renamed since, the send is refused. A freed id can go to a new bot.
+- The tool description now allows the personal details a task needs, but still no passwords or keys.
 
 ### Changed
 - **Phone Graph and Orbit: teams in colour, status as a ring.**
@@ -56,6 +66,9 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - **A Grok card asking "trust this folder?" now needs you.** It used to sit on "starting · launching grok". Grok asks this in a folder it hasn't seen. The card now shows "permission: Grok asks whether to trust this folder"; answer in the card and its SessionStart hook makes it idle. Live-probed: needs-you while asked, idle after the answer.
 - A test or dev launch with `--user-data-dir` leaves the global external-session hook in `~/.claude/settings.json` alone. This is the same commit as on `claude/context-relay`.
 
+### Security
+- Bots and keys can be written only through the Grok Bot settings calls. `settings.set` ignores them, so a stale Settings copy can't drop a key. `settings.get` leaves them out, so not even an encrypted key reaches the window.
+
 ### Verified (phone colours)
 - Local preview with the real page assets and CSP. The fake board was 13 cards in a tall, narrow stack with the Conductor at the bottom, like the owner's board. Shown at 375×812 in Graph and Orbit.
 - No console errors.
@@ -89,6 +102,16 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - **By hand, with the real CLI:** agent-file hooks fire, and `mcpServers` must be a list with names (a map is refused). The env reaches the server, and hook commands can reach 127.0.0.1.
 - Unit tests cover the agent file, the launch line, snake_case hook names, and launch-exit detection (a profile `error:`, a repainted prompt, a TUI error, a wrapped launch line, an oh-my-posh prompt).
 
+### Verified (Grok Bots)
+- **Built-app probe**, with a temp data folder seeded with an older single-bot URL, checked:
+  - that bot read as the first entry;
+  - two named bots saved, with the key encrypted on disk and the older fields removed;
+  - the Settings list never carried a key;
+  - `settings.set` could not overwrite the list;
+  - the Settings page showed both bots.
+- **Same probe, merged with `claude/grok-launcher`** (Grok cards don't start on main without it): a Grok Conductor got "find 10 badminton clubs for CSB marketing outreach". It read `list_grok_bots` and handed the task to **CSB**, not Personal. The handoff was discarded, so nothing went to Cursor.
+- Unit tests cover the list, the migration, picking a bot and the removed-or-renamed refusal.
+
 ### Not verified (fresh start)
 - A Conductor's "ask me" question answered from the phone, Discord or Today in the real app. The intercept is unit-tested only.
 - A real Autonomous run's report section.
@@ -98,6 +121,11 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - The worker topology rule (parent, Conductor, handoff line) live: the probe's refusal came from the target not being an agent card. Unit tests cover the rule.
 - `--always-approve` cards, and Autonomous mode, which still closes Grok cards at run start.
 - How long a role an agent file accepts. The Conductor's 13 KB file loaded.
+
+### Not verified (Grok Bots)
+- The Today tab's bot name in the built app. The probe looked while the tab was closed; the handoff did carry the name.
+- A real send to two different routines. The probe saved fake webhooks and discarded the handoff instead of sending it.
+- Apps you connect in Grok (Gmail, Calendar) are shared by every bot on that Grok account, which is how Grok works. To keep personal and business apps apart, use separate Grok accounts.
 
 ## [0.15.1] — 2026-10-27
 

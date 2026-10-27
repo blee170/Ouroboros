@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GROK_BOT_LIMITS, grokBotUrl, handoffPayload, newHandoff, scrubKey, type GrokHandoff } from '@shared/grokbot'
+import { GROK_BOT_LIMITS, botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, scrubKey, type GrokBot, type GrokHandoff } from '@shared/grokbot'
 import { sendToGrokBot } from '../src/main/grokbot'
 import { needsYou } from '@shared/today'
 
@@ -22,6 +22,82 @@ describe('grokBotUrl', () => {
       ''
     ])
       expect(grokBotUrl(bad)).toBeUndefined()
+  })
+})
+
+describe('Grok Bot list', () => {
+  const URL2 = 'https://api2.cursor.sh/automations/webhook/rt_two'
+  const two: GrokBot[] = [
+    { id: 'b1', name: 'Personal', purpose: 'email, vendor replies, calendar', url: URL_OK, keyEnc: 'enc1' },
+    { id: 'b2', name: 'CSB', purpose: 'marketing research', url: URL2 }
+  ]
+  it('reads the single bot of an older version as the first entry, and an empty list as none', () => {
+    expect(grokBots({ grokBotUrl: URL_OK, grokBotKeyEnc: 'enc' })).toEqual([{ id: 'b1', name: 'Grok Bot', url: URL_OK, keyEnc: 'enc' }])
+    expect(grokBots({})).toEqual([])
+    // once saved as a list, the old fields no longer count (even an empty list)
+    expect(grokBots({ grokBots: [], grokBotUrl: URL_OK })).toEqual([])
+  })
+  it('saves names, purposes and webhooks; a bot keeps its key by id, a new row gets a free id', () => {
+    const r = saveBots(two, [
+      { id: 'b2', name: ' CSB ', purpose: ' marketing   research ', url: URL2, keyEnc: 'forged' },
+      { name: 'Parents', url: '' },
+      { id: 'b1', name: 'Personal', url: URL_OK }
+    ])
+    expect(r).toEqual({
+      ok: true,
+      bots: [
+        { id: 'b2', name: 'CSB', purpose: 'marketing research', url: URL2 },
+        { id: 'b3', name: 'Parents' },
+        { id: 'b1', name: 'Personal', url: URL_OK, keyEnc: 'enc1' }
+      ]
+    })
+    // an id the owner never had is a new bot, not someone's key
+    expect(saveBots(two, [{ id: 'b9', name: 'X' }])).toEqual({ ok: true, bots: [{ id: 'b3', name: 'X' }] })
+  })
+  it('refuses a missing or duplicate name, a bad webhook, a twice-listed bot and too many', () => {
+    const err = (input: unknown): string => {
+      const r = saveBots(two, input)
+      return r.ok ? '' : r.error
+    }
+    expect(err('x')).toMatch(/list/)
+    expect(err([{ name: ' ' }])).toMatch(/name/)
+    expect(err([{ name: 'A' }, { name: 'a' }])).toMatch(/two bots/)
+    expect(err([{ name: 'A', url: 'https://evil.example/automations/webhook/x' }])).toMatch(/not a routine webhook/)
+    expect(err([{ id: 'b1', name: 'A' }, { id: 'b1', name: 'B' }])).toMatch(/twice/)
+    expect(err([{ name: 'A‮' }])).toMatch(/invisible/)
+    expect(err([{ name: 'x'.repeat(41) }])).toMatch(/over 40/)
+    expect(err(Array.from({ length: 9 }, (_, i) => ({ name: `n${i}` })))).toMatch(/at most 8/)
+  })
+  it('picks a bot by name or id in any case; with none named, the only one, else it lists them', () => {
+    expect(pickBot(two, 'csb')).toEqual({ ok: true, bot: two[1] })
+    expect(pickBot(two, 'B1')).toEqual({ ok: true, bot: two[0] })
+    expect(pickBot([two[0]], undefined)).toEqual({ ok: true, bot: two[0] })
+    const none = pickBot(two, '')
+    expect(none.ok).toBe(false)
+    expect(!none.ok && none.error).toContain('- Personal — email, vendor replies, calendar')
+    expect(!none.ok && none.error).toContain('- CSB — marketing research (not set up yet: no webhook or key)')
+    expect(pickBot(two, 'Work')).toMatchObject({ ok: false, error: expect.stringContaining('no bot "Work"') })
+    expect(pickBot([], 'x')).toMatchObject({ ok: false, error: expect.stringContaining('not set up a Grok Bot') })
+  })
+  it('never shows a key to Settings, and sends an older handoff to the first bot', () => {
+    expect(botViews(two)[0]).toEqual({ id: 'b1', name: 'Personal', purpose: 'email, vendor replies, calendar', url: URL_OK, hasKey: true })
+    expect(JSON.stringify(botViews(two))).not.toContain('enc1')
+    expect(botOf(two, {})).toBe(two[0])
+    expect(botOf(two, { bot: 'b2' })).toBe(two[1])
+    expect(botOf(two, { bot: 'gone' })).toBeUndefined()
+    // the id now belongs to another bot, or the bot was renamed: not the one the owner reviewed
+    expect(botOf(two, { bot: 'b2', botName: 'CSB' })).toBe(two[1])
+    expect(botOf(two, { bot: 'b2', botName: 'Notes' })).toBeUndefined()
+    // a name wins over another bot's id
+    expect(pickBot([...two, { id: 'b3', name: 'b1' }], 'b1')).toMatchObject({ ok: true, bot: { id: 'b3' } })
+    expect(botMenu(two).split('\n')).toHaveLength(2)
+  })
+  it('a handoff carries its bot; the same task to another bot is not a duplicate', () => {
+    const a = newHandoff({ card: 'c1', title: 'Conductor', task: 'find venues', bot: two[0] }, [], 'G1', 1)
+    expect(a).toMatchObject({ ok: true, handoff: { bot: 'b1', botName: 'Personal' } })
+    const list = a.ok ? [a.handoff] : []
+    expect(newHandoff({ card: 'c1', title: 'Conductor', task: 'find venues', bot: two[0] }, list, 'G2', 2).ok).toBe(false)
+    expect(newHandoff({ card: 'c1', title: 'Conductor', task: 'find venues', bot: two[1] }, list, 'G2', 2).ok).toBe(true)
   })
 })
 

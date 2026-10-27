@@ -21,7 +21,7 @@ import { applyProtection, checkCardToken, readProtection } from './rulesets'
 import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
-import { grokBotUrl, handoffPayload, newHandoff, type GrokHandoff } from '@shared/grokbot'
+import { botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, type GrokBot, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
 import type { RoleLibrary } from './roles'
 import { filterRoles } from '@shared/roles'
@@ -383,13 +383,19 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
+    grokBotList: () => {
+      const bots = grokBots(ctx.store.getSettings())
+      return bots.length ? `The owner's Grok Bots (pass the name as bot):\n${botMenu(bots)}` : 'The owner has not set up a Grok Bot (Settings → Grok Bot).'
+    },
     grokBotHandoff: (self, input) => {
       const n = board.nodes.get(self)
       if (!n) return { ok: false, error: 'unknown card' }
       // the agent cards that have the tool, and that board mail can tell the outcome to
       if (n.data.kind !== 'claude' && n.data.kind !== 'conductor') return { ok: false, error: 'only agent cards can hand tasks to Grok Bot' }
+      const picked = pickBot(grokBots(ctx.store.getSettings()), input.bot)
+      if (!picked.ok) return picked
       const last = s.grokBot.at(-1)
-      const r = newHandoff({ card: self, title: n.data.title, task: input.task, context: input.context }, s.grokBot, `G${last ? Number(last.id.slice(1)) + 1 : 1}`, Date.now())
+      const r = newHandoff({ card: self, title: n.data.title, task: input.task, context: input.context, bot: picked.bot }, s.grokBot, `G${last ? Number(last.id.slice(1)) + 1 : 1}`, Date.now())
       if (!r.ok) return r
       s.grokBot = [...s.grokBot.slice(-49), r.handoff]
       grokBotChanged(s)
@@ -1062,11 +1068,12 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
     log(`[grok-bot] ${id} discarded by the owner`)
     return tell(`The owner did not send your Grok Bot handoff ${id}. Do not ask again for the same task; carry on without it:\n${h.task}`)
   }
-  const st = ctx.store.getSettings()
-  const url = grokBotUrl(st.grokBotUrl)
-  const key = decryptToken(st.grokBotKeyEnc)
-  if (!url) return { ok: false, error: 'set the routine\'s webhook URL in Settings → Grok Bot first' }
-  if (!key) return { ok: false, error: st.grokBotKeyEnc ? 'the saved Grok Bot key could not be decrypted; paste it again in Settings → Grok Bot' : 'save the routine\'s key in Settings → Grok Bot first' }
+  const bot = botOf(grokBots(ctx.store.getSettings()), h)
+  if (!bot) return { ok: false, error: `the bot ${h.botName ? `"${h.botName}" ` : ''}is no longer in Settings → Grok Bot (removed or renamed); discard this handoff` }
+  const url = grokBotUrl(bot.url)
+  const key = decryptToken(bot.keyEnc)
+  if (!url) return { ok: false, error: `set ${bot.name}'s webhook URL in Settings → Grok Bot first` }
+  if (!key) return { ok: false, error: bot.keyEnc ? `${bot.name}'s saved key could not be decrypted; paste it again in Settings → Grok Bot` : `save ${bot.name}'s routine key in Settings → Grok Bot first` }
   grokSending.add(flight)
   try {
     const r = await sendToGrokBot({ url, key, payload: handoffPayload(h, basename(s.board.projectRoot || ''), Date.now()) })
@@ -1076,8 +1083,8 @@ async function resolveGrokHandoff(ctx: MainContext, s: WindowSession, id: string
       return { ok: false, error: r.error }
     }
     update({ state: 'sent', decidedAt: Date.now(), runUuid: r.runUuid, error: undefined })
-    log(`[grok-bot] ${id} sent by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
-    return tell(`The owner sent your handoff ${id} to Grok Bot${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`)
+    log(`[grok-bot] ${id} sent to ${bot.name} by the owner${r.runUuid ? ` (run ${r.runUuid})` : ''}`)
+    return tell(`The owner sent your handoff ${id} to Grok Bot "${bot.name}"${r.runUuid ? ` (run ${r.runUuid})` : ''}. Its result comes back where the owner's routine puts it (for example Notion), not as a board message; do not wait on it here.`)
   } finally {
     grokSending.delete(flight)
   }
@@ -2364,20 +2371,32 @@ export function registerIpc(ctx: MainContext): void {
     if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
     return resolveGrokHandoff(ctx, s, id, send === true)
   })
-  ipcMain.handle(IPC.grokBotSetKey, (_e, key: string) => {
+  // the list is written here and nowhere else (settings.set ignores it), and the older single-bot fields go once it is
+  const writeBots = (bots: GrokBot[]): void => void ctx.store.setSettings({ grokBots: bots, grokBotUrl: undefined, grokBotKeyEnc: undefined })
+  ipcMain.handle(IPC.grokBotBots, () => botViews(grokBots(ctx.store.getSettings())))
+  ipcMain.handle(IPC.grokBotSave, (_e, list: unknown) => {
+    const r = saveBots(grokBots(ctx.store.getSettings()), list)
+    if (!r.ok) return r
+    writeBots(r.bots)
+    log(`[grok-bot] bots saved: ${r.bots.map((b) => b.name).join(', ') || '(none)'}`)
+    return { ok: true, bots: botViews(r.bots) }
+  })
+  ipcMain.handle(IPC.grokBotSetKey, (_e, botId: string, key: string) => {
+    const bots = grokBots(ctx.store.getSettings())
+    if (!bots.some((b) => b.id === botId)) return { ok: false, hasKey: false, error: 'save the bot first' }
     const enc = encryptToken(String(key ?? '').replace(/\s+/g, ''))
-    ctx.store.setSettings({ grokBotKeyEnc: enc || undefined })
+    writeBots(bots.map((b) => (b.id === botId ? { ...b, keyEnc: enc || undefined } : b)))
     return { ok: true, hasKey: Boolean(enc) }
   })
-  ipcMain.handle(IPC.grokBotStatus, () => ({ hasKey: Boolean(decryptToken(ctx.store.getSettings().grokBotKeyEnc)) }))
-  ipcMain.handle(IPC.grokBotTest, async () => {
-    const st = ctx.store.getSettings()
-    const url = grokBotUrl(st.grokBotUrl)
-    const key = decryptToken(st.grokBotKeyEnc)
+  ipcMain.handle(IPC.grokBotTest, async (_e, botId: string) => {
+    const bot = grokBots(ctx.store.getSettings()).find((b) => b.id === botId)
+    if (!bot) return { ok: false, error: 'save the bot first' }
+    const url = grokBotUrl(bot.url)
+    const key = decryptToken(bot.keyEnc)
     if (!url) return { ok: false, error: 'the webhook URL is not a Grok Bot routine webhook (https://api2.cursor.sh/automations/webhook/…)' }
     if (!key) return { ok: false, error: 'no key saved' }
     const r = await sendToGrokBot({ url, key, payload: { source: 'ouroboros', kind: 'test', note: 'Connection test from Ouroboros: no task, nothing to do.', sentAt: new Date().toISOString() } })
-    log(`[grok-bot] test: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
+    log(`[grok-bot] test ${bot.name}: ${r.ok ? `run started${r.runUuid ? ` (${r.runUuid})` : ''}` : r.error}`)
     return r.ok ? r : { ok: false, error: r.error }
   })
   ipcMain.handle(IPC.githubProtection, (e) => readProtection(sessionOf(e)?.board.projectRoot ?? ''))
@@ -2479,11 +2498,18 @@ export function registerIpc(ctx: MainContext): void {
     return err ? { ok: false, path: r.abs, error: err } : { ok: true, path: r.abs }
   })
 
-  ipcMain.handle(IPC.settingsGet, () => store.getSettings())
+  // the bots and their (encrypted, or plain where the OS has no keyring) keys stay in main: Settings reads grokBot.bots
+  const forRenderer = ({ grokBots: _b, grokBotKeyEnc: _k, ...st }: AppSettings): AppSettings => st
+  ipcMain.handle(IPC.settingsGet, () => forRenderer(store.getSettings()))
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => {
+    // the bots and their keys go through grokBot.save / setKey: a stale Settings copy must not drop a key
+    if (patch && typeof patch === 'object') {
+      const { grokBots: _b, grokBotKeyEnc: _k, grokBotUrl: _u, ...rest } = patch
+      patch = rest
+    }
     const next = store.setSettings(patch)
     if (patch && typeof patch === 'object' && 'voice' in patch) registerVoiceHotkey(ctx)
-    return next
+    return forRenderer(next)
   })
 
   ipcMain.handle(IPC.worktreeCreate, async (_e, projectRoot: string, name: string) => {

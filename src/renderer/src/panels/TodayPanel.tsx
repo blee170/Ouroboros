@@ -61,7 +61,6 @@ export function TodayPanel() {
   const needs = useMemo(() => needsYou({ cards, tasks, approvals, held, handoffs, decisions }), [cards, tasks, approvals, held, handoffs, decisions])
   const [sending, setSending] = useState<ReadonlySet<string>>(new Set())
   const [reviewing, setReviewing] = useState<string | null>(null)
-  const routineTail = useBoard((s) => (s.settings.grokBotUrl ?? '').split('/').pop()?.slice(-8) || '(not set)')
   const today = useMemo(() => todayView({ cards, tasks, now }), [cards, tasks, now])
 
   const jump = (id: string | undefined): void => {
@@ -128,7 +127,7 @@ export function TodayPanel() {
                     {open && (
                       <div className="today-handoff">
                         <div className="muted small">
-                          Everything below leaves this machine, to Grok Bot routine <code>…{routineTail}</code>:
+                          Everything below leaves this machine, to Grok Bot <b>{h.botName ?? '(your first bot)'}</b>:
                         </div>
                         <div className="small">
                           <b>Task</b>
@@ -153,7 +152,7 @@ export function TodayPanel() {
                         Discard
                       </button>
                       <button className="btn small primary" disabled={busy || !open} title={open ? 'Send exactly what is shown above' : 'Review what would be sent first'} onClick={() => void decideHandoff(h.id, true)}>
-                        {busy ? 'Sending…' : 'Send to Grok Bot'}
+                        {busy ? 'Sending…' : `Send to ${h.botName ?? 'Grok Bot'}`}
                       </button>
                     </div>
                   </>

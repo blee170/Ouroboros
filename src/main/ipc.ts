@@ -203,7 +203,7 @@ function viewing(s: WindowSession, nodeId: string): boolean {
 /** Claude cards' inboxes, registered by their board MCP server (in memory only: the token never reaches a file or the log). */
 const inboxes = new Map<string, InboxAddress>()
 
-function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token: unknown): { ok: boolean; error?: string } {
+export function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token: unknown): { ok: boolean; error?: string } {
   const n = s.board.nodes.get(nodeId)
   if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return { ok: false, error: 'only Claude cards have an inbox' }
   if (!validInbox(socket)) return { ok: false, error: 'not a Claude Code inbox path' }
@@ -213,6 +213,11 @@ function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token:
   if (had && had.socket !== socket) return { ok: false, error: 'this card already has an inbox' }
   inboxes.set(nodeId, { socket, ...(token ? { token } : {}) })
   log(`inbox: ${nodeId} registered (text goes into its session, not its terminal)`)
+  // Claude Code sends no SessionStart to an HTTP hook, and the ready text in the terminal can be missed: its board
+  // server registering the inbox means the CLI is up
+  const wasFailed = launchFailed.delete(nodeId)
+  if (wasFailed) log(`launch: ${nodeId} registered its inbox; no longer marked failed`)
+  if (n.data.status === 'starting' || wasFailed) s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
   return { ok: true }
 }
 

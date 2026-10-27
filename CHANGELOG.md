@@ -4,6 +4,20 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Claude cards stuck on "Starting · launching claude" after a restart.**
+  - Claude Code does not send SessionStart to an HTTP hook; this was measured on 2.1.310 and 2.1.311, which send UserPromptSubmit and Stop that way but never SessionStart. Readiness therefore rested on spotting the TUI's start text in the terminal, and after one restart 11 of 13 cards missed it. They kept running but stayed under Working until they were given a turn.
+  - A card now turns ready (idle) as soon as its board server registers the Claude Code inbox. That only happens once the CLI is up.
+  - A card wrongly marked as having failed at launch is cleared the same way.
+
+### Verified
+- Unit test: a starting card turns ready on inbox registration, and a working card is left alone. The test goes red with the fix line removed.
+- Not verified:
+  - in the packaged app;
+  - why the terminal text was missed that time.
+
 ## [0.17.0] — 2026-10-28
 
 ### Added

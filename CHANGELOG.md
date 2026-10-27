@@ -4,6 +4,32 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **Ouro can tell you it's ready when you get in the car.** Settings → Phone → *Make a MacroDroid key* makes a key that can do one thing: `POST /m/api/notify {"event":"car"}`. Any other phone route with that key answers 403. The panel shows the URL, the `Authorization: Bearer` header to copy, and the MacroDroid steps:
+  - trigger: Bluetooth connected to the car;
+  - action: HTTP POST over Tailscale.
+- **About 75 s after the call, Ouro DMs:** "🚗 Ouro is ready. Reply to this message to give me work." plus the usual status line. The wait gives Discord's mobile push time to work when the desktop client was active a moment ago.
+- **Repeat calls:**
+  - Another call while that message is waiting, or within 10 minutes of it, does nothing.
+  - If the bot isn't connected when the time comes, nothing is said, and the next call may try again.
+- The key is shown once and stored only as a hash. Making a new one ends the old one, and the device list labels it a car-alert key, with Revoke.
+
+### Verified (car key)
+- Unit tests:
+  - the notify-only route: 200 on car, 400 on a bad event, 403 elsewhere;
+  - an unknown scope in the devices file is dropped;
+  - the delay, the 10-minute gap, and a read-back still waiting when the car message goes out.
+- Built-app probe (temp userData, the phone server on the Tailscale address):
+  - the key panel shows the URL and steps;
+  - the key is listed as a car-alert key;
+  - a call from the PC itself is refused.
+
+### Not verified
+- **The real phone → PC call** from MacroDroid over Tailscale, and the DM reaching Android Auto.
+- **The 75 s timing.** It is matched to a Discord *mobile push delay* of 1 minute.
+
 ## [0.15.1] — 2026-10-27
 
 ### Changed

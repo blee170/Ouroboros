@@ -40,7 +40,19 @@ export type Intent =
   | { type: 'pick'; index: number }
   | { type: 'tell'; text: string }
 
-export const OURO_LIMITS = { spokenChars: 350, messageChars: 1800, confirmMs: 3 * 60_000, noticeGapMs: 60_000, relayMs: 20 * 60_000, relays: 3, inChars: 2000 } as const
+export const OURO_LIMITS = {
+  spokenChars: 350,
+  messageChars: 1800,
+  confirmMs: 3 * 60_000,
+  noticeGapMs: 60_000,
+  relayMs: 20 * 60_000,
+  relays: 3,
+  inChars: 2000,
+  /** the car ready message waits past Discord's mobile-notification delay (the owner sets it to 1 minute): a DM sent while the PC still counts as active never reaches the phone */
+  carDelayMs: 75_000,
+  /** a car that reconnects (lights, a tunnel) does not say ready again within this */
+  carGapMs: 10 * 60_000
+} as const
 
 /** Pure: Korean when the text has Hangul in it, else English. */
 export function langOf(text: string): Lang {
@@ -182,6 +194,11 @@ export function needLine(n: OuroNeed, lang: Lang): string {
 }
 
 /** Pure: the board in one or two sentences, then the first thing waiting. */
+/** Pure: what Ouro says when the phone connects to the car, so there is a message to reply to by voice. */
+export function carReadyLine(s: OuroStatus, lang: Lang): string {
+  return lang === 'ko' ? `🚗 우로 준비됐어요. 이 메시지에 답장해서 일을 시켜 주세요. ${statusLine(s, 'ko')}` : `🚗 Ouro is ready. Reply to this message to give me work. ${statusLine(s, 'en')}`
+}
+
 export function statusLine(s: OuroStatus, lang: Lang): string {
   const ko = lang === 'ko'
   const run = s.autonomous ? (ko ? ' 자율 실행 중이에요.' : ' An autonomous run is on.') : ''

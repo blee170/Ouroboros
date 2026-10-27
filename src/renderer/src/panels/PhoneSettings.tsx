@@ -24,6 +24,8 @@ export function PhoneSettings() {
   const [ifaces, setIfaces] = useState<Iface[]>([])
   const [pair, setPair] = useState<{ url: string; expiresAt: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** a MacroDroid key just made: shown here once, never again */
+  const [notifyKey, setNotifyKey] = useState<{ key: string; url: string } | null>(null)
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     window.ouroboros.phone
@@ -60,6 +62,13 @@ export function PhoneSettings() {
       setPair(r)
       setNow(Date.now())
     }
+  }
+  const makeKey = async (): Promise<void> => {
+    const r = await window.ouroboros.phone.notifyKey().catch((e: Error) => ({ ok: false as const, error: e.message }))
+    if (!r.ok) return setError(r.error)
+    setError(null)
+    setNotifyKey({ key: r.key, url: r.url })
+    setStatus(await window.ouroboros.phone.status())
   }
   const left = pair ? Math.max(0, Math.round((pair.expiresAt - now) / 1000)) : 0
   const chosen = ifaces.find((i) => i.address === status.host)
@@ -116,13 +125,52 @@ export function PhoneSettings() {
           </div>
         </div>
       )}
+      {status.url && (
+        <div className="row">
+          <span className="small muted">Car alerts: when the phone joins the car, Ouro sends a ready message on Discord, so you can reply by voice.</span>
+          <span className="spacer" />
+          <button className="btn small" onClick={() => void makeKey()} title="A key that can only say the car connected">
+            Make a MacroDroid key
+          </button>
+        </div>
+      )}
+      {notifyKey && (
+        <div className="phone-key small">
+          <div>
+            Shown once; copy it into MacroDroid now. It can only report the car, nothing else. Making a new key ends this one; Revoke below removes it.
+          </div>
+          <ol>
+            <li>
+              MacroDroid → new macro → Trigger: <b>Bluetooth event</b> → Connected → your car.
+            </li>
+            <li>
+              Action: <b>HTTP request</b> → POST → URL <code>{notifyKey.url}</code>{' '}
+              <button className="btn small" onClick={() => void navigator.clipboard.writeText(notifyKey.url)}>
+                Copy
+              </button>
+            </li>
+            <li>
+              Header <code>Authorization</code> = <code>Bearer {notifyKey.key.slice(0, 6)}…</code>{' '}
+              <button className="btn small" onClick={() => void navigator.clipboard.writeText(`Bearer ${notifyKey.key}`)}>
+                Copy
+              </button>
+            </li>
+            <li>
+              Body (content type <code>application/json</code>): <code>{'{"event":"car"}'}</code>
+            </li>
+          </ol>
+          <div className="muted">
+            Ouro waits 75 seconds before it writes, so Discord's mobile notification delay (set it to 1 minute) has passed. Tailscale must be on on the phone. A car that reconnects within 10 minutes is not greeted again.
+          </div>
+        </div>
+      )}
       {error && <div className="small error-text">{error}</div>}
       {status.devices.length > 0 && (
         <div className="phone-devices">
           {status.devices.map((d) => (
             <div key={d.id} className="row">
               <span>{d.name}</span>
-              <span className="small muted">paired {new Date(d.createdAt).toLocaleDateString()}{d.lastSeen ? ` · seen ${new Date(d.lastSeen).toLocaleString()}` : ''}</span>
+              <span className="small muted">{d.scope === 'notify' ? 'car-alert key, made' : 'paired'} {new Date(d.createdAt).toLocaleDateString()}{d.lastSeen ? ` · seen ${new Date(d.lastSeen).toLocaleString()}` : ''}</span>
               <span className="spacer" />
               <button className="btn small danger" onClick={() => void window.ouroboros.phone.revoke(d.id).then(setStatus)}>
                 Revoke

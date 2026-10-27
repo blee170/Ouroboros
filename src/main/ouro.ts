@@ -7,7 +7,7 @@
  * "응" within three minutes. Anything that is not a command goes to the Conductor, and its next replies come back.
  */
 import { DiscordBot, type DiscordMessage, type DiscordState } from './discord'
-import { OURO_LIMITS, confirmLine, conductorPrompt, helpLine, howTo, intentOf, isOnlyYes, langOf, matchAnswer, needLine, readableAloud, soundsLikeNo, spoken, statusLine, titleOf, type Lang, type OuroNeed, type OuroStatus } from '@shared/ouro'
+import { OURO_LIMITS, carReadyLine, confirmLine, conductorPrompt, helpLine, howTo, intentOf, isOnlyYes, langOf, matchAnswer, needLine, readableAloud, soundsLikeNo, spoken, statusLine, titleOf, type Lang, type OuroNeed, type OuroStatus } from '@shared/ouro'
 
 export type OuroResult = { ok: boolean; error?: string; warning?: string }
 
@@ -71,6 +71,9 @@ export class Ouro {
   private lastNotice = 0
   private greeted = false
   private noticeTimer?: unknown
+  /** the car ready message: waiting to be said, and when the car last asked */
+  private carTimer?: unknown
+  private lastCar = -Infinity
   private queue: Promise<void> = Promise.resolve()
   private readonly d: Required<OuroDeps>
 
@@ -96,6 +99,8 @@ export class Ouro {
     this.botKey = want
     this.pending = this.relay = this.focus = undefined
     this.greeted = false
+    if (this.carTimer !== undefined) this.d.clearTimeout(this.carTimer)
+    this.carTimer = undefined
     if (!want) return
     const bot = this.d.makeBot(cfg.token!, cfg.ownerId!)
     this.bot = bot
@@ -128,6 +133,32 @@ export class Ouro {
 
   stop(): void {
     this.configure({ ...this.cfg, enabled: false })
+  }
+
+  /**
+   * The phone joined the car (an automation app on it said so): after Discord's mobile-notification delay, say ready
+   * with the board's state, so the owner has a message to reply to by voice. A car that reconnects within carGapMs
+   * is not told twice; queued is false when nothing new was scheduled.
+   */
+  carReady(): { ok: true; queued: boolean; inMs: number } | { ok: false; error: string } {
+    if (!this.bot) return { ok: false, error: 'Ouro is off (Settings → Ouro)' }
+    const now = this.d.now()
+    if (this.carTimer !== undefined || now - this.lastCar < OURO_LIMITS.carGapMs) return { ok: true, queued: false, inMs: 0 }
+    this.carTimer = this.d.setTimeout(() => {
+      this.carTimer = undefined
+      const bot = this.bot
+      // not said: the next car event may try again at once
+      if (!bot || bot.state !== 'ready') return this.h.log('[ouro] car ready not said: the bot is not connected')
+      this.lastCar = this.d.now()
+      // the first thing that waits is in this message: it is not announced again as new, and an answer goes to it,
+      // unless the owner is in the middle of a read-back (that yes stays with what they heard)
+      const st = this.h.status()
+      if (st.needs[0]) this.known.add(keyOf(st.needs[0]))
+      if (!this.pending) this.focus = st.needs[0] ?? this.focus
+      this.lastNotice = this.d.now()
+      this.say(carReadyLine(st, this.lang), Boolean(this.pending))
+    }, OURO_LIMITS.carDelayMs)
+    return { ok: true, queued: true, inMs: OURO_LIMITS.carDelayMs }
   }
 
   status(): { state: DiscordState; detail: string; username: string } {

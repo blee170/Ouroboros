@@ -37,6 +37,24 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - **A second Ouroboros started with `--user-data-dir` (a test or dev launch) no longer rewrites the global external-session hook in `~/.claude/settings.json`,** even when it gets the fixed port.
   - Before, it put its own token there, and the owner's app lost its external sessions until it restarted.
   - It also took the fixed port while the owner's app restarted, which pushed the owner's app onto a random port.
+- **Grok cards start again, as worker or Conductor.**
+  - **What was wrong:** Grok Build 1.0.70 has no `--plugin-dir`. The card's CLI quit on the launch line, and the role prompt was then typed into PowerShell.
+  - **New launch:** `grok --agent <file>`. The per-card agent file carries:
+    - the lifecycle hooks;
+    - the board MCP server (mail-only for workers);
+    - the role, as the file's body, which Grok adds to its own coding prompt.
+
+    The role is no longer typed as a first message on Windows.
+  - `GROK_CONFIG_PATH` can't carry hooks or MCP servers: Grok's overlay keeps only soft settings. Agent files can.
+  - **Your Claude Code setup stays out of Grok cards:** the card turns off Grok's Claude-compatible hooks and MCP servers (`GROK_CLAUDE_HOOKS_ENABLED=0`, `GROK_CLAUDE_MCPS_ENABLED=0`). Otherwise a Grok card's events also hit the global external-session hook, and your Claude MCP servers load beside the board's. Claude Code plugins still load in Grok.
+  - **Grok hook events reach the board.** Grok sends its event name in snake_case (`user_prompt_submit`) next to the Claude-style one, and the hook helper now reads both. Before, every Grok hook was dropped.
+- **A CLI that quits at launch is no longer taken for a running card (any engine).**
+  - Each card's output is read after its own launch line.
+  - It counts as an exit when there is an `error:` line, then the shell's prompt again or a usage text, or when the output goes quiet for 6 s on the shell's prompt (any prompt style, read from the line in front of the launch command).
+  - The card shows "failed: … exited at launch" and takes no prompts.
+  - A wrong reading clears itself at the card's first hook event.
+- **A Grok card asking "trust this folder?" now needs you.** It used to sit on "starting · launching grok". Grok asks this in a folder it hasn't seen. The card now shows "permission: Grok asks whether to trust this folder"; answer in the card and its SessionStart hook makes it idle. Live-probed: needs-you while asked, idle after the answer.
+- A test or dev launch with `--user-data-dir` leaves the global external-session hook in `~/.claude/settings.json` alone. This is the same commit as on `claude/context-relay`.
 
 ### Verified (phone colours)
 - Local preview with the real page assets and CSP. The fake board was 13 cards in a tall, narrow stack with the Conductor at the bottom, like the owner's board. Shown at 375×812 in Graph and Orbit.
@@ -53,10 +71,33 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - **What the hooks actually do:** the note prompt arrives through the inbox, and its UserPromptSubmit carries the prompt text, which arms the capture. Claude Code 2.1.310 sends no SessionStart after `/clear`, only SessionEnd.
 - Unit tests cover: the rules; the runner (note, short note, cut turn, busy after the note, `/clear` not confirmed, no note in time, the Conductor ask with yes/no/expired); and the board capture (arming, a cut by another prompt, a late note swallowed, the clear seen through either hook). Typecheck, build and all tests pass.
 
+### Verified (Grok)
+- **Live probe in the built app:** a Grok Conductor card on Grok 4.7 through SuperGrok, with a temp data folder. All of these went through:
+  - SessionStart came from the card's hooks;
+  - owner mail, then `check_inbox`, then a board tool (`SPIKE-M1 cards=1`) and an ack;
+  - `task_create` reached the ledger;
+  - it answered "ROLE: Conductor";
+  - the board saw working → idle;
+  - the Stop hook brought the reply in.
+- **Live probe in the built app:** a Grok worker card, same setup. All of these went through:
+  - it started from its hooks and went idle;
+  - owner mail was read and acked;
+  - its ouroboros tools were the mail set only (`send_message`, `check_inbox`, `ack`, `ask_owner`), with no board tools;
+  - a message to a non-agent card was refused;
+  - the board saw working → done, and the Stop hook brought the reply in.
+- `~/.claude/settings.json` was unchanged by either probe (checked by hash).
+- **By hand, with the real CLI:** agent-file hooks fire, and `mcpServers` must be a list with names (a map is refused). The env reaches the server, and hook commands can reach 127.0.0.1.
+- Unit tests cover the agent file, the launch line, snake_case hook names, and launch-exit detection (a profile `error:`, a repainted prompt, a TUI error, a wrapped launch line, an oh-my-posh prompt).
+
 ### Not verified (fresh start)
 - A Conductor's "ask me" question answered from the phone, Discord or Today in the real app. The intercept is unit-tested only.
 - A real Autonomous run's report section.
 - A card on a 200k model.
+
+### Not verified (Grok)
+- The worker topology rule (parent, Conductor, handoff line) live: the probe's refusal came from the target not being an agent card. Unit tests cover the rule.
+- `--always-approve` cards, and Autonomous mode, which still closes Grok cards at run start.
+- How long a role an agent file accepts. The Conductor's 13 KB file loaded.
 
 ## [0.15.1] — 2026-10-27
 

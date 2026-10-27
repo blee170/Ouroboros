@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectClaudeReady, detectMissingCommand, failureOf, reduceHook } from '@shared/status'
+import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf, reduceHook } from '@shared/status'
 
 describe('reduceHook', () => {
   it('maps lifecycle events to statuses', () => {
@@ -117,5 +117,50 @@ describe('detectMissingCommand', () => {
   it('stays quiet on a normal launch and on the echoed command line', () => {
     expect(detectMissingCommand('PS C:\proj> claude --name "x" --append-system-prompt "if a command is not found, say so"\r\nClaude Code v2.1')).toBeNull()
     expect(detectMissingCommand('')).toBeNull()
+  })
+})
+
+describe('detectTrustQuestion', () => {
+  const cmd = '& grok --agent C:\\a\\n1.grok-agent.md'
+  it("reads Grok's folder-trust question after the launch line, drawn with or without spaces", () => {
+    // what the probe saw on 2026-10-27: the TUI draws the words joined
+    expect(detectTrustQuestion(`PS C:\\p> ${cmd}\r\n~/A/L/Temp/x Doyoutrustthecontentsofthisdirectory?C:\\p GrokBuildmayrunormodify… Yes, proceedyNo, quitn`, cmd)).toBe(true)
+    expect(detectTrustQuestion(`PS C:\\p> ${cmd}\r\nDo you trust the contents of this directory?\r\n Yes, proceed (y)`, cmd)).toBe(true)
+  })
+  it('ignores the question before the launch line and a card that has not echoed it yet', () => {
+    expect(detectTrustQuestion(`Do you trust this folder?\r\nPS C:\\p> ${cmd}\r\n╭─ Grok ─╮`, cmd)).toBe(false)
+    expect(detectTrustQuestion('Do you trust this folder?', cmd)).toBe(false)
+  })
+})
+
+describe('detectLaunchExit / endsAtShellPrompt', () => {
+  // what a Grok card printed when its CLI refused an option (spike, 2026-10-27): the echoed line, the error, the prompt
+  const grokCmd = '& grok --plugin-dir C:\\data\\n1.grok'
+  const grokRefused =
+    'PS C:\\Users\\me\\proj> & grok --plugin-dir C:\\data\\n1.grok\r\n' +
+    "error: unexpected argument '--plugin-dir' found\r\n\r\n  tip: to pass '--plugin-dir' as a value, use '-- --plugin-dir'\r\n\r\n" +
+    'Usage: grok [OPTIONS] [PROMPT] [COMMAND]\r\n\r\nFor more information, try \'--help\'.\r\n\u001b]0;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\u0007PS C:\\Users\\me\\proj> '
+  it('reads an error after the launch line, followed by the shell prompt or a usage text, as an exit at launch', () => {
+    expect(detectLaunchExit(grokRefused, grokCmd)).toBe("error: unexpected argument '--plugin-dir' found")
+    expect(detectLaunchExit('user@box:~/p$ codex --bogus\nerror: unknown option --bogus\nuser@box:~/p$ ', 'codex --bogus')).toBe('error: unknown option --bogus')
+    expect(detectLaunchExit('C:\\p>claude --x\r\nerror: unknown option \'--x\'\r\n\r\nC:\\p>', 'claude --x')).toBe("error: unknown option '--x'")
+    // a launch line the narrow card wrapped mid-word
+    expect(detectLaunchExit('PS C:\\p> & grok --plug\r\nin-dir C:\\data\\n1.gr\r\nok\r\nerror: bad\r\nPS C:\\p> ', grokCmd)).toBe('error: bad')
+  })
+  it('ignores a shell profile error, a repainted prompt and an error the CLI keeps running through', () => {
+    // the profile prints an error before the launch line is typed
+    expect(detectLaunchExit("error: fnm not configured\r\nPS C:\\p> & grok --agent C:\\a.md\r\n╭─ Grok ─╮", '& grok --agent C:\\a.md')).toBeNull()
+    // the terminal repaints the prompt line when the card is resized: two prompts, no error
+    expect(detectLaunchExit('PS C:\\p> & grok --agent C:\\a.md\r\nPS C:\\p> & grok --agent C:\\a.md', '& grok --agent C:\\a.md')).toBeNull()
+    // an error drawn inside the TUI, with no prompt after it
+    expect(detectLaunchExit('PS C:\\p> & grok\r\n╭─ Grok ─╮\r\n│ Error: MCP server x failed to start │\r\n╰──╯', '& grok')).toBeNull()
+    // the launch line not echoed yet
+    expect(detectLaunchExit('error: x\r\nPS C:\\p> ', '& grok --agent C:\\a.md')).toBeNull()
+  })
+  it('spots the shell back on its own prompt (any prompt style), not the launch line or a running TUI', () => {
+    expect(endsAtShellPrompt(grokRefused, grokCmd)).toBe(true)
+    expect(endsAtShellPrompt('~\\p ❯ & grok --agent C:\\a.md\r\nnot logged in\r\n~\\p ❯ ', '& grok --agent C:\\a.md')).toBe(true)
+    expect(endsAtShellPrompt('PS C:\\p> & grok --agent C:\\a.md', '& grok --agent C:\\a.md')).toBe(false)
+    expect(endsAtShellPrompt('PS C:\\p> & grok --agent C:\\a.md\r\n╭─ Grok ─╮ ready > ', '& grok --agent C:\\a.md')).toBe(false)
   })
 })

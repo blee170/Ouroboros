@@ -6,8 +6,8 @@
  * Gemini CLI:  lifecycle via `hooks` and the board MCP via `mcpServers`, both written to a per-card
  *              settings file pointed at by GEMINI_CLI_SYSTEM_SETTINGS_PATH (merged with the user's own:
  *              hook arrays concat, mcpServers shallow-merge); role prompt via `-i` (first message).
- * Grok Build:  lifecycle hooks and the board MCP from a per-card plugin folder passed with `--plugin-dir`;
- *              role prompt via `--rules` (posix) or as the first message.
+ * Grok Build:  lifecycle hooks, the board MCP and the role prompt from a per-card agent file passed with
+ *              `--agent` (frontmatter + body).
  */
 import type { ClaudeOptions } from '@shared/types'
 import type { ShellKind } from './pty-manager'
@@ -217,8 +217,16 @@ export function buildGeminiLaunch(input: EngineLaunchInput, settingsPath: string
   }
 }
 
-/** Per-card plugin folder for Grok Build: name → contents (relative paths). */
-export function buildGrokPlugin(input: EngineLaunchInput): Record<string, string> {
+/** Grok switches that keep the owner's Claude Code hooks and MCP servers (~/.claude) out of a card: they would post its events as an outside session and add a second board server. */
+export const GROK_CARD_ENV = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CLAUDE_MCPS_ENABLED: '0' }
+
+/**
+ * Per-card agent definition for Grok Build (`--agent <file>`): YAML frontmatter with the lifecycle hooks and the board
+ * MCP server, and the role as the body, which Grok adds to its own coding prompt. Grok 1.0.70 has no flag for a plugin
+ * folder or an MCP config, and its GROK_CONFIG_PATH overlay drops hooks and MCP servers; a user agent file may declare
+ * both. JSON values are valid YAML flow values, so the frontmatter is written as JSON.
+ */
+export function buildGrokAgent(input: EngineLaunchInput): string {
   // Which shell Grok runs a hook command in is not documented. A line whose first word is unquoted reads the same in
   // sh, cmd.exe and PowerShell (a leading quote is a string in PowerShell, and cmd /c strips the outer quotes of a line
   // that starts with one); later words are double-quoted only when they need it, with forward slashes.
@@ -232,31 +240,39 @@ export function buildGrokPlugin(input: EngineLaunchInput): Record<string, string
   const handler = { type: 'command', command: hookCommand, timeout: 10 }
   const hooks: Record<string, unknown[]> = {}
   for (const ev of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop', 'StopFailure', 'Notification', 'SessionEnd']) hooks[ev] = [{ hooks: [handler] }]
-  const mcpServers: Record<string, unknown> = {
-    ouroboros: {
+  // an agent file lists its servers by name (a map is refused)
+  const mcpServers: Array<Record<string, unknown>> = [
+    {
+      name: 'ouroboros',
       command: input.nodeBin,
       args: [input.mcpScriptPath],
       env: { OUROBOROS_URL: input.baseUrl, OUROBOROS_TOKEN_FILE: input.mcpTokenFile, OUROBOROS_SELF_ID: input.nodeId, ...(input.boardTools ? {} : { OUROBOROS_TOOLS: 'mail' }) }
     }
+  ]
+  // the board server keeps its name; a spec that is not an object is skipped (it would spread into nonsense)
+  for (const [name, spec] of Object.entries(input.claude.mcpServers ?? {})) {
+    if (name !== 'ouroboros' && spec && typeof spec === 'object' && !Array.isArray(spec)) mcpServers.push({ ...(spec as object), name })
   }
-  for (const [name, spec] of Object.entries(input.claude.mcpServers ?? {})) mcpServers[name] = spec
-  const manifest = JSON.stringify({ name: 'ouroboros-card', version: '1.0.0', description: 'Ouroboros card lifecycle hooks and board tools' }, null, 2)
-  // Grok reads both its own and Claude Code's plugin layout; both manifests point at the same hooks and MCP files
-  return {
-    '.grok-plugin/plugin.json': manifest,
-    '.claude-plugin/plugin.json': manifest,
-    'hooks/hooks.json': JSON.stringify({ hooks }, null, 2),
-    '.mcp.json': JSON.stringify({ mcpServers }, null, 2)
-  }
+  const role = input.rolePrompt?.trim() || 'You are an agent card on the Ouroboros board. Work on what the owner or your Conductor gives you.'
+  return [
+    '---',
+    `name: ouroboros-card-${input.nodeId.replace(/[^\w-]/g, '')}`,
+    'description: Ouroboros card (lifecycle hooks, board tools and role)',
+    `mcpServers: ${JSON.stringify(mcpServers)}`,
+    `hooks: ${JSON.stringify(hooks)}`,
+    '---',
+    role,
+    ''
+  ].join('\n')
 }
 
 /**
- * Grok Build: lifecycle hooks and the board MCP from a per-card plugin folder (`--plugin-dir`), so ~/.grok stays
- * untouched; the role prompt goes in with `--rules` where the shell can carry it, else as the first message.
+ * Grok Build: hooks, the board MCP server and the role from a per-card agent file (`--agent`), so ~/.grok stays
+ * untouched and the role never has to be typed as a message.
  */
-export function buildGrokLaunch(input: EngineLaunchInput, pluginDir: string): EngineLaunch {
+export function buildGrokLaunch(input: EngineLaunchInput, agentPath: string): EngineLaunch {
   const { claude, shell } = input
-  const args: string[] = ['--plugin-dir', pluginDir]
+  const args: string[] = ['--agent', agentPath]
   if (claude.model) args.push('-m', claude.model)
   switch (claude.permissionMode) {
     case 'auto':
@@ -270,18 +286,10 @@ export function buildGrokLaunch(input: EngineLaunchInput, pluginDir: string): En
   if (claude.resume) args.push('-r', claude.resume)
   else if (claude.continue) args.push('-c')
   if (claude.extraArgs?.length) args.push(...claude.extraArgs)
-  const role = input.rolePrompt?.trim()
-  // same rule as Codex: only posix single quotes carry a long multi-line role exactly
-  const inlineRole = Boolean(role) && shell === 'posix'
   const prefix = shell === 'powershell' ? '& grok ' : 'grok '
-  const line = (a: string[]): string => (prefix + a.map((x) => quoteFor(x, shell, false)).join(' ')).trim()
-  let command = line(inlineRole && role ? [...args, '--rules', role] : args)
-  let roleInline = inlineRole
-  if (roleInline && command.length > MAX_COMMAND_LINE[shell]) {
-    roleInline = false
-    command = line(args)
+  return {
+    command: (prefix + args.map((x) => quoteFor(x, shell, false)).join(' ')).trim(),
+    env: { ...GROK_CARD_ENV },
+    files: { [agentPath]: buildGrokAgent(input) }
   }
-  const files: Record<string, string> = {}
-  for (const [rel, text] of Object.entries(buildGrokPlugin(input))) files[`${pluginDir}/${rel}`] = text
-  return { command, initialPrompt: role && !roleInline ? roleAsMessage(role) : undefined, files }
 }

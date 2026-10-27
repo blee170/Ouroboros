@@ -137,6 +137,74 @@ export function detectMissingCommand(output: string, expect?: string): string | 
   return names.find((n) => base(n) === expect.toLowerCase()) ?? null
 }
 
+/**
+ * A CLI that exited at launch (an unknown flag, a bad config) prints its error and gives the shell back: the card must
+ * not take that shell for the CLI. Returns the CLI's error line once it is followed by the shell's prompt again (or a
+ * usage text); null otherwise. A prompt alone is not enough: the terminal repaints it when the card is resized.
+ */
+export function detectLaunchExit(output: string, command: string): string | null {
+  const at = splitAtLaunch(output, command)
+  if (!at) return null
+  // only what the CLI printed after its own launch line counts: a shell profile's "error:" comes before it
+  const error = /(?:^|\n)\s*((?:error|Error|ERROR)(?:\[[\w-]+\])?: [^\n]{1,200})/.exec(at.after)
+  if (!error) return null
+  const rest = at.after.slice(error.index + error[0].length)
+  const usage = /(?:^|\n)\s*Usage: \S+/.test(rest)
+  return usage || promptIn(rest, at.prompt) ? error[1].trim() : null
+}
+
+/** The output ends on the shell's bare prompt after the launch line: the CLI it started is not running. */
+export function endsAtShellPrompt(output: string, command: string): boolean {
+  const at = splitAtLaunch(output, command)
+  if (!at) return false
+  const last = at.after.replace(/\s+$/, '').split('\n').pop()?.trim() ?? ''
+  // a window-title sequence may sit glued in front of the prompt: the line ends with it
+  return last.length > 0 && ((at.prompt.length >= 3 && last.endsWith(at.prompt)) || /PS [A-Za-z]:\\[^>]{0,260}>$/.test(last))
+}
+
+/** A pattern for text the terminal may have wrapped anywhere (a card is narrow). */
+function wrapped(text: string): RegExp {
+  return new RegExp(
+    [...text].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('(?:\\r?\\n)?'),
+    'g'
+  )
+}
+
+/**
+ * The shell's prompt (the text in front of the echoed launch line) and the output after that line. Null while the
+ * echo is not there yet. The line may be echoed more than once (the shell redraws it): the last copy counts.
+ */
+/**
+ * The CLI, after its own launch line, asks whether to trust the folder (Grok Build in a folder it has not seen:
+ * "Do you trust the contents of this directory?"). Its TUI draws words without spaces, so they are read joined.
+ */
+export function detectTrustQuestion(output: string, command: string): boolean {
+  const s = splitAtLaunch(output, command)
+  return Boolean(s) && /doyoutrust(this|the)(folder|directory|contentsofthis|filesinthis)/i.test(s!.after.replace(/\s+/g, '').slice(-3000))
+}
+
+function splitAtLaunch(output: string, command: string): { prompt: string; after: string } | null {
+  const clean = stripAnsi(output)
+  const cmd = command.trim()
+  if (cmd.length < 4) return null
+  const head = wrapped(cmd.slice(0, Math.min(12, cmd.length))).exec(clean)
+  if (!head) return null
+  const prompt = clean.slice(0, head.index).split('\n').pop()?.trim() ?? ''
+  const tail = cmd.slice(-Math.min(16, cmd.length))
+  let end = -1
+  for (const m of clean.matchAll(wrapped(tail))) end = m.index + m[0].length
+  if (end < 0) return null
+  return { prompt, after: clean.slice(end) }
+}
+
+/** The shell's prompt shows up again in this text. */
+function promptIn(text: string, prompt: string): boolean {
+  const lines = text.split('\n').map((l) => l.trim())
+  if (prompt.length >= 2 && lines.some((l) => l === prompt || l.startsWith(prompt + ' '))) return true
+  // a card is narrow and PowerShell lines wrap mid-word: its prompt is looked for in the joined text too
+  return /PS [A-Za-z]:\\[^>]{0,260}>/.test(text.replace(/\r?\n/g, ''))
+}
+
 /** Every command the output says was not found, first first. */
 function findMissingCommands(output: string): string[] {
   const clean = stripAnsi(output)

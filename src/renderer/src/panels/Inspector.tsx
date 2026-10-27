@@ -276,7 +276,7 @@ export function Inspector() {
             </div>
             {d.engine === 'codex' && <div className="hint">Codex: turn-complete notify → status; board tools and role prompt via -c overrides; resume uses the thread id. Needs Node.js on PATH.</div>}
             {d.engine === 'gemini' && <div className="hint">Gemini: hooks + MCP from a per-card settings file (your ~/.gemini settings stay); the role prompt is typed as the first message.</div>}
-            {d.engine === 'grok' && <div className="hint">Grok: hooks + MCP from a per-card plugin folder (--plugin-dir; your ~/.grok settings stay); Plan and Accept edits use Grok's own default (switch with Shift+Tab in the card). Needs Node.js on PATH.</div>}
+            {d.engine === 'grok' && <div className="hint">Grok: hooks, board tools and role from a per-card agent file (--agent; your ~/.grok settings stay, your Claude hooks and MCP servers are left out); Plan and Accept edits use Grok's own default (switch with Shift+Tab in the card). Needs Node.js on PATH.</div>}
           </label>
           <label className="check">
             <input type="checkbox" checked={Boolean(claude.continue)} onChange={(e) => setClaude({ continue: e.target.checked })} /> Continue the last conversation on launch (--continue)

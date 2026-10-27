@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { AgentEngine, ClaudeOptions } from '@shared/types'
 import { buildCodexLaunch, buildGeminiLaunch, buildGrokLaunch } from './agent-launcher'
 import { shellKind, type ShellKind } from './pty-manager'
@@ -356,13 +356,9 @@ function prepareEngineLaunch(engine: 'codex' | 'gemini' | 'grok', params: Parame
     return { command: l.command, initialPrompt: l.initialPrompt }
   }
   if (engine === 'grok') {
-    const pluginDir = join(params.tmpDir, `${params.nodeId}.grok`)
-    const l = buildGrokLaunch(input, pluginDir)
-    for (const [file, text] of Object.entries(l.files ?? {})) {
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, text, 'utf8')
-    }
-    return { command: l.command, initialPrompt: l.initialPrompt }
+    const l = buildGrokLaunch(input, join(params.tmpDir, `${params.nodeId}.grok-agent.md`))
+    for (const [file, text] of Object.entries(l.files ?? {})) writeFileSync(file, text, 'utf8')
+    return { command: l.command, env: l.env }
   }
   const settingsPath = join(params.tmpDir, `${params.nodeId}.gemini.json`)
   const l = buildGeminiLaunch(input, settingsPath)

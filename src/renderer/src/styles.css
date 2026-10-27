@@ -159,6 +159,8 @@ textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 .phone-devices { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .phone-key { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; padding: 10px 12px; background: var(--panel-2); border-radius: var(--r-sm); }
 .phone-key ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.phone-key pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; }
+.settings-section h4.sub { margin-top: 20px; }
 .ctl .port { width: 90px; flex: none; }
 .approvals-chip, .approvals-chip:hover:not(:disabled) { color: var(--needs); }
 .approvals-pop { position: absolute; bottom: 24px; right: 0; width: 420px; max-height: 60vh; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-sm); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); padding: 8px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }

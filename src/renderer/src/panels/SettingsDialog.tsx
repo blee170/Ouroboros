@@ -7,6 +7,7 @@ import { EnginesPanel } from './EnginesPanel'
 import { PhoneSettings } from './PhoneSettings'
 import { OuroSettings } from './OuroSettings'
 import { GrokBotsSettings } from './GrokBotsSettings'
+import { GrokReplySettings } from './GrokReplySettings'
 import { VoiceSettings } from './VoiceSettings'
 import { announceSettings } from '@shared/announce'
 import { DEFAULT_STALL_MINUTES } from '@shared/watchdog'
@@ -574,6 +575,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 Lets a card (usually the Conductor) hand a task to one of your Grok Bots, xAI and Cursor's cloud teammates with their own browser and computer. Make one bot per purpose (for example Personal: email, vendor replies, calendar; Business: marketing research), each with its own instructions and memory. In each bot, make a routine whose instruction says what to do with a handoff ("do the task in the JSON body"), ask the bot to add a webhook trigger, and copy its URL and key here. The Conductor reads each bot's purpose to pick one. Apps you connect in Grok (Gmail, Calendar) are shared by every bot on that account. Every handoff waits for you in the Today tab: nothing is sent until you press <em>Send</em>.
               </div>
               <GrokBotsSettings />
+              <GrokReplySettings />
             </section>
 
             <section className="settings-section" {...pane('wsl')}>

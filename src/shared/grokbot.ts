@@ -121,6 +121,11 @@ export interface GrokHandoff {
   /** Grok Bot's id for the run it started */
   runUuid?: string
   error?: string
+  /** sent with the reply server on: the id Grok Bot answers with (handoff ids repeat across sessions; this does not) */
+  correlationId?: string
+  /** a reply came back through the reply server and was queued for a card */
+  repliedAt?: number
+  replyKind?: 'result' | 'question'
 }
 
 /** The routine's webhook URL as typed, or undefined unless it is `https://api2.cursor.sh/automations/webhook/<id>`. */

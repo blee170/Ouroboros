@@ -272,6 +272,8 @@ export interface AppSettings {
   grokBotKeyEnc?: string
   /** The owner's Grok Bots, one per purpose (each its own routine and key). Absent: the single bot above, from an older version. Written only through grokBot.save / setKey, never by settings.set. */
   grokBots?: GrokBot[]
+  /** Grok Bot replies: a 127.0.0.1 server Tailscale Funnel forwards to; publicUrl is the address the routine posts to. */
+  grokReply?: { enabled: boolean; port: number; publicUrl?: string }
   /** A card-only fine-grained GitHub token (stored encrypted): agent cards push and open pull requests with it instead of the owner's sign-in. */
   cardGithubTokenEnc?: string
   /** The WSL distribution WSL cards run in (empty: the first one that is not Docker Desktop's). */

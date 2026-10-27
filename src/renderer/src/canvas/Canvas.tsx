@@ -11,6 +11,7 @@ import { nextAttention } from '@shared/attention'
 import { CARD_KINDS, type CardKindItem } from '@/lib/cardKinds'
 import { setDragShield } from '@/lib/dragShield'
 import { JumpPalette } from '@/panels/JumpPalette'
+import { OrbitView } from './OrbitView'
 
 const nodeTypes: NodeTypes = { agent: AgentNode, note: NoteNode, external: ExternalNode, browser: BrowserNode }
 const edgeTypes: EdgeTypes = { handoff: HandoffEdge }
@@ -31,6 +32,8 @@ export function Canvas() {
   const addNode = useBoard((s) => s.addNode)
   const setViewport = useBoard((s) => s.setViewport)
   const viewport = useBoard((s) => s.viewport)
+  const orbitOpen = useBoard((s) => s.orbitOpen)
+  const setOrbitOpen = useBoard((s) => s.setOrbitOpen)
   const rf = useReactFlow()
   const [menu, setMenu] = useState<Menu | null>(null)
 
@@ -60,7 +63,16 @@ export function Canvas() {
     [rf, select]
   )
 
-  // Ctrl+1…9 jump to the n-th card (the sidebar's settled order), Ctrl+J (or Ctrl+F) opens Jump to…,
+  // from the globe: back to the canvas, then to the card
+  const jumpFromOrbit = useCallback(
+    (id: string): void => {
+      setOrbitOpen(false)
+      requestAnimationFrame(() => jumpTo(id))
+    },
+    [jumpTo, setOrbitOpen]
+  )
+
+  // Ctrl+1…9 jump to the n-th card (the sidebar's settled order), Ctrl+J (or Ctrl+F) opens Jump to…, Ctrl+Shift+O the Orbit view,
   // Ctrl+Shift+N goes to the next card that needs you (then to an unread finished turn).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -75,6 +87,11 @@ export function Canvas() {
         return
       }
       const s = useBoard.getState()
+      if (key === 'o' && e.shiftKey) {
+        e.preventDefault()
+        if (s.orbitOpen || s.nodes.some((n) => n.data.kind !== 'note')) s.setOrbitOpen(!s.orbitOpen)
+        return
+      }
       if (key === 'n' && e.shiftKey) {
         e.preventDefault()
         const live = new Map(s.nodes.map((n) => [n.id, n.data.status]))
@@ -100,6 +117,7 @@ export function Canvas() {
   return (
     <div className="canvas-wrap" onClick={() => menu && setMenu(null)}>
       {palette && <JumpPalette onPick={jumpTo} onClose={() => setPalette(false)} />}
+      {orbitOpen && <OrbitView onJump={jumpFromOrbit} />}
       <svg style={{ position: 'absolute', width: 0, height: 0 }}>
         <defs>
           <marker id="handoff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">

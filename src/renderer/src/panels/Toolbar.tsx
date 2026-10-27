@@ -81,6 +81,8 @@ export function Toolbar() {
   const arrange = useBoard((s) => s.arrange)
   const undoArrange = useBoard((s) => s.undoArrange)
   const canUndoArrange = useBoard((s) => Boolean(s.arrangeUndo))
+  const orbitOpen = useBoard((s) => s.orbitOpen)
+  const setOrbitOpen = useBoard((s) => s.setOrbitOpen)
   const rf = useReactFlow()
   const arrangeAndFit = (): void => {
     arrange()
@@ -151,6 +153,9 @@ export function Toolbar() {
             <Icon name="grid" />
           </button>
         )}
+        <button className={`ghost${orbitOpen ? ' on' : ''}`} disabled={!projectRoot || !hasCards} onClick={() => setOrbitOpen(!orbitOpen)} title="Orbit: the board as a turning globe of its cards and lines (Ctrl+Shift+O)" aria-label="Orbit view" aria-pressed={orbitOpen}>
+          <Icon name="orbit" />
+        </button>
         {!autonomyOn && (
           <button className="ghost" disabled={!projectRoot} onClick={() => setAutoOpen(true)} title="Autonomous mode: keep the board working while you are away, with rails and a morning report" aria-label="Autonomous mode">
             <Icon name="moon" />

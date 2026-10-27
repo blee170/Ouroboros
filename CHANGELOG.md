@@ -31,6 +31,16 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
   - **Every send still waits for you.** The Today tab names the bot in the row, the review panel and the Send button.
   - **A handoff is never sent to a bot other than the one it named:** if that bot was removed or renamed since, the send is refused. A freed id can go to a new bot.
 - The tool description now allows the personal details a task needs, but still no passwords or keys.
+- **Orbit view on the desktop.** It is the phone's Orbit, drawn over the canvas.
+  - **What it shows:** the board as a turning globe. Each card is a dot in its state's colour, and the Conductor is the larger dot facing you. Handoff lines are solid, and dispatch links are dashed. A line glows while its target works on what it sent, and a card that needs you pulses.
+  - **How to open it:** the toolbar's globe button, or Ctrl+Shift+O. The canvas stays mounted underneath, so every terminal keeps running.
+  - **Controls:**
+    - drag to turn and the wheel to zoom;
+    - click a dot to select it in the Inspector;
+    - double-click a dot to go to it on the canvas;
+    - Esc or the Canvas button to go back.
+  - **Keyboard:** each dot can be focused. Enter selects it, and Shift+Enter goes to it.
+  - The globe turns slowly, about 30 frames a second, until you drag it or pick a card. It doesn't turn with reduced motion. Esc goes to an open dialog or text field first.
 
 ### Changed
 - **Phone Graph and Orbit: teams in colour, status as a ring.**
@@ -112,6 +122,16 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - **Same probe, merged with `claude/grok-launcher`** (Grok cards don't start on main without it): a Grok Conductor got "find 10 badminton clubs for CSB marketing outreach". It read `list_grok_bots` and handed the task to **CSB**, not Personal. The handoff was discarded, so nothing went to Cursor.
 - Unit tests cover the list, the migration, picking a bot and the removed-or-renamed refusal.
 
+### Verified (Orbit)
+- **Built-app probe** with seven terminal cards (no AI sessions). It checked that:
+  - every card was a dot, and the three dispatch links plus one handoff line were drawn;
+  - the canvas stayed mounted;
+  - the globe turned on its own, then held still after a drag;
+  - a click selected a card, and the wheel zoomed;
+  - Esc closed the view, and Ctrl+Shift+O opened it again;
+  - double-click went to the card on the canvas.
+- Unit tests cover the sphere, the layout with the Conductor in front, links (deduplicated, with the Conductor as the hub when there are none), projection and zoom.
+
 ### Not verified (fresh start)
 - A Conductor's "ask me" question answered from the phone, Discord or Today in the real app. The intercept is unit-tested only.
 - A real Autonomous run's report section.
@@ -126,6 +146,10 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 - The Today tab's bot name in the built app. The probe looked while the tab was closed; the handoff did carry the name.
 - A real send to two different routines. The probe saved fake webhooks and discarded the handoff instead of sending it.
 - Apps you connect in Grok (Gmail, Calendar) are shared by every bot on that Grok account, which is how Grok works. To keep personal and business apps apart, use separate Grok accounts.
+
+### Not verified (Orbit)
+- How the Conductor dot looks with a live Conductor card. The probe used terminal cards only.
+- Speed on a board of 40 or more cards.
 
 ## [0.15.1] — 2026-10-27
 

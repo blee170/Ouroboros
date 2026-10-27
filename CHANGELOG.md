@@ -33,12 +33,19 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
   - it answered "ROLE: Conductor";
   - the board saw working → idle;
   - the Stop hook brought the reply in.
-- `~/.claude/settings.json` was unchanged by the probe (checked by hash).
+- **Live probe in the built app:** a Grok worker card, same setup. All of these went through:
+  - it started from its hooks and went idle;
+  - owner mail was read and acked;
+  - its ouroboros tools were the mail set only (`send_message`, `check_inbox`, `ack`, `ask_owner`), with no board tools;
+  - a message to a non-agent card was refused;
+  - the board saw working → done, and the Stop hook brought the reply in.
+- `~/.claude/settings.json` was unchanged by either probe (checked by hash).
 - **By hand, with the real CLI:** agent-file hooks fire, and `mcpServers` must be a list with names (a map is refused). The env reaches the server, and hook commands can reach 127.0.0.1.
 - Unit tests cover the agent file, the launch line, snake_case hook names, and launch-exit detection (a profile `error:`, a repainted prompt, a TUI error, a wrapped launch line, an oh-my-posh prompt).
 
 ### Not verified (Grok)
-- A Grok worker card. Only a Conductor was probed.
+- The worker topology rule (parent, Conductor, handoff line) live: the probe's refusal came from the target not being an agent card. Unit tests cover the rule.
+- While Grok asks "trust this folder?" in a new folder, the card stays on "starting · launching grok" instead of needing you. The question shows in the card's terminal.
 - `--always-approve` cards, and Autonomous mode, which still closes Grok cards at run start.
 - How long a role an agent file accepts. The Conductor's 13 KB file loaded.
 

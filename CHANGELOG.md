@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Release notes in Notion listed evidence as highlights.** An Updates page's *Highlights* took the bold lead of every bullet in the version, so lines from its *Verified* and *Not verified* sections ("Not verified live", "Live probe in the built app") and detail labels ("Repeat calls:") showed up next to the real changes. Now only the *Added*, *Changed*, *Fixed* and *Security* sections count, and a lead ending in ":" is skipped. Pages already in Notion are not rewritten.
+
+### Verified
+- Unit test against the real changelog (0.15.0 and 0.16.0); it fails on the old parser. Typecheck and the vitest suite (696 tests).
+
 ## [0.18.2] — 2026-10-28
 
 ### Security

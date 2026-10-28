@@ -59,6 +59,13 @@ describe('changelogSection', () => {
     expect(s?.body).not.toContain('## [0.8.3]')
     expect(s?.highlights).toBe('One token per card, and hooks need it')
   })
+  it('takes highlights from the change sections only', () => {
+    expect(changelogSection(changelog, '0.15.0')?.highlights).toBe('Ouro: work the board from the car through Discord · Settings is a section list instead of one long scroll')
+    const s = changelogSection(changelog, '0.16.0')?.highlights ?? ''
+    expect(s).toContain("Ouro can tell you it's ready when you get in the car")
+    expect(s).toContain('Phone Graph and Orbit: teams in colour, status as a ring')
+    expect(s).not.toMatch(/About 75 s|Repeat calls|Live probe|Built-app probe|The 75 s timing/)
+  })
   it('knows no section for a version that has none', () => {
     expect(changelogSection(changelog, '9.9.9')).toBeUndefined()
     expect(changelogSection('## [0.8.40] — 2026-01-01\n- x', '0.8.4')).toBeUndefined()

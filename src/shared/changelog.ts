@@ -29,9 +29,16 @@ export function changelogSection(markdown: string, version: string): ChangelogSe
   }
   const date = /(\d{4}-\d{2}-\d{2})/.exec(lines[start])?.[1]
   const body = lines.slice(start + 1, end).join('\n').trim()
-  const leads = lines
-    .slice(start + 1, end)
-    .map((l) => /^- \*\*(.+?)\*\*/.exec(l)?.[1]?.replace(/[.:]$/, ''))
-    .filter((s): s is string => Boolean(s))
+  // only what changed: a "### Verified …" / "### Not verified …" section's bold bullets are evidence, not news, and a
+  // lead ending in ":" ("Repeat calls:") labels detail under the bullet before it
+  const leads: string[] = []
+  // a section without subsection headings is all changes
+  let inChanges = true
+  for (const l of lines.slice(start + 1, end)) {
+    const heading = /^### (.+)/.exec(l)
+    if (heading) inChanges = /^(Added|Changed|Fixed|Security)\b/.test(heading[1])
+    const lead = inChanges ? /^- \*\*(.+?)\*\*/.exec(l)?.[1] : undefined
+    if (lead && !lead.endsWith(':')) leads.push(lead.replace(/\.$/, ''))
+  }
   return { version, date, body, highlights: leads.join(' · ') }
 }

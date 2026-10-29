@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.3] — 2026-10-29
 
 ### Added
 - **Voicebox voice engine: announcements in your own cloned voice, free and offline.** Settings → Announcements → Voice engine → *Voicebox (local app, your own voice)*. Install [Voicebox](https://voicebox.sh) (MIT, local), clone your voice there from a short recording, and put the profile name in *Voice* (empty = Voicebox's default voice; the profile sets the language). Ouroboros calls its OpenAI-compatible route on `127.0.0.1:17493`: no key, nothing leaves the PC. Local clips are not cached, so a profile re-recorded under the same name is heard right away. The first sentence may take a while as Voicebox loads its model (90 s for the first answer, 20 s after that); if Voicebox is not running, Settings says so and the Windows voice speaks instead.

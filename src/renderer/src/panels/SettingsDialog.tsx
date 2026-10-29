@@ -399,8 +399,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     <label className="field">
                       <span>Style</span>
                       <div className="ctl">
-                        <input className="text" placeholder={DEFAULT_STYLE} defaultValue={settings.ttsStyle ?? ''} onBlur={(e) => void setSettings({ ttsStyle: e.target.value.trim() || undefined })} />
+                        <input className="text" placeholder={tts.engine === 'gemini' ? 'empty = steadiest' : DEFAULT_STYLE} defaultValue={settings.ttsStyle ?? ''} onBlur={(e) => void setSettings({ ttsStyle: e.target.value.trim() || undefined })} />
                       </div>
+                      {tts.engine === 'gemini' && <div className="hint">Leave it empty for the same voice every time, or one short phrase (“calm”). A language, accent, age or gender here makes Gemini drift between sentences; the language comes from the text itself.</div>}
                     </label>
                   )}
                   <div className="hint">

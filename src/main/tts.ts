@@ -8,7 +8,7 @@ import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_TTS_CHARS, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, type TtsRequest } from '@shared/tts'
+import { MAX_TTS_CHARS, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, voiceboxGeneration, voiceboxUrl, wavFromPcm16, type TtsRequest } from '@shared/tts'
 import type { TtsKeyEngine, TtsResult } from '@shared/protocol'
 import type { AppSettings } from '@shared/types'
 import { log } from './diagnostics'
@@ -73,6 +73,26 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
       bytes = new Uint8Array(Buffer.from(data, 'base64'))
       // unary answers are WAV; raw L16 PCM (the streaming shape) gets a header so the renderer can play it
       if (bytes.length && !looksLikeAudio(bytes, 'audio/wav')) bytes = wavFromPcm16(bytes)
+    } else if (req.response === 'voicebox-json') {
+      // /speak answers at once with a generation record; the clip exists once /history/{id} says completed
+      // (the audio route answers 500 until then). One deadline covers the whole wait.
+      const deadline = Date.now() + timeoutMs
+      let g = voiceboxGeneration(await res.json())
+      if (!g) return { ok: false, error: 'Voicebox: no generation record in the answer' }
+      while (g.status === 'generating') {
+        if (Date.now() > deadline) return { ok: false, error: `Voicebox: not finished within ${timeoutMs / 1000} s` }
+        await new Promise((r) => setTimeout(r, 400))
+        const h = await fetch(voiceboxUrl('history', g.id), { signal: AbortSignal.timeout(5000) })
+        if (!h.ok) return { ok: false, error: ttsError(s.engine, h.status, await h.text().catch(() => '')) }
+        g = voiceboxGeneration(await h.json()) ?? { id: g.id, status: 'failed', error: 'no generation record' }
+      }
+      if (g.status === 'failed') {
+        log(`tts voicebox: generation failed: ${g.error ?? ''}`)
+        return { ok: false, error: `Voicebox: ${g.error ?? 'generation failed'}` }
+      }
+      const a = await fetch(voiceboxUrl('audio', g.id), { signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now())) })
+      if (!a.ok) return { ok: false, error: ttsError(s.engine, a.status, await a.text().catch(() => '')) }
+      bytes = new Uint8Array(await a.arrayBuffer())
     } else bytes = new Uint8Array(await res.arrayBuffer())
   } catch (err) {
     const m =

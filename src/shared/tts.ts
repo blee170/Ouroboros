@@ -27,11 +27,30 @@ export const TTS_ENGINES: Record<TtsEngine, TtsEngineInfo> = {
   gemini: { label: 'Gemini TTS (Google AI Studio key, free tier)', defaultVoice: 'Kore', voiceHint: 'Kore, Zephyr, Puck, Achird, Sulafat…', keyHint: 'API key from aistudio.google.com/app/apikey' },
   openai: { label: 'OpenAI gpt-4o-mini-tts', defaultVoice: 'coral', voiceHint: 'coral, alloy, nova, onyx, sage…', keyHint: 'API key from platform.openai.com' },
   elevenlabs: { label: 'ElevenLabs multilingual v2', defaultVoice: '21m00Tcm4TlvDq8ikWAM', voiceHint: 'voice id (Voices → ⋯ → Copy voice ID); default: Rachel', keyHint: 'xi-api-key from elevenlabs.io' },
-  voicebox: { label: 'Voicebox (local app, your own voice)', defaultVoice: '', voiceHint: 'profile name from Voicebox (empty = its default voice); the profile sets the language', keyHint: '' }
+  voicebox: { label: 'Voicebox (local app, your own voice)', defaultVoice: '', voiceHint: 'profile name from Voicebox (empty = the default profile set in Voicebox → Settings → MCP); the profile sets the language', keyHint: '' }
 }
 
-/** Voicebox's local API (its OpenAI-compatible speech route); it listens on 127.0.0.1 only and takes no key. */
-export const VOICEBOX_URL = 'http://127.0.0.1:17493/v1/audio/speech'
+/** Voicebox's local API; it listens on 127.0.0.1 only and takes no key. */
+export const VOICEBOX_URL = 'http://127.0.0.1:17493'
+
+/** A Voicebox route under its API for one generation id. */
+export function voiceboxUrl(route: 'history' | 'audio', id: string): string {
+  return `${VOICEBOX_URL}/${route}/${encodeURIComponent(id)}`
+}
+
+/**
+ * A Voicebox generation record (from /speak, then /history/{id} while polling): /speak answers at once with
+ * "generating", the audio exists once the status is "completed", "failed" carries the reason. Anything else
+ * (a "not_found" status) is a failure. Undefined when the JSON is not a record.
+ */
+export function voiceboxGeneration(json: unknown): { id: string; status: 'generating' | 'completed' | 'failed'; error?: string } | undefined {
+  const j = json as { id?: unknown; status?: unknown; error?: unknown } | null
+  if (!j || typeof j !== 'object' || typeof j.id !== 'string' || !j.id) return undefined
+  const status = typeof j.status === 'string' ? j.status : ''
+  const error = typeof j.error === 'string' && j.error ? j.error : undefined
+  if (status === 'generating' || status === 'completed') return { id: j.id, status, error }
+  return { id: j.id, status: 'failed', error: error ?? status }
+}
 
 export const DEFAULT_STYLE = 'calm and friendly, like a colleague letting you know'
 
@@ -46,8 +65,8 @@ export interface TtsRequest {
   url: string
   headers: Record<string, string>
   body: string
-  /** How the response carries the audio: raw bytes, or JSON with base64 inside (Gemini). */
-  response: 'bytes' | 'gemini-json'
+  /** How the response carries the audio: raw bytes, JSON with base64 inside (Gemini), or a generation record to poll and then fetch (Voicebox). */
+  response: 'bytes' | 'gemini-json' | 'voicebox-json'
   mime: string
 }
 
@@ -79,11 +98,11 @@ export function buildTtsRequest(engine: Exclude<TtsEngine, 'windows'>, text: str
       }
     case 'voicebox':
       return {
-        url: VOICEBOX_URL,
+        // /speak takes a profile name or id and uses that profile's engine; no profile = the default Voicebox has set
+        url: `${VOICEBOX_URL}/speak`,
         headers: { 'content-type': 'application/json' },
-        // tts-1 = whatever engine the profile uses; no voice = Voicebox's default playback voice
-        body: JSON.stringify({ model: 'tts-1', input: text, ...(s.voice ? { voice: s.voice } : {}), response_format: 'wav' }),
-        response: 'bytes',
+        body: JSON.stringify({ text, ...(s.voice ? { profile: s.voice } : {}) }),
+        response: 'voicebox-json',
         mime: 'audio/wav'
       }
     case 'elevenlabs':

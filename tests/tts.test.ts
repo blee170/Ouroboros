@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, VOICEBOX_URL } from '@shared/tts'
+import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, VOICEBOX_URL, voiceboxGeneration, voiceboxUrl } from '@shared/tts'
 
 describe('looksLikeAudio / wavFromPcm16', () => {
   it('accepts RIFF for wav and ID3 or an MPEG frame for mp3, rejects JSON/HTML bodies', () => {
@@ -74,20 +74,32 @@ describe('buildTtsRequest', () => {
     expect(JSON.parse(r.body)).toEqual({ text: 'hi', model_id: 'eleven_multilingual_v2' })
   })
 
-  it('Voicebox: local loopback route, no auth header, profile as voice, wav back', () => {
+  it('Voicebox: POST /speak on the loopback, no auth header, profile name, a generation record back', () => {
+    // measured against Voicebox 0.5.0 on 2026-10-30: /speak answers {id, status: "generating"} at once
     const r = buildTtsRequest('voicebox', '총괄 작업이 끝났습니다.', { engine: 'voicebox', voice: 'Brian', style: 'ignored' }, '')
-    expect(r.url).toBe(VOICEBOX_URL)
+    expect(r.url).toBe(`${VOICEBOX_URL}/speak`)
     expect(new URL(r.url).hostname).toBe('127.0.0.1')
     expect(Object.keys(r.headers)).toEqual(['content-type'])
-    expect(r.response).toBe('bytes')
+    expect(r.response).toBe('voicebox-json')
     expect(r.mime).toBe('audio/wav')
-    expect(JSON.parse(r.body)).toEqual({ model: 'tts-1', input: '총괄 작업이 끝났습니다.', voice: 'Brian', response_format: 'wav' })
+    expect(JSON.parse(r.body)).toEqual({ text: '총괄 작업이 끝났습니다.', profile: 'Brian' })
   })
 
-  it('Voicebox with no profile leaves voice out, so Voicebox picks its default voice', () => {
+  it('Voicebox: reads the generation record, and names the audio route', () => {
+    expect(voiceboxGeneration({ id: 'g1', status: 'generating', error: null })).toEqual({ id: 'g1', status: 'generating', error: undefined })
+    expect(voiceboxGeneration({ id: 'g1', status: 'completed' })).toEqual({ id: 'g1', status: 'completed', error: undefined })
+    expect(voiceboxGeneration({ id: 'g1', status: 'failed', error: 'CUDA out of memory' })).toEqual({ id: 'g1', status: 'failed', error: 'CUDA out of memory' })
+    expect(voiceboxGeneration({ id: 'g1', status: 'not_found' })).toEqual({ id: 'g1', status: 'failed', error: 'not_found' })
+    expect(voiceboxGeneration({ status: 'generating' })).toBeUndefined()
+    expect(voiceboxGeneration('nope')).toBeUndefined()
+    expect(voiceboxUrl('history', 'a b/c')).toBe(`${VOICEBOX_URL}/history/a%20b%2Fc`)
+    expect(voiceboxUrl('audio', 'g1')).toBe(`${VOICEBOX_URL}/audio/g1`)
+  })
+
+  it('Voicebox with no profile leaves it out, so Voicebox uses the default set in its own Settings', () => {
     expect(ttsSettings({ ttsEngine: 'voicebox' })).toMatchObject({ engine: 'voicebox', voice: '' })
     const r = buildTtsRequest('voicebox', 'hi', ttsSettings({ ttsEngine: 'voicebox' }), '')
-    expect(JSON.parse(r.body)).not.toHaveProperty('voice')
+    expect(JSON.parse(r.body)).not.toHaveProperty('profile')
   })
 })
 

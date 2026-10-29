@@ -4,6 +4,18 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Added
+- **The composer's mic button shows what the microphone hears.** A ring around it grows with the sound and turns green while the sound counts as speech, so with the wake phrase on you can see at a glance that the mic is picking you up.
+- **Wake phrase Test, and other spellings.** Settings → Voice input → Wake phrase → *Test*: say the phrase once and Settings shows what the recogniser wrote and whether it wakes Ouroboros. When it does not, one click adds that spelling. The field now takes several spellings after commas (`hey ouro, Hey Aro, 헤이 우로`), any of which wakes it. Whisper writes "hey ouro" as "Hey Aro" or "헤이 우로", so before this the phrase never matched and nothing happened, with nothing on screen to say why. The composer ignores what it hears while a Settings test runs.
+
+### Fixed
+- **A prompt said with the wake phrase no longer starts with a quote mark** when the recogniser put the phrase in quotes (`"Hey Uro!" 테스트 돌려줘.`).
+
+### Verified
+- Unit tests for spellings, adding a spelling, short spellings that must match exactly, a comma-only phrase, and the quote fix (703 tests); typecheck, build. Built-app probe with a fake microphone looping "헤이 우로" and the real whisper-server: the ring moves and marks speech, "hey ouro" does not wake on it, Test shows `Heard "헤이 우로"`, the added spelling is saved, the composer stays quiet during the test, and afterwards the wake phrase fires and the take lands in the composer. **Not verified:** the owner's real microphone and voice.
+
 ## [0.18.3] — 2026-10-29
 
 ### Added

@@ -382,7 +382,7 @@ export function Sidebar() {
         )}
         <div className="foot">
           {voice.state !== 'off' && (
-            <button className={`icon-btn sb-mic ${voice.state}`} title={voice.state === 'recording' ? 'Listening… click to stop' : voice.state === 'transcribing' ? 'Writing down what you said…' : `Speak a prompt (${voiceSettings(useBoard.getState().settings.voice).hotkey.replace('CommandOrControl', 'Ctrl')})${voice.wakeOn ? ' · wake phrase on' : ''}`} aria-label="Voice input" aria-pressed={voice.state === 'recording'} disabled={voice.state === 'transcribing'} onClick={voice.toggle}>
+            <button ref={(el) => void (voice.meterRef.current = el)} className={`icon-btn sb-mic ${voice.state}`} title={voice.state === 'recording' ? 'Listening… click to stop' : voice.state === 'transcribing' ? 'Writing down what you said…' : `Speak a prompt (${voiceSettings(useBoard.getState().settings.voice).hotkey.replace('CommandOrControl', 'Ctrl')})${voice.wakeOn ? ' · wake phrase on' : ''}`} aria-label="Voice input" aria-pressed={voice.state === 'recording'} disabled={voice.state === 'transcribing'} onClick={voice.toggle}>
               <Icon name="mic" size={14} />
               {voice.wakeOn && <span className="wake-dot" aria-hidden />}
             </button>

@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { useBoard } from '@/store/board'
 import { isNonSpeech, matchWake, voiceSettings, wavFromFloat32, VOICE_LIMITS } from '@shared/voice'
 import { Mic, chime, wakeChime } from './mic'
 
 export type VoiceState = 'off' | 'idle' | 'recording' | 'transcribing'
 
+/** Settings' mic tests: while one runs, the composer ignores what it hears, so saying the phrase there does not wake it. */
+let wakePaused = 0
+export function pauseWake(on: boolean): void {
+  wakePaused = Math.max(0, wakePaused + (on ? 1 : -1))
+}
+
 /**
  * Push-to-talk (the mic button, the global hotkey) and, when it is on, the wake phrase, for the left composer.
  * `onText` gets each transcript; `fromWake` says it came with the wake phrase ("Ouroboros, run the tests").
  */
-export function useVoice(onText: (text: string, fromWake: boolean) => void): { state: VoiceState; message: string; toggle: () => void; wakeOn: boolean } {
+export function useVoice(onText: (text: string, fromWake: boolean) => void): { state: VoiceState; message: string; toggle: () => void; wakeOn: boolean; meterRef: MutableRefObject<HTMLElement | null> } {
   const raw = useBoard((s) => s.settings.voice)
   const v = voiceSettings(raw)
   const wakeOn = v.enabled && v.wake && v.stt === 'whisper' && Boolean(v.whisperServerPath && v.whisperModelPath)
@@ -25,6 +31,8 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   deviceRef.current = v.micDeviceId
   const phraseRef = useRef(v.wakePhrase)
   phraseRef.current = v.wakePhrase
+  /** the element that shows the mic's live level (--mic-level 0..1, data-speech while the gate hears speech) */
+  const meterRef = useRef<HTMLElement | null>(null)
 
   // one open at a time: a second caller waits for the first; a close while it opens closes what it opened
   const opening = useRef<Promise<Mic> | null>(null)
@@ -39,6 +47,13 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
           if (mine !== epoch.current) {
             m.close()
             throw new Error('microphone closed while opening')
+          }
+          // written straight to the element: a React state update 15 times a second would re-render the sidebar
+          m.onLevel = (level, speech) => {
+            const el = meterRef.current
+            if (!el) return
+            el.style.setProperty('--mic-level', level.toFixed(2))
+            el.toggleAttribute('data-speech', speech)
           }
           mic.current = m
           return m
@@ -73,7 +88,7 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   // always-on: each utterance is checked for the wake phrase; the take that follows is the command
   const listen = useCallback((m: Mic): void => {
     m.listen((samples) => {
-      if (busy.current) return
+      if (busy.current || wakePaused > 0) return
       busy.current = true
       void toText(samples)
         .then((text) => {
@@ -184,5 +199,5 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
 
   useEffect(() => () => closeMic(), [closeMic])
 
-  return { state, message, toggle, wakeOn }
+  return { state, message, toggle, wakeOn, meterRef }
 }

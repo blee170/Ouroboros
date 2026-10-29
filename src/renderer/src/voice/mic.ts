@@ -23,6 +23,8 @@ export class Mic {
   private startedAt = 0
   private sink: { kind: 'take' | 'listen'; done: Sink; maxMs: number } | undefined
   private takeTimeout: ReturnType<typeof setTimeout> | undefined
+  /** Every frame's loudness (0..1) and whether the gate counts it as speech: the composer's live meter. */
+  onLevel: ((level: number, speech: boolean) => void) | undefined
 
   private constructor(
     private stream: MediaStream,
@@ -59,6 +61,8 @@ export class Mic {
       sink.done(new Float32Array(0))
     }
     this.node.onaudioprocess = null
+    this.onLevel?.(0, false)
+    this.onLevel = undefined
     try {
       this.source.disconnect()
       this.node.disconnect()
@@ -135,11 +139,12 @@ export class Mic {
   }
 
   private frame(f: Float32Array): void {
-    if (!this.sink) return
     let sum = 0
     for (let i = 0; i < f.length; i++) sum += f[i] * f[i]
     const rms = Math.sqrt(sum / f.length)
     const isSpeech = rms > Math.max(0.012, this.floor * 3)
+    this.onLevel?.(micLevel(rms), isSpeech)
+    if (!this.sink) return
     if (!isSpeech) this.floor = this.floor * 0.95 + rms * 0.05 // the room's noise, followed while quiet
     if (!this.speaking) {
       this.pre.push(f)
@@ -168,6 +173,11 @@ export class Mic {
       this.finish()
     }
   }
+}
+
+/** RMS to a 0..1 meter: square root so quiet speech still moves it, full at about 0.1 RMS (loud, close speech). */
+export function micLevel(rms: number): number {
+  return Math.min(1, Math.sqrt(Math.max(0, rms) / 0.1))
 }
 
 /**

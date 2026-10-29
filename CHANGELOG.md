@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.5] — 2026-10-30
 
 ### Changed
 - **The owner's own logo is the app icon.** The serpent ring on a dark rounded square (window, taskbar, installer, tray) replaces the generated placeholder; `resources/icon.png` (512, transparent corners) and `resources/icon.ico` (256 → 16) now come from the artwork, and the generator that used to overwrite them on every release (`scripts/gen-icon.mjs`, run by the `dist:*` scripts and the release workflow) is gone.

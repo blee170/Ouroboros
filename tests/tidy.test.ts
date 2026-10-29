@@ -142,4 +142,9 @@ describe('dispatch caps', () => {
     // a cap of 0 in settings still lets one through
     expect(dispatchRefusal([a({ id: 'k', kind: 'conductor' })], 'k', 0)).toBeUndefined()
   })
+  it('does not count dispatched terminal or command cards as workers (a shell stays alive and would hold the slot for good)', () => {
+    const shells = [a({ id: 'k', kind: 'conductor' }), a({ id: 'w', parentId: 'k' }), a({ id: 'sh', kind: 'terminal', parentId: 'k', status: 'idle' }), a({ id: 'cmd', kind: 'command', parentId: 'k', status: 'working' })]
+    expect(dispatchRefusal(shells, 'k', 2)).toBeUndefined()
+    expect(dispatchRefusal(shells, 'k', 1)).toMatch(/1 live cards \(cap 1\)/)
+  })
 })

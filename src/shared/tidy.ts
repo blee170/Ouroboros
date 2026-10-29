@@ -92,8 +92,12 @@ export function depthOf(agents: Array<{ id: string; parentId?: string }>, id: st
 /** Conductor → team → worker: a worker (two levels below the owner's cards) cannot dispatch further. */
 export const MAX_DISPATCH_DEPTH = 2
 
-/** A card that holds a slot: its process runs, or it is still starting. */
-const isLive = (a: AgentSnapshot): boolean => a.ptyAlive || a.status === 'starting'
+/**
+ * A card that holds a worker slot: an agent whose process runs, or that is still starting. A terminal or command
+ * card a lead dispatched is a helper shell, not a worker, and its shell stays alive: counting it would hold the
+ * slot for good.
+ */
+const isLive = (a: AgentSnapshot): boolean => (a.kind === 'claude' || a.kind === 'conductor') && (a.ptyAlive || a.status === 'starting')
 
 /**
  * Why `creator` may not dispatch another card right now (undefined = it may): too many live workers (`pending`

@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.4] — 2026-10-30
 
 ### Added
 - **The composer's mic button shows what the microphone hears.** A ring around it grows with the sound and turns green while the sound counts as speech, so with the wake phrase on you can see at a glance that the mic is picking you up.

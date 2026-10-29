@@ -176,11 +176,12 @@ function wrapped(text: string): RegExp {
  */
 /**
  * The CLI, after its own launch line, asks whether to trust the folder (Grok Build in a folder it has not seen:
- * "Do you trust the contents of this directory?"). Its TUI draws words without spaces, so they are read joined.
+ * "Do you trust the contents of this directory?"; Claude Code's "Quick safety check … Yes, I trust this folder",
+ * whose first choice is "No, exit"). The TUIs draw words without spaces, so they are read joined.
  */
 export function detectTrustQuestion(output: string, command: string): boolean {
   const s = splitAtLaunch(output, command)
-  return Boolean(s) && /doyoutrust(this|the)(folder|directory|contentsofthis|filesinthis)/i.test(s!.after.replace(/\s+/g, '').slice(-3000))
+  return Boolean(s) && /doyoutrust(this|the)(folder|directory|contentsofthis|filesinthis)|quicksafetycheck|yes,?itrustthisfolder/i.test(s!.after.replace(/\s+/g, '').slice(-3000))
 }
 
 function splitAtLaunch(output: string, command: string): { prompt: string; after: string } | null {

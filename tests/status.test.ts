@@ -127,6 +127,13 @@ describe('detectTrustQuestion', () => {
     expect(detectTrustQuestion(`PS C:\\p> ${cmd}\r\n~/A/L/Temp/x Doyoutrustthecontentsofthisdirectory?C:\\p GrokBuildmayrunormodify… Yes, proceedyNo, quitn`, cmd)).toBe(true)
     expect(detectTrustQuestion(`PS C:\\p> ${cmd}\r\nDo you trust the contents of this directory?\r\n Yes, proceed (y)`, cmd)).toBe(true)
   })
+  it("reads Claude Code's safety check (its first choice is No, exit) and its older trust question", () => {
+    const claude = '& claude --name "Trust probe" --mcp-config C:\\u\\n1.mcp.json'
+    // what the probe saw on 2026-10-30: words joined, the choices on one line
+    expect(detectTrustQuestion(`PS C:\\p> ${claude}\r\nAccessingworkspace: C:\\p Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?(Likeyourown code) ClaudeCode'llbeabletoread,edit,andexecutefileshere. Securityguide ❯No,exit Yes,Itrustthisfolder Entertoconfirm·Esctocancel`, claude)).toBe(true)
+    expect(detectTrustQuestion(`PS C:\\p> ${claude}\r\nDo you trust the files in this folder?\r\n❯ Yes, proceed`, claude)).toBe(true)
+    expect(detectTrustQuestion(`PS C:\\p> ${claude}\r\n╭─ Claude Code v2.1 ─╮\r\n? for shortcuts`, claude)).toBe(false)
+  })
   it('ignores the question before the launch line and a card that has not echoed it yet', () => {
     expect(detectTrustQuestion(`Do you trust this folder?\r\nPS C:\\p> ${cmd}\r\n╭─ Grok ─╮`, cmd)).toBe(false)
     expect(detectTrustQuestion('Do you trust this folder?', cmd)).toBe(false)

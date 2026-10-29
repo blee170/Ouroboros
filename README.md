@@ -277,7 +277,7 @@ src/main/        Electron main process
 src/preload/     contextBridge (window.ouroboros)
 src/renderer/    React + React Flow canvas, xterm cards, panels (title bar, Sidebar, Inspector, status bar, Settings, Board Builder, Tidy)
 src/shared/      types, protocol (IPC names), pure logic (status reducer, handoff templating, tidy, board builder)
-scripts/         gen-icon.mjs, smoke.mjs (Playwright + Electron end-to-end test)
+scripts/         smoke.mjs (Playwright + Electron end-to-end test)
 tests/           vitest unit tests
 docs/RESEARCH.md research notes: competitor comparison, fact checks, engine config sources
 ```

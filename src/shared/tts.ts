@@ -37,7 +37,9 @@ export const DEFAULT_STYLE = 'calm and friendly, like a colleague letting you kn
 
 export function ttsSettings(s: Pick<AppSettings, 'ttsEngine' | 'ttsVoice' | 'ttsStyle'>): TtsSettings {
   const engine: TtsEngine = s.ttsEngine && s.ttsEngine in TTS_ENGINES ? s.ttsEngine : 'windows'
-  return { engine, voice: (s.ttsVoice ?? '').trim() || TTS_ENGINES[engine].defaultVoice, style: (s.ttsStyle ?? '').trim() || DEFAULT_STYLE }
+  // only OpenAI gets a default style: Gemini's voice drifts with every word of style it is sent (Google's own
+  // guidance is an empty style, or one short constant), and the other engines ignore it
+  return { engine, voice: (s.ttsVoice ?? '').trim() || TTS_ENGINES[engine].defaultVoice, style: (s.ttsStyle ?? '').trim() || (engine === 'openai' ? DEFAULT_STYLE : '') }
 }
 
 export interface TtsRequest {
@@ -60,7 +62,7 @@ export function buildTtsRequest(engine: Exclude<TtsEngine, 'windows'>, text: str
         headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
         body: JSON.stringify({
           model: GEMINI_TTS_MODEL,
-          input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style: s.style }] }] }],
+          input: [{ type: 'user_input', content: [{ type: 'text', text, ...(s.style ? { annotations: [{ type: 'speech_metadata', style: s.style }] } : {}) }] }],
           response_format: { type: 'audio' },
           generation_config: { speech_config: [{ voice: s.voice }] }
         }),

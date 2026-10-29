@@ -28,8 +28,10 @@ describe('looksLikeAudio / wavFromPcm16', () => {
 
 describe('ttsSettings', () => {
   it('defaults to the Windows voice and fills in each engine’s default voice and style', () => {
-    expect(ttsSettings({})).toEqual({ engine: 'windows', voice: '', style: DEFAULT_STYLE })
-    expect(ttsSettings({ ttsEngine: 'gemini' })).toMatchObject({ engine: 'gemini', voice: 'Kore' })
+    expect(ttsSettings({})).toEqual({ engine: 'windows', voice: '', style: '' })
+    // Gemini's steadiest delivery is no style at all (Google: style text per call makes the voice drift)
+    expect(ttsSettings({ ttsEngine: 'gemini' })).toEqual({ engine: 'gemini', voice: 'Kore', style: '' })
+    expect(ttsSettings({ ttsEngine: 'openai' })).toMatchObject({ engine: 'openai', style: DEFAULT_STYLE })
     expect(ttsSettings({ ttsEngine: 'openai', ttsVoice: ' nova ', ttsStyle: 'excited' })).toEqual({ engine: 'openai', voice: 'nova', style: 'excited' })
     expect(ttsSettings({ ttsEngine: 'bogus' as never }).engine).toBe('windows')
   })
@@ -38,6 +40,10 @@ describe('ttsSettings', () => {
 describe('buildTtsRequest', () => {
   const s = { voice: 'Kore', style: 'warm' }
 
+  it('Gemini: no style sends no annotation', () => {
+    const body = JSON.parse(buildTtsRequest('gemini', 'hi', { engine: 'gemini', voice: 'Kore', style: '' }, 'k').body)
+    expect(body.input[0].content[0]).toEqual({ type: 'text', text: 'hi' })
+  })
   it('Gemini: Interactions API, key in a header, verbatim text with a style annotation', () => {
     const r = buildTtsRequest('gemini', '총괄 작업이 끝났습니다.', { engine: 'gemini', ...s }, 'KEY')
     expect(r.url).toBe('https://generativelanguage.googleapis.com/v1beta/interactions')

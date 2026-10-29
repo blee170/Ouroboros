@@ -8,8 +8,10 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ### Fixed
 - **A new Claude card in a folder Claude Code has not seen no longer sits on "Starting".** Claude Code first asks its safety check ("Quick safety check … ❯ No, exit / Yes, I trust this folder"), and the card showed only "Starting · launching claude", with nothing to say the owner had to answer; Enter picks "No, exit", and the card then said "failed: claude exited at launch (the shell came back)", which reads like a broken launch. The card now shows *Needs you · permission: Claude Code asks whether to trust this folder* with the keys (↓ then Enter), becomes idle on its own once Yes was picked, and says "the folder was not trusted" after No. Grok's trust question already did this; the two now share one path.
+- **A terminal or command card a lead dispatched no longer takes one of its worker slots.** The live-worker cap (Tidy → workers per lead) counted every live card under the lead, and a helper shell stays alive for good, so a Conductor that had opened a terminal was short one worker until that card was removed. Only agent cards count now.
 
 ### Verified
+- Unit test for a lead with a terminal and a command card under it (704 tests).
 - Unit tests for Claude Code's dialog text, its older wording and the TUI's ready text (704 tests); typecheck, build. Built-app probe with a real Claude Code card in a fresh folder: needs-you with the hint 1.9 s after launch, idle 1.5 s after Yes, "not trusted" after No. The phone does not offer its Yes / No / Esc buttons for this dialog (it takes arrow keys; the card is answered on the PC). **Not verified:** Codex's and Gemini's own trust questions, which now get a plain "answer in the card" hint.
 
 ## [0.18.4] — 2026-10-30

@@ -195,6 +195,8 @@ const launchOut = new Map<string, string>()
 const LAUNCH_OUT_CAP = 16_000
 /** cards whose latest launch never came up (the CLI is missing): a prompt would land in a bare shell */
 const launchFailed = new Set<string>()
+/** Cards whose CLI asked whether to trust the folder (needs-you until the owner answers; the ready signals then make them idle). */
+const trustAsked = new Set<string>()
 
 /** Is the owner looking at this card right now (window focused, card selected)? Then it needs no toast. */
 function viewing(s: WindowSession, nodeId: string): boolean {
@@ -218,7 +220,8 @@ export function registerInbox(s: WindowSession, nodeId: string, socket: unknown,
   // server registering the inbox means the CLI is up
   const wasFailed = launchFailed.delete(nodeId)
   if (wasFailed) log(`launch: ${nodeId} registered its inbox; no longer marked failed`)
-  if (n.data.status === 'starting' || wasFailed) s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+  const wasAsked = trustAsked.delete(nodeId)
+  if (n.data.status === 'starting' || wasFailed || wasAsked) s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
   return { ok: true }
 }
 
@@ -897,7 +900,8 @@ export function createPhone(ctx: MainContext): PhoneServer {
           status: n.data.status ?? 'starting',
           detail: (n.data.statusDetail ?? '').slice(0, 300),
           last: (n.data.lastAssistantMessage ?? '').slice(-PHONE_LIMITS.replyChars),
-          permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission'),
+          // the trust dialog takes arrow keys, not the phone's 1 / 3 / Esc: it is answered in the card
+          permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission') && !trustAsked.has(n.id),
           promptAt: n.data.lastEventAt,
           promptable: n.data.status !== 'needs-you' && ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id),
           // where it sits on the canvas, for the phone's map
@@ -928,6 +932,7 @@ export function createPhone(ctx: MainContext): PhoneServer {
       const n = s?.board.nodes.get(id)
       if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
       if (n.data.status !== 'needs-you' || !(n.data.statusDetail ?? '').startsWith('permission')) return { ok: false, error: 'the card is not waiting on a permission prompt' }
+      if (trustAsked.has(id)) return { ok: false, error: 'the folder-trust question is answered in the card (arrow keys), not from the phone' }
       if (!ctx.ptys.isAlive(id)) return { ok: false, error: 'the card is not running' }
       if (n.data.lastEventAt !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
       // a raw keystroke, not a bracketed paste: the permission dialog reads keys
@@ -1939,6 +1944,7 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   clearMailBlockWatch(nodeId)
   // a card that reports from its CLI is running: a "failed at launch" read from its output was wrong
   if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
+  trustAsked.delete(nodeId) // its hooks run: the trust question was answered
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
     handedAnswers.delete(nodeId)
@@ -2230,7 +2236,8 @@ export function registerIpc(ctx: MainContext): void {
     sendToRenderer(s, IPC.ptyData, { nodeId, data })
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
-    if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && n.data.status === 'starting') {
+    // a card still answering its CLI's trust question is watched the same way: the answer makes it ready, or exits
+    if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && (n.data.status === 'starting' || trustAsked.has(nodeId))) {
       // the shell could not find the CLI (that CLI, not a tool the shell profile wants): say so now (needs you,
       // "failed:"), not after a stall timer gives up
       const engine = n.data.engine ?? 'claude'
@@ -2248,12 +2255,24 @@ export function registerIpc(ctx: MainContext): void {
         clearTimeout(readyTimers.get(nodeId))
         log(`launch: ${nodeId} ${engine} exited at launch: ${exited}`)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} exited at launch (${exited.slice(0, 160)}). Check the card's options, then Restart it.` })
-      } else if (detectClaudeReady(data)) board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
-      else if (engine === 'grok' && detectTrustQuestion(out, command)) {
-        // the owner answers it in the card; its SessionStart hook then makes the card idle
+      } else if (detectClaudeReady(data)) {
+        trustAsked.delete(nodeId)
+        board.setStatus(nodeId, { status: 'idle', statusDetail: 'ready' })
+      } else if (!trustAsked.has(nodeId) && detectTrustQuestion(out, command)) {
+        // the owner answers it in the card; the ready text, the inbox registration or (Grok) its SessionStart hook
+        // then makes the card idle. Claude Code's first choice is "No, exit": Enter alone quits it.
+        trustAsked.add(nodeId)
         clearTimeout(readyTimers.get(nodeId))
         clearTimeout(exitChecks.get(nodeId))
-        board.setStatus(nodeId, { status: 'needs-you', statusDetail: 'permission: Grok asks whether to trust this folder. Answer in the card (y), and it starts.' })
+        board.setStatus(nodeId, {
+          status: 'needs-you',
+          statusDetail:
+            engine === 'grok'
+              ? 'permission: Grok asks whether to trust this folder. Answer in the card (y), and it starts.'
+              : engine === 'claude'
+                ? 'permission: Claude Code asks whether to trust this folder. In the card pick "Yes, I trust this folder" (↓ then Enter; Enter alone picks "No, exit"), and it starts.'
+                : `permission: ${engine} asks whether to trust this folder. Answer in the card, and it starts.`
+        })
       } else if (command) {
         // any engine: a CLI that quit without an error we know leaves the shell on its prompt, and then goes quiet
         clearTimeout(exitChecks.get(nodeId))
@@ -2262,12 +2281,17 @@ export function registerIpc(ctx: MainContext): void {
           setTimeout(() => {
             exitChecks.delete(nodeId)
             const cur = board.nodes.get(nodeId)
-            if (cur?.data.status !== 'starting' || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
+            if (!cur || (cur.data.status !== 'starting' && !trustAsked.has(nodeId)) || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
             if (!endsAtShellPrompt(launchOut.get(nodeId) ?? '', command)) return
             launchFailed.add(nodeId)
             clearTimeout(readyTimers.get(nodeId))
             log(`launch: ${nodeId} ${cur.data.engine ?? 'claude'} gave the shell back at launch`)
-            board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${cur.data.engine ?? 'claude'} exited at launch (the shell came back). Check the card's options, then Restart it.` })
+            // "No, exit" at the trust question is the owner's own choice, not a broken launch
+            const declined = trustAsked.delete(nodeId)
+            board.setStatus(nodeId, {
+              status: 'needs-you',
+              statusDetail: declined ? `failed: ${cur.data.engine ?? 'claude'} exited at launch (the folder was not trusted). Restart the card and trust it${(cur.data.engine ?? 'claude') === 'claude' ? ' ("Yes, I trust this folder")' : ''}.` : `failed: ${cur.data.engine ?? 'claude'} exited at launch (the shell came back). Check the card's options, then Restart it.`
+            })
           }, EXIT_CHECK_MS)
         )
       }
@@ -2295,6 +2319,7 @@ export function registerIpc(ctx: MainContext): void {
     transcripts.delete(nodeId)
     launchOut.delete(nodeId)
     launchFailed.delete(nodeId)
+    trustAsked.delete(nodeId)
     launchCommands.delete(nodeId)
     clearTimeout(exitChecks.get(nodeId))
     exitChecks.delete(nodeId)
@@ -2385,6 +2410,7 @@ export function registerIpc(ctx: MainContext): void {
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
       launchFailed.delete(opts.nodeId)
+      trustAsked.delete(opts.nodeId) // a Restart (no pty exit event) asks again
       // a stale ANTHROPIC_API_KEY in the owner's environment would beat the sign-in inside every Claude card
       const login = engine === 'claude' ? claudeLoginFromFiles(claudeConfigDirOf(process.env, homedir()), existsSync, (p) => readFileSync(p, 'utf8')) : false
       const omitEnv = claudeEnvKeysToStrip(process.env, login, store.getSettings().keepEnvApiKey === true)

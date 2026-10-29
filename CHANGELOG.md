@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A new Claude card in a folder Claude Code has not seen no longer sits on "Starting".** Claude Code first asks its safety check ("Quick safety check … ❯ No, exit / Yes, I trust this folder"), and the card showed only "Starting · launching claude", with nothing to say the owner had to answer; Enter picks "No, exit", and the card then said "failed: claude exited at launch (the shell came back)", which reads like a broken launch. The card now shows *Needs you · permission: Claude Code asks whether to trust this folder* with the keys (↓ then Enter), becomes idle on its own once Yes was picked, and says "the folder was not trusted" after No. Grok's trust question already did this; the two now share one path.
+
+### Verified
+- Unit tests for Claude Code's dialog text, its older wording and the TUI's ready text (704 tests); typecheck, build. Built-app probe with a real Claude Code card in a fresh folder: needs-you with the hint 1.9 s after launch, idle 1.5 s after Yes, "not trusted" after No. The phone does not offer its Yes / No / Esc buttons for this dialog (it takes arrow keys; the card is answered on the PC). **Not verified:** Codex's and Gemini's own trust questions, which now get a plain "answer in the card" hint.
+
 ## [0.18.4] — 2026-10-30
 
 ### Added

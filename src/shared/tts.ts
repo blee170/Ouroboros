@@ -34,12 +34,43 @@ export const TTS_ENGINES: Record<TtsEngine, TtsEngineInfo> = {
 export const VOICEBOX_URL = 'http://127.0.0.1:17493'
 
 /** A Voicebox route under its API for one generation id. */
-export function voiceboxUrl(route: 'history' | 'audio', id: string): string {
-  return `${VOICEBOX_URL}/${route}/${encodeURIComponent(id)}`
+export function voiceboxUrl(route: 'history' | 'audio' | 'cancel', id: string): string {
+  const safe = encodeURIComponent(id)
+  return route === 'cancel' ? `${VOICEBOX_URL}/generate/${safe}/cancel` : `${VOICEBOX_URL}/${route}/${safe}`
+}
+
+/** The engines Voicebox 0.5.0's /generate takes (its OpenAPI pattern). */
+const VOICEBOX_ENGINES = new Set(['qwen', 'qwen_custom_voice', 'luxtts', 'chatterbox', 'chatterbox_turbo', 'tada', 'kokoro'])
+
+export interface VoiceboxProfile {
+  id: string
+  /** the engine the profile was made for: /generate refuses any other ("Preset profile … only supports engine 'kokoro'") */
+  engine: string
+  /** the profile's language code, when Voicebox knows one it accepts */
+  language?: string
 }
 
 /**
- * A Voicebox generation record (from /speak, then /history/{id} while polling): /speak answers at once with
+ * The profile named in Settings (by name, case-insensitively, or by id) out of Voicebox's /profiles list, with the
+ * engine and language /generate needs. Undefined when the list has no such profile.
+ */
+export function voiceboxProfile(list: unknown, nameOrId: string): VoiceboxProfile | undefined {
+  if (!Array.isArray(list)) return undefined
+  const want = nameOrId.trim().toLowerCase()
+  if (!want) return undefined
+  const p = list.find((x) => x && typeof x === 'object' && typeof (x as { id?: unknown }).id === 'string' && ((x as { id: string }).id === nameOrId.trim() || String((x as { name?: unknown }).name ?? '').toLowerCase() === want)) as
+    | { id: string; default_engine?: unknown; preset_engine?: unknown; language?: unknown }
+    | undefined
+  if (!p) return undefined
+  // a preset is bound to its engine (/generate refuses any other); default_engine is free text in Voicebox, so only
+  // a name /generate accepts is passed, else Voicebox's own default (qwen) applies
+  const engine = [p.preset_engine, p.default_engine].find((e): e is string => typeof e === 'string' && VOICEBOX_ENGINES.has(e)) ?? 'qwen'
+  const language = typeof p.language === 'string' && /^[a-z]{2}$/.test(p.language) ? p.language : undefined
+  return { id: p.id, engine, language }
+}
+
+/**
+ * A Voicebox generation record (from /generate, then /history/{id} while polling): /generate answers at once with
  * "generating", the audio exists once the status is "completed", "failed" carries the reason. Anything else
  * (a "not_found" status) is a failure. Undefined when the JSON is not a record.
  */
@@ -73,7 +104,7 @@ export interface TtsRequest {
 export const GEMINI_TTS_MODEL = 'gemini-3.8-flash-lite-tts'
 
 /** The HTTP request that turns `text` into audio with the chosen engine; the key goes in a header, never the URL. */
-export function buildTtsRequest(engine: Exclude<TtsEngine, 'windows'>, text: string, s: TtsSettings, key: string): TtsRequest {
+export function buildTtsRequest(engine: Exclude<TtsEngine, 'windows'>, text: string, s: TtsSettings, key: string, voicebox?: VoiceboxProfile): TtsRequest {
   switch (engine) {
     case 'gemini':
       return {
@@ -97,11 +128,13 @@ export function buildTtsRequest(engine: Exclude<TtsEngine, 'windows'>, text: str
         mime: 'audio/mpeg'
       }
     case 'voicebox':
+      // /generate only makes the clip (/speak would also play it through Voicebox's own speakers, on top of ours);
+      // it wants the profile's id and engine, which main looks up with voiceboxProfile first
+      if (!voicebox) throw new Error('Voicebox needs a resolved profile')
       return {
-        // /speak takes a profile name or id and uses that profile's engine; no profile = the default Voicebox has set
-        url: `${VOICEBOX_URL}/speak`,
+        url: `${VOICEBOX_URL}/generate`,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, ...(s.voice ? { profile: s.voice } : {}) }),
+        body: JSON.stringify({ profile_id: voicebox.id, text, engine: voicebox.engine, ...(voicebox.language ? { language: voicebox.language } : {}) }),
         response: 'voicebox-json',
         mime: 'audio/wav'
       }

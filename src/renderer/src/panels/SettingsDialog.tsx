@@ -406,7 +406,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   )}
                   <div className="hint">
                     {tts.engine === 'voicebox'
-                      ? 'Voicebox runs on this PC (voicebox.sh, free): clone your voice there, then put the profile name above. Keep the Voicebox app open; nothing leaves the PC. The first sentence can take a while as Voicebox loads its model; if it is not running, the Windows voice speaks instead.'
+                      ? 'Voicebox runs on this PC (voicebox.sh, free): clone your voice there, then put the profile name above (as in its left column). Keep the Voicebox app open; nothing leaves the PC. Speed is Voicebox\'s: a cloned voice on its CPU backend takes up to a minute per sentence (switch Voicebox to its GPU backend in its own Settings), Kokoro presets a few seconds. Ouroboros waits up to 2 minutes; if Voicebox is not running, the Windows voice speaks instead.'
                       : "Your own subscription: the key is stored encrypted and sent only to that engine. Each sentence is fetched once and kept under the app's data folder; if the engine fails, the Windows voice speaks instead."}
                   </div>
                 </>

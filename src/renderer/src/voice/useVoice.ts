@@ -5,11 +5,21 @@ import { Mic, chime, wakeChime } from './mic'
 
 export type VoiceState = 'off' | 'idle' | 'recording' | 'transcribing'
 
-/** Settings' mic tests: while one runs, the composer ignores what it hears, so saying the phrase there does not wake it. */
+/**
+ * Settings' mic tests: while one runs, the composer lets go of the microphone (two streams on one device make
+ * Windows end the first one, silently) and ignores what it hears; afterwards the wake listener opens it again.
+ */
 let wakePaused = 0
+const pauseListeners = new Set<(paused: boolean) => void>()
 export function pauseWake(on: boolean): void {
+  const was = wakePaused > 0
   wakePaused = Math.max(0, wakePaused + (on ? 1 : -1))
+  const now = wakePaused > 0
+  if (was !== now) for (const l of pauseListeners) l(now)
 }
+/** How long the wake listener waits before opening a microphone that ended, and how often it tries. */
+const REOPEN_MS = 1500
+const REOPEN_TRIES = 5
 
 /**
  * Push-to-talk (the mic button, the global hotkey) and, when it is on, the wake phrase, for the left composer.
@@ -33,6 +43,9 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   phraseRef.current = v.wakePhrase
   /** the element that shows the mic's live level (--mic-level 0..1, data-speech while the gate hears speech) */
   const meterRef = useRef<HTMLElement | null>(null)
+  /** bumped to make the wake listener open the microphone again (it ended, or a Settings test gave it back) */
+  const [wakeRound, setWakeRound] = useState(0)
+  const reopenTries = useRef(0)
 
   // one open at a time: a second caller waits for the first; a close while it opens closes what it opened
   const opening = useRef<Promise<Mic> | null>(null)
@@ -54,6 +67,16 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
             if (!el) return
             el.style.setProperty('--mic-level', level.toFixed(2))
             el.toggleAttribute('data-speech', speech)
+          }
+          m.onEnded = () => {
+            if (mic.current !== m) return
+            epoch.current++
+            mic.current = null
+            m.close()
+            if (!wakeRef.current) return
+            // after the take the close settled ("Did not hear anything"), so this line is the one that stays
+            setTimeout(() => setMessage('Microphone stopped (a device change, or another app took it); opening it again…'), 0)
+            setTimeout(() => setWakeRound((n) => n + 1), REOPEN_MS)
           }
           mic.current = m
           return m
@@ -109,12 +132,16 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
           if (takeQueued.current) {
             takeQueued.current = false
             void takeRef.current()
+          } else if (wakeRef.current && mic.current && mic.current !== m) {
+            // the mic was reopened while this clip was being written down: the new one gets the listener
+            listen(mic.current)
           }
         })
     })
   }, [toText])
 
   const take = useCallback(async (): Promise<void> => {
+    if (wakePaused > 0) return // a Settings test holds the microphone
     if (busy.current) {
       // a wake clip is being written down: the take follows it instead of being dropped
       takeQueued.current = true
@@ -183,19 +210,44 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
       return
     }
     let cancelled = false
+    let retry: ReturnType<typeof setTimeout> | undefined
     void window.ouroboros.voice.setListening(true)
+    // a Settings test takes the microphone: let go of it, and open it again when the test is over. Registered
+    // before anything else: a run that starts during a test must still hear the test end.
+    const onPause = (paused: boolean): void => {
+      if (paused) closeMic()
+      else setWakeRound((n) => n + 1)
+    }
+    pauseListeners.add(onPause)
+    const done = (): void => {
+      cancelled = true
+      clearTimeout(retry)
+      pauseListeners.delete(onPause)
+      void window.ouroboros.voice.setListening(false)
+    }
+    if (wakePaused > 0) return done // a Settings test has the mic now
+    // a reopen round while a take already holds a fresh mic (the owner pressed the button meanwhile): keep it
+    if (mic.current || busy.current) return () => done()
     closeMic()
     void openMic()
       .then((m) => {
+        reopenTries.current = 0
+        setMessage('')
         if (!cancelled && !busy.current) listen(m)
       })
-      .catch((err: Error) => setMessage(`Microphone: ${err.message}`))
+      .catch((err: Error) => {
+        if (cancelled || wakePaused > 0) return
+        // the device may be back in a moment (a headset reconnecting): a few more tries, then the message stays
+        const again = reopenTries.current < REOPEN_TRIES
+        if (again) reopenTries.current++
+        setMessage(`Microphone: ${err.message}${again ? ' — trying again…' : ''}`)
+        if (again) retry = setTimeout(() => setWakeRound((n) => n + 1), REOPEN_MS * 2)
+      })
     return () => {
-      cancelled = true
-      void window.ouroboros.voice.setListening(false)
+      done()
       closeMic()
     }
-  }, [wakeOn, v.micDeviceId, openMic, closeMic, listen])
+  }, [wakeOn, v.micDeviceId, wakeRound, openMic, closeMic, listen])
 
   useEffect(() => () => closeMic(), [closeMic])
 

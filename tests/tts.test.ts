@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, VOICEBOX_URL, voiceboxGeneration, voiceboxUrl } from '@shared/tts'
+import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, VOICEBOX_URL, voiceboxGeneration, voiceboxProfile, voiceboxUrl } from '@shared/tts'
 
 describe('looksLikeAudio / wavFromPcm16', () => {
   it('accepts RIFF for wav and ID3 or an MPEG frame for mp3, rejects JSON/HTML bodies', () => {
@@ -74,15 +74,33 @@ describe('buildTtsRequest', () => {
     expect(JSON.parse(r.body)).toEqual({ text: 'hi', model_id: 'eleven_multilingual_v2' })
   })
 
-  it('Voicebox: POST /speak on the loopback, no auth header, profile name, a generation record back', () => {
-    // measured against Voicebox 0.5.0 on 2026-10-30: /speak answers {id, status: "generating"} at once
-    const r = buildTtsRequest('voicebox', '총괄 작업이 끝났습니다.', { engine: 'voicebox', voice: 'Brian', style: 'ignored' }, '')
-    expect(r.url).toBe(`${VOICEBOX_URL}/speak`)
+  it('Voicebox: POST /generate on the loopback (not /speak, which also plays the clip through Voicebox), with the profile id and engine', () => {
+    // measured against Voicebox 0.5.0 on 2026-10-30: /generate answers {id, status: "generating"} at once and plays nothing
+    const r = buildTtsRequest('voicebox', '총괄 작업이 끝났습니다.', { engine: 'voicebox', voice: 'Sohee', style: 'ignored' }, '', { id: 'c1af', engine: 'qwen_custom_voice', language: 'ko' })
+    expect(r.url).toBe(`${VOICEBOX_URL}/generate`)
     expect(new URL(r.url).hostname).toBe('127.0.0.1')
     expect(Object.keys(r.headers)).toEqual(['content-type'])
     expect(r.response).toBe('voicebox-json')
     expect(r.mime).toBe('audio/wav')
-    expect(JSON.parse(r.body)).toEqual({ text: '총괄 작업이 끝났습니다.', profile: 'Brian' })
+    expect(JSON.parse(r.body)).toEqual({ profile_id: 'c1af', text: '총괄 작업이 끝났습니다.', engine: 'qwen_custom_voice', language: 'ko' })
+    expect(() => buildTtsRequest('voicebox', 'hi', { engine: 'voicebox', voice: 'Sohee', style: '' }, '')).toThrow(/profile/)
+  })
+
+  it("Voicebox: finds the Settings profile in Voicebox's list by name or id, with the engine /generate insists on", () => {
+    const list = [
+      { id: 'c1af', name: 'Sohee', language: 'ko', voice_type: 'preset', preset_engine: 'qwen_custom_voice', default_engine: 'qwen_custom_voice' },
+      { id: '3ac3', name: 'Sky', language: 'en', voice_type: 'preset', preset_engine: 'kokoro', default_engine: null },
+      { id: 'b2b2', name: 'Brian', language: 'ko', voice_type: 'cloned', preset_engine: null, default_engine: null },
+      { id: 'd4d4', name: 'Odd', language: 'en', voice_type: 'preset', preset_engine: 'kokoro', default_engine: 'something-custom' }
+    ]
+    // the preset's engine is the binding one; a free-text default_engine /generate would refuse is not passed
+    expect(voiceboxProfile(list, 'Odd')).toEqual({ id: 'd4d4', engine: 'kokoro', language: 'en' })
+    expect(voiceboxProfile(list, 'sohee')).toEqual({ id: 'c1af', engine: 'qwen_custom_voice', language: 'ko' })
+    expect(voiceboxProfile(list, 'Sky')).toEqual({ id: '3ac3', engine: 'kokoro', language: 'en' })
+    expect(voiceboxProfile(list, 'b2b2')).toEqual({ id: 'b2b2', engine: 'qwen', language: 'ko' })
+    expect(voiceboxProfile(list, 'Nobody')).toBeUndefined()
+    expect(voiceboxProfile(list, '')).toBeUndefined()
+    expect(voiceboxProfile({ detail: 'nope' }, 'Sky')).toBeUndefined()
   })
 
   it('Voicebox: reads the generation record, and names the audio route', () => {
@@ -94,12 +112,11 @@ describe('buildTtsRequest', () => {
     expect(voiceboxGeneration('nope')).toBeUndefined()
     expect(voiceboxUrl('history', 'a b/c')).toBe(`${VOICEBOX_URL}/history/a%20b%2Fc`)
     expect(voiceboxUrl('audio', 'g1')).toBe(`${VOICEBOX_URL}/audio/g1`)
+    expect(voiceboxUrl('cancel', 'g1')).toBe(`${VOICEBOX_URL}/generate/g1/cancel`)
   })
 
-  it('Voicebox with no profile leaves it out, so Voicebox uses the default set in its own Settings', () => {
+  it('Voicebox has no default voice of its own in Settings (main asks for a profile name)', () => {
     expect(ttsSettings({ ttsEngine: 'voicebox' })).toMatchObject({ engine: 'voicebox', voice: '' })
-    const r = buildTtsRequest('voicebox', 'hi', ttsSettings({ ttsEngine: 'voicebox' }), '')
-    expect(JSON.parse(r.body)).not.toHaveProperty('profile')
   })
 })
 

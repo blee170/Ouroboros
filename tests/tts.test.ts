@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16 } from '@shared/tts'
+import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, VOICEBOX_URL } from '@shared/tts'
 
 describe('looksLikeAudio / wavFromPcm16', () => {
   it('accepts RIFF for wav and ID3 or an MPEG frame for mp3, rejects JSON/HTML bodies', () => {
@@ -66,6 +66,22 @@ describe('buildTtsRequest', () => {
     expect(r.url).toBe('https://api.elevenlabs.io/v1/text-to-speech/ab%2Fc%20d?output_format=mp3_44100_128')
     expect(r.headers['xi-api-key']).toBe('xi')
     expect(JSON.parse(r.body)).toEqual({ text: 'hi', model_id: 'eleven_multilingual_v2' })
+  })
+
+  it('Voicebox: local loopback route, no auth header, profile as voice, wav back', () => {
+    const r = buildTtsRequest('voicebox', '총괄 작업이 끝났습니다.', { engine: 'voicebox', voice: 'Brian', style: 'ignored' }, '')
+    expect(r.url).toBe(VOICEBOX_URL)
+    expect(new URL(r.url).hostname).toBe('127.0.0.1')
+    expect(Object.keys(r.headers)).toEqual(['content-type'])
+    expect(r.response).toBe('bytes')
+    expect(r.mime).toBe('audio/wav')
+    expect(JSON.parse(r.body)).toEqual({ model: 'tts-1', input: '총괄 작업이 끝났습니다.', voice: 'Brian', response_format: 'wav' })
+  })
+
+  it('Voicebox with no profile leaves voice out, so Voicebox picks its default voice', () => {
+    expect(ttsSettings({ ttsEngine: 'voicebox' })).toMatchObject({ engine: 'voicebox', voice: '' })
+    const r = buildTtsRequest('voicebox', 'hi', ttsSettings({ ttsEngine: 'voicebox' }), '')
+    expect(JSON.parse(r.body)).not.toHaveProperty('voice')
   })
 })
 

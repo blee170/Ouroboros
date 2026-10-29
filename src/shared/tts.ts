@@ -1,17 +1,17 @@
 /**
- * Natural voices for announcements: the owner's own TTS subscription (a Gemini, OpenAI or ElevenLabs API key)
- * or the Windows voices built into the renderer. Pure: request shapes and response parsing are unit-tested;
+ * Natural voices for announcements: the owner's own TTS subscription (a Gemini, OpenAI or ElevenLabs API key),
+ * a Voicebox app running on this PC (no key), or the Windows voices built into the renderer. Pure: request shapes and response parsing are unit-tested;
  * main does the fetch, the renderer plays the bytes.
  */
 import type { AppSettings } from './types'
 
-export type TtsEngine = 'windows' | 'gemini' | 'openai' | 'elevenlabs'
+export type TtsEngine = 'windows' | 'gemini' | 'openai' | 'elevenlabs' | 'voicebox'
 
 export interface TtsSettings {
   engine: TtsEngine
-  /** Voice name (Gemini: Kore…; OpenAI: coral…; ElevenLabs: a voice id). Empty = the engine's default. */
+  /** Voice name (Gemini: Kore…; OpenAI: coral…; ElevenLabs: a voice id; Voicebox: a profile name). Empty = the engine's default. */
   voice: string
-  /** Delivery hint (Gemini speech_metadata style, OpenAI instructions). Ignored by ElevenLabs and Windows. */
+  /** Delivery hint (Gemini speech_metadata style, OpenAI instructions). Ignored by ElevenLabs, Voicebox and Windows. */
   style: string
 }
 
@@ -26,8 +26,12 @@ export const TTS_ENGINES: Record<TtsEngine, TtsEngineInfo> = {
   windows: { label: 'Windows voice (offline, no key)', defaultVoice: '', voiceHint: '', keyHint: '' },
   gemini: { label: 'Gemini TTS (Google AI Studio key, free tier)', defaultVoice: 'Kore', voiceHint: 'Kore, Zephyr, Puck, Achird, Sulafat…', keyHint: 'API key from aistudio.google.com/app/apikey' },
   openai: { label: 'OpenAI gpt-4o-mini-tts', defaultVoice: 'coral', voiceHint: 'coral, alloy, nova, onyx, sage…', keyHint: 'API key from platform.openai.com' },
-  elevenlabs: { label: 'ElevenLabs multilingual v2', defaultVoice: '21m00Tcm4TlvDq8ikWAM', voiceHint: 'voice id (Voices → ⋯ → Copy voice ID); default: Rachel', keyHint: 'xi-api-key from elevenlabs.io' }
+  elevenlabs: { label: 'ElevenLabs multilingual v2', defaultVoice: '21m00Tcm4TlvDq8ikWAM', voiceHint: 'voice id (Voices → ⋯ → Copy voice ID); default: Rachel', keyHint: 'xi-api-key from elevenlabs.io' },
+  voicebox: { label: 'Voicebox (local app, your own voice)', defaultVoice: '', voiceHint: 'profile name from Voicebox (empty = its default voice); the profile sets the language', keyHint: '' }
 }
+
+/** Voicebox's local API (its OpenAI-compatible speech route); it listens on 127.0.0.1 only and takes no key. */
+export const VOICEBOX_URL = 'http://127.0.0.1:17493/v1/audio/speech'
 
 export const DEFAULT_STYLE = 'calm and friendly, like a colleague letting you know'
 
@@ -70,6 +74,15 @@ export function buildTtsRequest(engine: Exclude<TtsEngine, 'windows'>, text: str
         body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: text, voice: s.voice, instructions: s.style, response_format: 'mp3' }),
         response: 'bytes',
         mime: 'audio/mpeg'
+      }
+    case 'voicebox':
+      return {
+        url: VOICEBOX_URL,
+        headers: { 'content-type': 'application/json' },
+        // tts-1 = whatever engine the profile uses; no voice = Voicebox's default playback voice
+        body: JSON.stringify({ model: 'tts-1', input: text, ...(s.voice ? { voice: s.voice } : {}), response_format: 'wav' }),
+        response: 'bytes',
+        mime: 'audio/wav'
       }
     case 'elevenlabs':
       return {

@@ -6,11 +6,15 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Added
+- **Voicebox voice engine: announcements in your own cloned voice, free and offline.** Settings → Announcements → Voice engine → *Voicebox (local app, your own voice)*. Install [Voicebox](https://voicebox.sh) (MIT, local), clone your voice there from a short recording, and put the profile name in *Voice* (empty = Voicebox's default voice; the profile sets the language). Ouroboros calls its OpenAI-compatible route on `127.0.0.1:17493`: no key, nothing leaves the PC. Local clips are not cached, so a profile re-recorded under the same name is heard right away. The first sentence may take a while as Voicebox loads its model (90 s for the first answer, 20 s after that); if Voicebox is not running, Settings says so and the Windows voice speaks instead.
+
 ### Fixed
 - **Release notes in Notion listed evidence as highlights.** An Updates page's *Highlights* took the bold lead of every bullet in the version, so lines from its *Verified* and *Not verified* sections ("Not verified live", "Live probe in the built app") and detail labels ("Repeat calls:") showed up next to the real changes. Now only the *Added*, *Changed*, *Fixed* and *Security* sections count, and a lead ending in ":" is skipped. Pages already in Notion are not rewritten.
 
 ### Verified
-- Unit test against the real changelog (0.15.0 and 0.16.0); it fails on the old parser. Typecheck and the vitest suite (696 tests).
+- Unit test against the real changelog (0.15.0 and 0.16.0); it fails on the old parser. Typecheck and the vitest suite (698 tests).
+- Voicebox request shape unit-tested; the not-running message checked against a real closed port. **Not verified:** a real Voicebox install answering, Korean output from a cloned profile.
 
 ## [0.18.2] — 2026-10-28
 

@@ -377,15 +377,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </label>
               {tts.engine !== 'windows' && (
                 <>
-                  <label className="field">
-                    <span>API key</span>
-                    <div className="ctl">
-                      <input className="text" type="password" placeholder={ttsKeys[tts.engine] ? '•••••• (saved)' : TTS_ENGINES[tts.engine].keyHint} value={ttsKey} onChange={(e) => setTtsKey(e.target.value)} />
-                      <button className="btn" onClick={() => void saveTtsKey(tts.engine as TtsKeyEngine)}>
-                        {ttsKey ? 'Save' : ttsKeys[tts.engine] ? 'Clear' : 'Save'}
-                      </button>
-                    </div>
-                  </label>
+                  {tts.engine !== 'voicebox' && (
+                    <label className="field">
+                      <span>API key</span>
+                      <div className="ctl">
+                        <input className="text" type="password" placeholder={ttsKeys[tts.engine] ? '•••••• (saved)' : TTS_ENGINES[tts.engine].keyHint} value={ttsKey} onChange={(e) => setTtsKey(e.target.value)} />
+                        <button className="btn" onClick={() => void saveTtsKey(tts.engine as TtsKeyEngine)}>
+                          {ttsKey ? 'Save' : ttsKeys[tts.engine] ? 'Clear' : 'Save'}
+                        </button>
+                      </div>
+                    </label>
+                  )}
                   <label className="field">
                     <span>Voice</span>
                     <div className="ctl">
@@ -393,7 +395,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     </div>
                     <div className="hint">{TTS_ENGINES[tts.engine].voiceHint}</div>
                   </label>
-                  {tts.engine !== 'elevenlabs' && (
+                  {tts.engine !== 'elevenlabs' && tts.engine !== 'voicebox' && (
                     <label className="field">
                       <span>Style</span>
                       <div className="ctl">
@@ -401,7 +403,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                       </div>
                     </label>
                   )}
-                  <div className="hint">Your own subscription: the key is stored encrypted and sent only to that engine. Each sentence is fetched once and kept under the app's data folder; if the engine fails, the Windows voice speaks instead.</div>
+                  <div className="hint">
+                    {tts.engine === 'voicebox'
+                      ? 'Voicebox runs on this PC (voicebox.sh, free): clone your voice there, then put the profile name above. Keep the Voicebox app open; nothing leaves the PC. The first sentence can take a while as Voicebox loads its model; if it is not running, the Windows voice speaks instead.'
+                      : "Your own subscription: the key is stored encrypted and sent only to that engine. Each sentence is fetched once and kept under the app's data folder; if the engine fails, the Windows voice speaks instead."}
+                  </div>
                 </>
               )}
               <div className="hint">

@@ -317,6 +317,10 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .sb-mic.recording { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
 .sb-mic.transcribing { opacity: .6; }
 .sb-mic .wake-dot { position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: var(--ok, #22c55e); }
+/* live mic level (useVoice writes --mic-level 0..1): a ring that grows with the sound, green while it counts as speech */
+.sb-mic { box-shadow: 0 0 0 calc(var(--mic-level, 0) * 4px) color-mix(in srgb, var(--muted) 35%, transparent); transition: box-shadow 60ms linear; }
+.sb-mic[data-speech] { box-shadow: 0 0 0 calc(var(--mic-level, 0) * 4px + 1px) color-mix(in srgb, var(--ok, #22c55e) 55%, transparent); }
+@media (prefers-reduced-motion: reduce) { .sb-mic { transition: none; } }
 .sb-voice-line { font-size: 11px; color: var(--muted); margin: 4px 0; }
 
 /* right panel: 350px, a 36px header, the Inspector scrolls under it */

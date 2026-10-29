@@ -45,7 +45,9 @@ export function voiceSettings(v: Partial<VoiceSettings> | undefined): VoiceSetti
   if (s.stt !== 'openai' && s.stt !== 'whisper') s.stt = 'openai'
   if (!['auto', 'ko', 'en'].includes(s.language)) s.language = 'auto'
   if (!validAccelerator(s.hotkey)) s.hotkey = DEFAULT_VOICE.hotkey
-  s.wakePhrase = (s.wakePhrase || '').trim().slice(0, 40) || DEFAULT_VOICE.wakePhrase
+  s.wakePhrase = (s.wakePhrase || '').trim().slice(0, MAX_WAKE_PHRASE)
+  // only commas (or nothing) would never match: the default instead
+  if (!wakePhrases(s.wakePhrase).length) s.wakePhrase = DEFAULT_VOICE.wakePhrase
   return s
 }
 
@@ -86,11 +88,49 @@ function distance(a: string, b: string): number {
  * Whether a transcript starts with the wake phrase, and what was said after it. Speech recognisers spell a
  * name differently from take to take ("Ouroboros", "Uroboros", "우로보로스"), so the start of the transcript
  * is compared with a tolerance: at most a quarter of the phrase's characters may differ (one for short ones).
+ * `phrase` may list other spellings after commas ("hey ouro, hey aro, 헤이 우로"): any one of them counts.
  */
 export function matchWake(transcript: string, phrase: string): { matched: false } | { matched: true; rest: string } {
+  for (const one of wakePhrases(phrase)) {
+    const m = matchOne(transcript, one)
+    if (m.matched) return m
+  }
+  return { matched: false }
+}
+
+/** The spellings in a wake phrase setting: comma-separated, blanks dropped. */
+export function wakePhrases(phrase: string): string[] {
+  return phrase
+    .split(/[,，、]/)
+    .map((p) => p.trim())
+    .filter((p) => normalizeSpeech(p))
+}
+
+/** Longest wake phrase setting: the original phrase plus a few spellings the recogniser wrote for it. */
+export const MAX_WAKE_PHRASE = 120
+
+/**
+ * The wake phrase setting with what the recogniser heard added as one more spelling (the Settings test), or
+ * undefined when it already matches, has no words, or would not fit.
+ */
+export function addWakeSpelling(phrase: string, heard: string): string | undefined {
+  const spelling = heard
+    .replace(/[\s"'“”‘’「」『』()[\]{}.,!?~、。，！？:;-]+$/u, '')
+    .replace(/^[\s"'“”‘’「」『』()[\]{}.,!?~、。，！？:;-]+/u, '')
+    .replace(/[,，、]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  // a short recogniser guess ("네", "응") for a mumbled test would wake on everything
+  if (normalizeSpeech(spelling).length < 3 || spelling.length > 30 || matchWake(spelling, phrase).matched) return undefined
+  const next = `${phrase.trim()}, ${spelling}`
+  return next.length <= MAX_WAKE_PHRASE ? next : undefined
+}
+
+function matchOne(transcript: string, phrase: string): { matched: false } | { matched: true; rest: string } {
   const want = normalizeSpeech(phrase)
   if (!want) return { matched: false }
-  const allowed = Math.max(1, Math.floor(want.length / 4))
+  // one or two characters with a typo allowed would match nearly any sentence: those must be exact
+  const allowed = want.length < 3 ? 0 : Math.max(1, Math.floor(want.length / 4))
   // walk the transcript's characters, keeping where each normalized character came from, to cut the rest out
   const chars: Array<{ c: string; end: number }> = []
   const src = transcript.normalize('NFC')
@@ -111,7 +151,7 @@ export function matchWake(transcript: string, phrase: string): { matched: false 
     }
     if (best) {
       const end = chars[skip + best.len - 1].end
-      const rest = src.slice(end).replace(/^[\s,.!?~、。，！？-]+/u, '').trim()
+      const rest = src.slice(end).replace(/^[\s,.!?~、。，！？"'“”‘’」』-]+/u, '').trim()
       return { matched: true, rest }
     }
   }

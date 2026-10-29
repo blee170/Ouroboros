@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_VOICE, isNonSpeech, matchWake, normalizeSpeech, sttFields, sttText, validAccelerator, voiceSettings, wavFromFloat32 } from '../src/shared/voice'
+import { DEFAULT_VOICE, MAX_WAKE_PHRASE, addWakeSpelling, isNonSpeech, matchWake, normalizeSpeech, sttFields, sttText, validAccelerator, voiceSettings, wakePhrases, wavFromFloat32 } from '../src/shared/voice'
 
 describe('wake phrase', () => {
   it('matches the phrase at the start, with what followed as the prompt', () => {
@@ -17,6 +17,40 @@ describe('wake phrase', () => {
     expect(matchWake('Our robots', 'Ouroboros').matched).toBe(false)
     expect(matchWake('', 'Ouroboros').matched).toBe(false)
     expect(matchWake('anything', '  ').matched).toBe(false)
+  })
+  it('takes other spellings after commas, as whisper writes "hey ouro" (measured on the owner’s whisper server)', () => {
+    const phrase = 'hey ouro'
+    expect(matchWake('Hey Aro, run the tests', phrase).matched).toBe(false)
+    expect(matchWake('헤이 우로', phrase).matched).toBe(false)
+    const more = 'hey ouro, Hey Aro, 헤이 우로'
+    expect(wakePhrases(more)).toEqual(['hey ouro', 'Hey Aro', '헤이 우로'])
+    expect(matchWake('Hey Aro, run the tests', more)).toEqual({ matched: true, rest: 'run the tests' })
+    expect(matchWake('헤이 우로 상태 알려줘', more)).toEqual({ matched: true, rest: '상태 알려줘' })
+    expect(matchWake('I was reading about ouroboros', more).matched).toBe(false)
+    expect(wakePhrases(' , ,')).toEqual([])
+  })
+  it('drops quotes the recogniser put around the phrase from the prompt', () => {
+    expect(matchWake('"Hey Uro!" 테스트 돌려줘.', 'hey ouro')).toEqual({ matched: true, rest: '테스트 돌려줘.' })
+  })
+  it('adds what was heard as a spelling only when it is new, short and fits', () => {
+    expect(addWakeSpelling('hey ouro', ' "Hey Aro." ')).toBe('hey ouro, Hey Aro')
+    expect(addWakeSpelling('hey ouro', 'Hey Ouro!')).toBeUndefined()
+    expect(addWakeSpelling('hey ouro', '...')).toBeUndefined()
+    expect(addWakeSpelling('hey ouro', 'this is a whole sentence that someone said instead')).toBeUndefined()
+    expect(addWakeSpelling('a'.repeat(115), 'Hey Aro')).toBeUndefined()
+    expect(addWakeSpelling('hey ouro', 'Hey, Aro')).toBe('hey ouro, Hey Aro')
+    expect(voiceSettings({ wakePhrase: 'x'.repeat(200) }).wakePhrase).toHaveLength(MAX_WAKE_PHRASE)
+    expect(addWakeSpelling('hey ouro', '네.')).toBeUndefined()
+    expect(addWakeSpelling('hey ouro', '응응')).toBeUndefined()
+  })
+  it('a one- or two-character spelling must match exactly, so it cannot wake on every sentence', () => {
+    expect(matchWake('오늘 날씨 어때', 'hey ouro, 네').matched).toBe(false)
+    expect(matchWake('뭐 해', 'hey ouro, 네').matched).toBe(false)
+    expect(matchWake('네 알겠어', 'hey ouro, 네').matched).toBe(true)
+    expect(matchWake('우루야. 보고서 읽어줘.', '우로야')).toEqual({ matched: true, rest: '보고서 읽어줘.' })
+  })
+  it('a phrase of only commas falls back to the default', () => {
+    expect(voiceSettings({ wakePhrase: ' , ,' }).wakePhrase).toBe(DEFAULT_VOICE.wakePhrase)
   })
   it('normalizes case, punctuation and spacing', () => {
     expect(normalizeSpeech('Hey, Ouro-boros!')).toBe('heyouroboros')

@@ -29,6 +29,7 @@ export const PRIVILEGE_FIELDS = [
   'claude.resume',
   'claude.continue',
   'claude.model',
+  'claude.effort',
   'claude.wsl',
   'handoffs'
 ] as const

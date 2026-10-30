@@ -48,6 +48,8 @@ export interface ApiHandlers {
     role?: string
     permission_mode?: string
     model?: string
+    /** low | medium | high | xhigh | max; anything else is dropped (the CLI's default) */
+    effort?: string
     worktree?: boolean
     continue?: boolean
     resume?: string

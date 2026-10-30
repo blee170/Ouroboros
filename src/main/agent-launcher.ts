@@ -112,6 +112,8 @@ export function buildCodexLaunch(input: EngineLaunchInput): EngineLaunch {
     return args
   }
   let args = build(inlineRole)
+  // the same words Claude Code's --effort takes; Codex reads them as its reasoning effort (levels depend on the model)
+  if (claude.effort) args.push('-c', `model_reasoning_effort=${tomlString(claude.effort)}`)
   if (claude.model) args.push('-m', claude.model)
   if (input.autonomous) {
     // Autonomous run (Type 1 (d)): the sandbox is the rail. workspace-write keeps .git read-only and the network off;

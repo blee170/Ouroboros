@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useBoard } from '@/store/board'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
-import { MCP_PRESETS, normalizeEngine, type ClaudeOptions, type McpServerSpec } from '@shared/types'
+import { EFFORT_LEVELS, MCP_PRESETS, normalizeEffort, normalizeEngine, type ClaudeOptions, type McpServerSpec } from '@shared/types'
 import { Icon } from '@/lib/icons'
 import type { RoleEntry } from '@shared/roles'
 import { ChangesPanel } from './ChangesPanel'
@@ -298,6 +298,24 @@ export function Inspector() {
             </div>
           </label>
           <ModelField key={`${nodeId}-${d.engine ?? 'claude'}`} engine={d.engine ?? 'claude'} model={claude.model} onChange={(model) => setClaude({ model })} />
+          <label className="field">
+            <span>Effort</span>
+            <div className="ctl">
+              <select value={claude.effort ?? ''} onChange={(e) => setClaude({ effort: normalizeEffort(e.target.value) })}>
+                <option value="">Default (the CLI's own)</option>
+                {EFFORT_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="hint">
+              {(d.engine ?? 'claude') === 'claude' && 'Reasoning effort (claude --effort): low for cheap divergence such as drafts and searches, high or above for review and the final merge.'}
+              {d.engine === 'codex' && 'Reasoning effort (codex -c model_reasoning_effort); the levels a model takes are its own, so an unknown one is refused at launch.'}
+              {(d.engine === 'gemini' || d.engine === 'grok') && `${d.engine === 'gemini' ? 'Gemini CLI' : 'Grok Build'} has no effort flag: this is ignored.`}
+            </div>
+          </label>
           <label className="field">
             <span>Permissions</span>
             <div className="ctl">

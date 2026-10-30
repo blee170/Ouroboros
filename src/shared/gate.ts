@@ -1,7 +1,7 @@
 /**
  * Action gates (RESEARCH §11 step 3): during an Autonomous run, a card's shell command that pushes, opens a PR or
  * merges one is decided here instead of by a blanket deny rule. The owner's policy (2026-10-25):
- * - auto: a push whose every destination is a `claude/*` or `card/*` branch (no force, delete, mirror, all, tags);
+ * - auto: a push whose every destination is a `claude/*`, `card/*` or `wt/*` branch (the app's worktree branches are `wt/<slug>`; no force, delete, mirror, all, tags);
  *   `gh pr create --draft`
  * - ask: `gh pr merge` (the owner approves once, for that card and that exact command)
  * - never: any other push, `git send-pack`, a PR that is not a draft
@@ -30,7 +30,7 @@ export interface GateVerdict {
   onlyGated: boolean
 }
 
-const OWN_BRANCH = /^(claude|card)\/[A-Za-z0-9._\/-]+$/
+const OWN_BRANCH = /^(claude|card|wt)\/[A-Za-z0-9._\/-]+$/
 
 /** Split a command line into its simple commands (`&&`, `||`, `;`, `|`, newlines), outside quotes. */
 export function splitCommands(command: string): string[] {
@@ -195,7 +195,7 @@ const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
  * A push is allowed only as `git [-C dir] push [flags] <remote> <refspec>…` with a plain remote name and every
- * destination a `claude/*` or `card/*` branch named in the command. A bare `git push`, `git push origin`, or a
+ * destination a `claude/*`, `card/*` or `wt/*` branch named in the command. A bare `git push`, `git push origin`, or a
  * destination of `HEAD` would let the repo's config (push.default, upstream, remote.*.push) pick the target, which
  * the command does not show, so they are refused with the form to use instead.
  */
@@ -237,7 +237,7 @@ function classifyPush(rest: string[], text: string): GateAction {
       if (!dst.startsWith('refs/heads/')) return never(`push to ${dst}: only branches are pushed during a run`)
       dst = dst.slice('refs/heads/'.length)
     }
-    if (!OWN_BRANCH.test(dst) || dst.split('/').some((p) => p === '..' || p === '.' || p === '') || dst.endsWith('.lock')) return never(`push to ${dst}: only claude/* and card/* branches are pushed during a run`)
+    if (!OWN_BRANCH.test(dst) || dst.split('/').some((p) => p === '..' || p === '.' || p === '') || dst.endsWith('.lock')) return never(`push to ${dst}: only claude/*, card/* and wt/* branches are pushed during a run`)
   }
   return { kind: 'push', decision: 'auto', reason: `push to ${refspecs.map((s) => s.split(':').pop()).join(', ')}`, text }
 }

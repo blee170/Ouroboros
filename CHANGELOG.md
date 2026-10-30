@@ -4,6 +4,11 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- Action gate: a push to the card's own worktree branch (`wt/<slug>`, the name `worktree=true` gives it) is allowed during an autonomous run. The gate passed only `claude/*` and `card/*`, so a worktree card could never push its own branch and was told to use a branch it did not have.
+
 ## [0.18.10] — 2026-10-31
 
 ### Added

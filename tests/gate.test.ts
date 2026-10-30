@@ -6,6 +6,8 @@ describe('decide', () => {
     // own branches, named in the command
     ['git push origin claude/fix-login', 'auto'],
     ['git push -u origin card/w1', 'auto'],
+    ['git push -u origin wt/implementer', 'auto'],
+    ['git push origin HEAD:wt/x', 'auto'],
     ['git push origin HEAD:claude/x', 'auto'],
     ['git push --set-upstream origin claude/a claude/b', 'auto'],
     ['git push origin refs/heads/claude/x', 'auto'],

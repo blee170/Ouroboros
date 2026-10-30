@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCodexLaunch, buildGeminiLaunch, buildGeminiSettings, quoteWinCrt, tomlString, type EngineLaunchInput } from '../src/main/agent-launcher'
+import { buildCodexLaunch, buildGeminiLaunch, buildGeminiSettings, buildGrokLaunch, quoteWinCrt, tomlString, type EngineLaunchInput } from '../src/main/agent-launcher'
 
 const base: EngineLaunchInput = {
   nodeId: 'n1',
@@ -81,6 +81,21 @@ describe('buildGeminiSettings / buildGeminiLaunch', () => {
     expect(Object.keys(l.files ?? {})).toEqual(['C:\\tmp\\n1.gemini.json'])
     expect(tomlString('a"b')).toBe('"a\\"b"')
   })
+})
+
+describe('reasoning effort', () => {
+  it('reaches Codex as a model_reasoning_effort override, after the fixed overrides and before the model', () => {
+    const l = buildCodexLaunch({ ...base, claude: { model: 'gpt-5-codex', effort: 'high' } })
+    expect(l.command).toContain(' -c "model_reasoning_effort=\\"high\\"" -m gpt-5-codex')
+    const posix = buildCodexLaunch({ ...base, shell: 'posix', claude: { effort: 'xhigh' } })
+    expect(posix.command).toContain(`-c 'model_reasoning_effort="xhigh"'`)
+    expect(buildCodexLaunch(base).command).not.toContain('model_reasoning_effort')
+  })
+  it('is left out of Gemini and Grok lines, which have no such flag', () => {
+    expect(buildGeminiLaunch({ ...base, claude: { effort: 'high' } }, 'C:\\tmp\\n1.gemini.json').command).toBe('& gemini')
+    expect(buildGrokLaunch({ ...base, claude: { effort: 'high' } }, 'C:\\tmp\\n1.grok.md').command).toBe('& grok --agent C:\\tmp\\n1.grok.md')
+  })
+})
 
 describe('card token', () => {
   it('reaches Codex and Gemini helpers as a file path, never on the command line', () => {
@@ -102,7 +117,6 @@ describe('card token', () => {
     expect(gem.mcpServers.ouroboros.env.OUROBOROS_TOOLS).toBe('mail')
     expect(buildCodexLaunch({ ...base, boardTools: true, mcpTokenFile: 'x' }).command).not.toContain('OUROBOROS_TOOLS')
   })
-})
 })
 
 describe('buildCodexLaunch in an autonomous run', () => {

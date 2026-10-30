@@ -396,6 +396,13 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
     sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
+    discordPost: (self, input) => {
+      const n = board.nodes.get(self)
+      if (!n) return Promise.resolve({ ok: false as const, error: 'unknown card' })
+      // the agent cards that have the tool: a terminal or command card has no board tools to call it with
+      if (n.data.kind !== 'claude' && n.data.kind !== 'conductor') return Promise.resolve({ ok: false as const, error: 'only agent cards can post to Discord' })
+      return ctx.ouro.post(typeof input.channel === 'string' ? input.channel : '', typeof input.text === 'string' ? input.text : '', `${n.data.title} (${self})`)
+    },
     grokBotList: () => {
       const bots = grokBots(ctx.store.getSettings())
       return bots.length ? `The owner's Grok Bots (pass the name as bot):\n${botMenu(bots)}` : 'The owner has not set up a Grok Bot (Settings → Grok Bot).'
@@ -1151,7 +1158,7 @@ export function createOuro(ctx: MainContext): Ouro {
 export function applyOuro(ctx: MainContext): void {
   const st = ctx.store.getSettings()
   const v = ouroSettings(st.ouro)
-  ctx.ouro.configure({ enabled: v.enabled, token: decryptToken(st.ouroTokenEnc) || undefined, ownerId: v.ownerId, notify: v.notify, approvals: v.approvals })
+  ctx.ouro.configure({ enabled: v.enabled, token: decryptToken(st.ouroTokenEnc) || undefined, ownerId: v.ownerId, notify: v.notify, approvals: v.approvals, channels: v.channels })
 }
 
 function ouroStatus(ctx: MainContext): OuroStatusView {

@@ -28,6 +28,8 @@ export interface ApiHandlers {
   registerInbox(self: string, socket: unknown, token: unknown): { ok: boolean; error?: string }
   /** ask_owner: the caller's question to the owner; waits a while for the answer, else says it is pending. */
   askOwner(self: string, input: { question?: unknown; choices?: unknown }, signal?: AbortSignal): Promise<{ ok: true; id: string; answered: boolean; text: string } | { ok: false; error: string }>
+  /** post_discord: the caller posts to a Discord channel the owner allows, as the bot. */
+  discordPost(self: string, input: { channel?: unknown; text?: unknown }): Promise<{ ok: true; channel: string } | { ok: false; error: string }>
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
   listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
@@ -501,6 +503,12 @@ export class HookServer {
           const r = api.taskUpdate(id, body, self || UNKNOWN_CARD)
           return send(res, r.ok ? 200 : r.error.startsWith('no task') ? 404 : 400, r)
         }
+      }
+      if (path === '/api/discord' && method === 'POST') {
+        if (!self) return send(res, 403, { error: "post_discord needs the caller's card id" })
+        const body = (await readJson(req, 64_000)) as { channel?: unknown; text?: unknown } | null
+        const r = await api.discordPost(self, body ?? {})
+        return send(res, r.ok ? 200 : 400, r)
       }
       if (path === '/api/grok-bot' && method === 'POST') {
         if (!self) return send(res, 403, { error: 'handoff_to_grok_bot needs the caller\'s card id' })

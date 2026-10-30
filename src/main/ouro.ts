@@ -7,7 +7,7 @@
  * "응" within three minutes. Anything that is not a command goes to the Conductor, and its next replies come back.
  */
 import { DiscordBot, type DiscordMessage, type DiscordState } from './discord'
-import { OURO_LIMITS, carReadyLine, confirmLine, conductorPrompt, helpLine, howTo, intentOf, isOnlyYes, langOf, matchAnswer, needLine, readableAloud, soundsLikeNo, spoken, statusLine, titleOf, type Lang, type OuroNeed, type OuroStatus } from '@shared/ouro'
+import { OURO_LIMITS, carReadyLine, channelsLine, confirmLine, conductorPrompt, helpLine, howTo, intentOf, isOnlyYes, langOf, matchAnswer, needLine, ouroChannel, readableAloud, soundsLikeNo, spoken, statusLine, titleOf, type Lang, type OuroChannel, type OuroNeed, type OuroStatus } from '@shared/ouro'
 
 export type OuroResult = { ok: boolean; error?: string; warning?: string }
 
@@ -32,6 +32,8 @@ export interface OuroConfig {
   notify: boolean
   /** approvals and answers by voice (default on); off: Ouro reads them out and sends the owner to the PC */
   approvals: boolean
+  /** server channels cards may post to without asking (Settings → Ouro → Channels) */
+  channels?: OuroChannel[]
 }
 
 interface Bot {
@@ -41,6 +43,7 @@ interface Bot {
   start(): void
   stop(): void
   send(text: string): Promise<void>
+  post(channelId: string, text: string, quiet?: boolean): Promise<void>
   on(event: string, fn: (...args: any[]) => void): unknown
 }
 type Action = { kind: 'approve' } | { kind: 'hold' } | { kind: 'answer'; answer: string }
@@ -56,6 +59,11 @@ const NOTICE_DEBOUNCE_MS = 3000
 // told once per request: a progress note on a task that is still blocked is not news, a new request is
 const keyOf = (n: OuroNeed): string => `${n.ref}:${n.text}`
 const ACTIONABLE = new Set<OuroNeed['kind']>(['question', 'approval', 'task-approve', 'task-either', 'task-do'])
+/** the start of a posted text for the run log, on one line */
+const excerpt = (s: string): string => {
+  const one = s.replace(/\s+/g, ' ')
+  return one.length > 80 ? `${one.slice(0, 80)}…` : one
+}
 
 export class Ouro {
   private bot?: Bot
@@ -75,6 +83,9 @@ export class Ouro {
   private carTimer?: unknown
   private lastCar = -Infinity
   private queue: Promise<void> = Promise.resolve()
+  /** channel posts: when each channel was posted to (tries included), and the post under way */
+  private posted = new Map<string, number[]>()
+  private posting: Promise<void> = Promise.resolve()
   private readonly d: Required<OuroDeps>
 
   constructor(
@@ -175,6 +186,40 @@ export class Ouro {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+  }
+
+  /**
+   * A card posts to a server channel the owner allows (Settings → Ouro → Channels), as the bot. The channel is
+   * named as the owner wrote it (# optional) or by id; the run log keeps a line per post. Needs Ouro on.
+   */
+  async post(channel: string, text: string, by: string): Promise<{ ok: true; channel: string } | { ok: false; error: string }> {
+    const bot = this.bot
+    if (!bot) return { ok: false, error: 'Ouro is off (Settings → Ouro)' }
+    if (bot.state === 'failed') return { ok: false, error: `Ouro's bot is stopped: ${bot.detail || 'see Settings → Ouro'}` }
+    const channels = this.cfg.channels ?? []
+    const ch = ouroChannel(channels, channel)
+    if (!ch) return { ok: false, error: `no allowed channel "${channel.trim().slice(0, 60)}": ${channelsLine(channels)}` }
+    const body = text.trim().slice(0, OURO_LIMITS.postChars)
+    if (!body) return { ok: false, error: 'nothing to post' }
+    // a card in a loop must not flood a channel people read; tries count too, since a run of refusals gets the
+    // bot's address banned by Discord, the owner's DMs with it
+    const now = this.d.now()
+    const recent = (this.posted.get(ch.id) ?? []).filter((t) => now - t < OURO_LIMITS.postWindowMs)
+    if (recent.length >= OURO_LIMITS.postsPerWindow) return { ok: false, error: `#${ch.name} had ${OURO_LIMITS.postsPerWindow} posts in the last ${OURO_LIMITS.postWindowMs / 60_000} minutes: wait before posting there again` }
+    this.posted.set(ch.id, [...recent, now])
+    // one post at a time: two cards posting together must not interleave their parts
+    const turn = this.posting.then(() => bot.post(ch.id, body, true))
+    this.posting = turn.catch(() => {})
+    try {
+      await turn
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      this.h.log(`[ouro] post to #${ch.name} by ${by} failed: ${m}`)
+      // a post that got part way is said as such; only one that never started gets the permissions hint
+      return { ok: false, error: `Discord refused the post to #${ch.name}: ${m}${m.includes('parts were posted') ? '' : ' (is the bot in that server, with Send Messages in that channel?)'}` }
+    }
+    this.h.note(`${by} posted to Discord #${ch.name}: ${excerpt(body)}`)
+    return { ok: true, channel: ch.name }
   }
 
   /** Something on the board changed (a question, an approval, a task): new needs are told, at most once a minute. */

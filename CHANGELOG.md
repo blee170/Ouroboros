@@ -6,11 +6,15 @@ Each version lists what changed under **Added**, **Changed**, **Fixed**, **Secur
 
 ## [Unreleased]
 
+### Added
+- **Cards can post to Discord channels you allow.** Settings → Ouro (Discord) → *Channels cards may post to*: a name and a channel ID per row. Any agent card with board tools gets `post_discord` (channel, text) and may post there without asking, as the bot: a progress update or a notice for the people in that channel, when you or the brief ask for one ("post the progress to #updates"). The text goes as plain messages split at Discord's size (an emoji is never cut in two), with no mention resolving and no link previews; the run log and the phone notes keep a line per post with the card, its id and the first 80 characters. A channel takes at most 10 posts in 10 minutes, tries included, so a card in a loop cannot flood it; two cards posting together go out one after the other; a post that fails after its first part says how many parts are up. An unknown channel is refused with the allowed names, a terminal or command card cannot post, and a question for you still goes through ask_owner. The bot needs View Channel and Send Messages in that channel, and Ouro must be on; a row in Settings says when it is not saved yet.
+
 ### Fixed
 - **Voicebox announcements were still heard twice; the app now says why.** 0.18.7 moved the engine from `/speak` to `/generate` so that Voicebox would stop playing each clip itself. That was not enough: Voicebox's own "Autoplay on generate" switch (on by default) plays every new generation in its window, whichever route made it, so Ouroboros's playback and Voicebox's overlapped. That switch is Voicebox's, so Ouroboros does not flip it; it reads it with each clip, and Settings → Announcements → Test (and the Help page's test) answer "Voicebox also played that clip itself…" with where to turn it off. The Voicebox hint in Settings says so too. Until it is off, muting Voicebox is the workaround.
 
 ### Verified
 - Unit tests for the switch reader (14 in tests/tts.test.ts); typecheck of both targets; the switch seen on with curl against Voicebox 0.5.0's `/settings/generation` on the owner's PC. **Not verified:** the Test message in the built app.
+- Channel posting: unit tests for the channel list (cleaning, limits, lookup by name or id), the bot's channel post (split at 1900, mentions off, a refused post without the id), Ouro's post (allowed, unknown, none, empty, off, a stopped bot, refused, a part that went out, the 10-in-10-minutes cap, two at once), the `/api/discord` route (a named card only) and the bundled MCP server's tool list; typecheck; build. **Not verified:** a real post to a server channel (the bot must be in that server) and the Settings rows in the built app.
 
 ## [0.18.9] — 2026-10-30
 

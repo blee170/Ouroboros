@@ -90,3 +90,22 @@ describe('HookServer auth', () => {
     expect(selves).toEqual(['a', undefined, 'b'])
   })
 })
+
+describe('post_discord route', () => {
+  it('posts only as a named card, passing the channel and text through', async () => {
+    const posts: Array<[string, unknown]> = []
+    ;(api as { discordPost?: ApiHandlers['discordPost'] }).discordPost = async (self, input) => {
+      posts.push([self, input])
+      return typeof input.channel === 'string' && input.channel ? { ok: true, channel: input.channel } : { ok: false, error: 'no allowed channel' }
+    }
+    const body = JSON.stringify({ channel: 'updates', text: 'done' })
+    expect(await call('/api/discord', { headers: { 'x-ouroboros-token': server.token }, body })).toBe(403)
+    expect(await call('/api/discord', { headers: { 'x-ouroboros-token': server.apiToken('c1'), 'x-ouroboros-self': 'c1' }, body })).toBe(200)
+    expect(await call('/api/discord', { headers: { 'x-ouroboros-token': server.apiToken('c1'), 'x-ouroboros-self': 'c1' }, body: '{}' })).toBe(400)
+    expect(await call('/api/discord', { headers: { 'x-ouroboros-token': server.hookToken('c1'), 'x-ouroboros-self': 'c1' }, body })).toBe(401)
+    expect(posts).toEqual([
+      ['c1', { channel: 'updates', text: 'done' }],
+      ['c1', {}]
+    ])
+  })
+})

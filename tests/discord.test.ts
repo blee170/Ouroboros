@@ -163,3 +163,30 @@ describe('bug-hunt regressions (gateway)', () => {
     expect(FakeWs.all.length).toBe(2)
   })
 })
+
+describe('post to a channel', () => {
+  it('splits a long text into Discord-sized messages on that channel, mentions off', async () => {
+    const h = harness()
+    await h.bot.post('123456789012345678', 'x'.repeat(2000))
+    expect(h.calls.map((c) => c.url)).toEqual(['https://discord.com/api/v10/channels/123456789012345678/messages', 'https://discord.com/api/v10/channels/123456789012345678/messages'])
+    expect((h.calls[0].body as { content: string }).content).toHaveLength(1900)
+    expect((h.calls[1].body as { content: string }).content).toHaveLength(100)
+    expect((h.calls[0].body as { allowed_mentions: unknown }).allowed_mentions).toEqual({ parse: [] })
+    expect(h.calls[0].auth).toBe('Bot tok.en')
+  })
+  it('does not cut an emoji in two at a part boundary, and quiet hides link previews', async () => {
+    const h = harness()
+    await h.bot.post('123456789012345678', 'a'.repeat(1899) + '😀b', true)
+    expect(h.calls.map((c) => (c.body as { content: string }).content)).toEqual(['a'.repeat(1899), '😀b'])
+    expect((h.calls[0].body as { flags?: number }).flags).toBe(4)
+    await h.bot.post('123456789012345678', 'plain')
+    expect((h.calls[2].body as { flags?: number }).flags).toBeUndefined()
+  })
+  it('sends nothing for a blank text and throws without the id or the token when Discord refuses', async () => {
+    const h = harness()
+    await h.bot.post('123456789012345678', '   ')
+    expect(h.calls).toEqual([])
+    h.setStatus(403)
+    await expect(h.bot.post('123456789012345678', 'hi')).rejects.toThrow('Discord POST /channels/…/messages → 403')
+  })
+})

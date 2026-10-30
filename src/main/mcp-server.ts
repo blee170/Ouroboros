@@ -335,6 +335,23 @@ server.registerTool(
 )
 
 server.registerTool(
+  'post_discord',
+  {
+    title: 'Post to a Discord channel',
+    description:
+      "Post a message, as the owner's Discord bot, to one of the channels the owner allows (Settings → Ouro → Channels): a progress update, a decision taken, a notice for the people in that channel. Only when the owner asked for it or the brief says so, and only to the channel the owner named. Write it as a person would for the people there: short plain sentences, confirmed facts (what was done, what is next, what they must decide), no markdown headings or code, no @mentions; a long text is split over several messages. Not for questions to the owner (ask_owner) or notes to cards (send_message). The result names the channel, or says why not (an unknown channel lists the allowed ones).",
+    inputSchema: {
+      channel: z.string().min(1).max(60).describe("the channel's name as the owner wrote it (# optional) or its id"),
+      text: z.string().min(1).max(4000).describe('the message, plain text')
+    }
+  },
+  async ({ channel, text: body }) => {
+    const r = (await api('POST', '/api/discord', { channel, text: body })) as { channel: string }
+    return text(`Posted to #${r.channel}.`)
+  }
+)
+
+server.registerTool(
   'handoff_to_grok_bot',
   {
     title: 'Hand a task to Grok Bot',

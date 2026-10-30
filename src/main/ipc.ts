@@ -952,7 +952,7 @@ export function createPhone(ctx: MainContext): PhoneServer {
     notify: (event) => {
       // the only event so far: the phone joined the car; Ouro says ready once Discord will push it to the phone
       const r = ctx.ouro.carReady()
-      if (r.ok) log(`[ouro] car: ${r.queued ? `ready message in ${Math.round(r.inMs / 1000)} s` : 'already told for this drive'}`)
+      if (r.ok) log(`[ouro] car: ${r.queued ? `ready message in ${Math.round(r.inMs / 1000)} s` : 'told within the last 2 min'}`)
       return r.ok ? { ok: true, queued: r.queued } : r
     },
     latestReport: () => {

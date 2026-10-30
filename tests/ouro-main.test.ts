@@ -273,7 +273,7 @@ describe('bug-hunt regressions (bridge)', () => {
 })
 
 describe('Ouro car ready', () => {
-  it('says ready with the board after the mobile-notification delay, once per drive', async () => {
+  it('says ready with the board after the mobile-notification delay, again on a reconnect 2 minutes later', async () => {
     const h = harness([q])
     const n = h.bot.sent.length
     expect(h.ouro.carReady()).toEqual({ ok: true, queued: true, inMs: 75_000 })
@@ -288,8 +288,17 @@ describe('Ouro car ready', () => {
     expect(h.ouro.carReady()).toMatchObject({ ok: true, queued: false })
     // what it listed is the focus: a yes-path answer goes to it
     expect(await h.say('Redis')).toContain('Redis')
-    h.advance(10 * 60_000)
+    // a Bluetooth link that flaps right after the greeting is not greeted again
+    h.advance(100_000)
+    expect(h.ouro.carReady()).toMatchObject({ ok: true, queued: false })
+    // a reconnect later is a new Android Auto connection, which shows only what arrives from now on: greeted again
+    h.advance(21_000)
+    const m = h.bot.sent.length
     expect(h.ouro.carReady()).toMatchObject({ ok: true, queued: true })
+    h.advance(76_000)
+    expect(h.bot.sent.length).toBe(m + 1)
+    // in English: the owner's last word ("Redis") set the language
+    expect(h.bot.sent.at(-1)).toContain('🚗 Ouro is ready')
   })
   it('says nothing when the bot is off or not connected', () => {
     const h = harness()

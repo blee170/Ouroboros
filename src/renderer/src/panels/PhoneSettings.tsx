@@ -168,7 +168,7 @@ export function PhoneSettings() {
             </li>
           </ol>
           <div className="muted">
-            Ouro waits 75 seconds before it writes, so Discord's mobile notification delay (set it to 1 minute) has passed. Tailscale must be on on the phone. A car that reconnects within 10 minutes is not greeted again. If nothing arrives, the app log (main.log) says why each refused request was refused.
+            Ouro waits 75 seconds before it writes, so Discord's mobile notification delay (set it to 1 minute) has passed. Tailscale must be on on the phone. A car that reconnects is greeted again (Android Auto shows only messages that arrive during the current connection), unless it reconnects within 2 minutes of the last greeting. If nothing arrives, the app log (main.log) says why each refused request was refused.
           </div>
         </div>
       )}

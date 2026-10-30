@@ -50,8 +50,12 @@ export const OURO_LIMITS = {
   inChars: 2000,
   /** the car ready message waits past Discord's mobile-notification delay (the owner sets it to 1 minute): a DM sent while the PC still counts as active never reaches the phone */
   carDelayMs: 75_000,
-  /** a car that reconnects (lights, a tunnel) does not say ready again within this */
-  carGapMs: 10 * 60_000
+  /**
+   * Android Auto shows a messenger only the notifications that arrived during the current connection, so a car that
+   * reconnects needs a fresh message (2026-10-30: the 18:12 greeting was gone from the car after an 18:18 reconnect).
+   * The gap only absorbs a Bluetooth link that flaps for a moment.
+   */
+  carGapMs: 2 * 60_000
 } as const
 
 /** Pure: Korean when the text has Hangul in it, else English. */

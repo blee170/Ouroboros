@@ -42,8 +42,8 @@ function SetupSteps() {
     const tts = ttsSettings(settings)
     const ko = tts.engine !== 'windows' || Boolean(voiceFor('ko'))
     setMsg('Playing…')
-    const err = await speak({ kind: 'finished', title: ko ? '총괄' : 'Conductor', lang: ko ? 'ko' : 'en' })
-    setMsg(err ? `${err} — the Windows voice spoke instead.` : 'That is what a finished turn sounds like. Voice, toast and who gets announced: Settings.')
+    const r = await speak({ kind: 'finished', title: ko ? '총괄' : 'Conductor', lang: ko ? 'ko' : 'en' })
+    setMsg(r.error ? `${r.error} — the Windows voice spoke instead.` : r.note ? r.note : 'That is what a finished turn sounds like. Voice, toast and who gets announced: Settings.')
   }
   return (
     <div className="settings-section first setup-steps">

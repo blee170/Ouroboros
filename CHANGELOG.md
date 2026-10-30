@@ -4,6 +4,14 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Voicebox announcements were still heard twice; the app now says why.** 0.18.7 moved the engine from `/speak` to `/generate` so that Voicebox would stop playing each clip itself. That was not enough: Voicebox's own "Autoplay on generate" switch (on by default) plays every new generation in its window, whichever route made it, so Ouroboros's playback and Voicebox's overlapped. That switch is Voicebox's, so Ouroboros does not flip it; it reads it with each clip, and Settings → Announcements → Test (and the Help page's test) answer "Voicebox also played that clip itself…" with where to turn it off. The Voicebox hint in Settings says so too. Until it is off, muting Voicebox is the workaround.
+
+### Verified
+- Unit tests for the switch reader (14 in tests/tts.test.ts); typecheck of both targets; the switch seen on with curl against Voicebox 0.5.0's `/settings/generation` on the owner's PC. **Not verified:** the Test message in the built app.
+
 ## [0.18.9] — 2026-10-30
 
 ### Changed

@@ -8,7 +8,7 @@ import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_TTS_CHARS, VOICEBOX_URL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, voiceboxGeneration, voiceboxProfile, voiceboxUrl, wavFromPcm16, type TtsRequest, type VoiceboxProfile } from '@shared/tts'
+import { MAX_TTS_CHARS, VOICEBOX_AUTOPLAY_NOTE, VOICEBOX_SETTINGS_URL, VOICEBOX_URL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, voiceboxAutoplay, voiceboxGeneration, voiceboxProfile, voiceboxUrl, wavFromPcm16, type TtsRequest, type VoiceboxProfile } from '@shared/tts'
 import type { TtsKeyEngine, TtsResult } from '@shared/protocol'
 import type { AppSettings } from '@shared/types'
 import { log } from './diagnostics'
@@ -56,6 +56,8 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
   /** which call a timeout names: the short Voicebox calls have their own 5 s limit, the main one `timeoutMs` */
   let step = 'the request'
   let stepMs = timeoutMs
+  /** Voicebox plays the clip itself too (its own Autoplay switch): said with the clip, so Settings → Test can show it */
+  let note: string | undefined
   try {
     let profile: VoiceboxProfile | undefined
     if (local) {
@@ -68,6 +70,11 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
       if (!pr.ok) return { ok: false, error: ttsError(s.engine, pr.status, await pr.text().catch(() => '')) }
       profile = voiceboxProfile(await pr.json(), s.voice)
       if (!profile) return { ok: false, error: `Voicebox: no profile named "${s.voice}" (the names are in Voicebox's left column).` }
+      // Voicebox's Autoplay plays every /generate result in its own window as well; a settings route that fails is no reason not to speak
+      note = await fetch(VOICEBOX_SETTINGS_URL, { signal: AbortSignal.timeout(stepMs) })
+        .then((r) => (r.ok ? r.json() : undefined))
+        .then((j) => (voiceboxAutoplay(j) ? VOICEBOX_AUTOPLAY_NOTE : undefined))
+        .catch(() => undefined)
     }
     req = buildTtsRequest(s.engine, text.slice(0, MAX_TTS_CHARS), s, key ?? '', profile)
     step = 'the request'
@@ -142,5 +149,5 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
   } catch (err) {
     log(`tts cache write failed: ${(err as Error).message}`)
   }
-  return { ok: true, bytes, mime: req.mime }
+  return note ? { ok: true, bytes, mime: req.mime, note } : { ok: true, bytes, mime: req.mime }
 }

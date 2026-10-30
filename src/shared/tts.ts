@@ -39,6 +39,17 @@ export function voiceboxUrl(route: 'history' | 'audio' | 'cancel', id: string): 
   return route === 'cancel' ? `${VOICEBOX_URL}/generate/${safe}/cancel` : `${VOICEBOX_URL}/${route}/${safe}`
 }
 
+/** Voicebox's generation settings (GET): its Autoplay switch lives here. */
+export const VOICEBOX_SETTINGS_URL = `${VOICEBOX_URL}/settings/generation`
+
+/** Told with the clip when Voicebox's own Autoplay is on: it plays every clip itself, so each announcement is heard twice. */
+export const VOICEBOX_AUTOPLAY_NOTE = 'Voicebox also played that clip itself: its "Autoplay on generate" switch (Voicebox → Settings) is on, so every announcement is heard twice until you turn it off there.'
+
+/** True when Voicebox's generation settings say it plays each new clip itself (autoplay_on_generate). Any other shape counts as off. */
+export function voiceboxAutoplay(json: unknown): boolean {
+  return typeof json === 'object' && json !== null && (json as Record<string, unknown>).autoplay_on_generate === true
+}
+
 /** The engines Voicebox 0.5.0's /generate takes (its OpenAPI pattern). */
 const VOICEBOX_ENGINES = new Set(['qwen', 'qwen_custom_voice', 'luxtts', 'chatterbox', 'chatterbox_turbo', 'tada', 'kokoro'])
 

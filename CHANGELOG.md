@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.10] — 2026-10-31
 
 ### Added
 - **Cards can post to Discord channels you allow.** Settings → Ouro (Discord) → *Channels cards may post to*: a name and a channel ID per row. Any agent card with board tools gets `post_discord` (channel, text) and may post there without asking, as the bot: a progress update or a notice for the people in that channel, when you or the brief ask for one ("post the progress to #updates"). The text goes as plain messages split at Discord's size (an emoji is never cut in two), with no mention resolving and no link previews; the run log and the phone notes keep a line per post with the card, its id and the first 80 characters. A channel takes at most 10 posts in 10 minutes, tries included, so a card in a loop cannot flood it; two cards posting together go out one after the other; a post that fails after its first part says how many parts are up. An unknown channel is refused with the allowed names, a terminal or command card cannot post, and a question for you still goes through ask_owner. The bot needs View Channel and Send Messages in that channel, and Ouro must be on; a row in Settings says when it is not saved yet.

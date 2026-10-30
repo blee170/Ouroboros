@@ -612,24 +612,25 @@ body.ouro-dragging webview { pointer-events: none; }
 .welcome .engines { text-align: left; }
 
 /* Orbit: the board as a turning globe over the canvas (the canvas stays mounted underneath) */
-.orbit-view { position: absolute; inset: 0; z-index: 6; background: radial-gradient(circle at 50% 48%, rgba(255,255,255,.05), transparent 60%), var(--bg); overflow: hidden; }
-.orbit-view > svg { display: block; cursor: grab; touch-action: none; user-select: none; }
+.orbit-view { position: absolute; inset: 0; z-index: 6; background: radial-gradient(circle at 50% 46%, rgba(40,90,140,.22), rgba(10,16,28,0) 62%), linear-gradient(#070a12, #04060b); overflow: hidden; }
+.orbit-view > canvas.orbit-paint { position: absolute; inset: 0; pointer-events: none; }
+.orbit-view > svg { position: relative; display: block; cursor: grab; touch-action: none; user-select: none; }
 .orbit-view > svg:active { cursor: grabbing; }
-.orbit-dust circle { fill: var(--muted); }
-.orbit-line { stroke: rgba(255,255,255,.18); stroke-width: 1; }
+.orbit-line { fill: none; stroke: rgba(255,255,255,.18); stroke-width: 1; }
 .orbit-line.parent { stroke-dasharray: 3 4; }
-.orbit-line.lit { stroke: rgba(255,255,255,.6); stroke-width: 1.4; }
-.orbit-line.active { stroke: var(--working); stroke-width: 1.6; stroke-dasharray: 6 6; animation: orbit-flow 1s linear infinite; }
+.orbit-line.lit { stroke: #cfeeff; stroke-width: 1.4; }
+.orbit-line.active { stroke: var(--working); stroke-width: 1.6; stroke-dasharray: 6 6; filter: drop-shadow(0 0 4px var(--working)); animation: orbit-flow 1s linear infinite; }
 @keyframes orbit-flow { to { stroke-dashoffset: -12; } }
 .orbit-dot { cursor: pointer; }
 .orbit-dot .hit { fill: transparent; }
-.orbit-dot .glow { opacity: .14; }
-.orbit-dot .dot { stroke: rgba(255,255,255,.25); stroke-width: 1; }
-.orbit-dot.lead .dot { stroke: var(--text); stroke-width: 1.5; }
-.orbit-dot.selected .dot { stroke: var(--text); stroke-width: 2.5; }
+.orbit-dot .glow { opacity: .14; mix-blend-mode: screen; }
+.orbit-dot .dot { stroke: rgba(223,250,255,.7); stroke-width: .75; }
+.orbit-dot.lead .dot { stroke: var(--text); stroke-width: 1.2; }
+.orbit-dot.selected .dot { stroke: var(--text); stroke-width: 2; }
 .orbit-dot.needs-you .glow { animation: orbit-pulse 1.4s ease-in-out infinite; }
 @keyframes orbit-pulse { 50% { opacity: .45; } }
-.orbit-dot .tag { fill: var(--text); font-size: 12px; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
+.orbit-dot .tag { fill: var(--text); font-size: 11px; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
+.orbit-legend { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); max-width: calc(100% - 32px); text-align: center; pointer-events: none; }
 .orbit-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md, 10px); white-space: nowrap; }
 .orbit-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
 

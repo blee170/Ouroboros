@@ -42,6 +42,8 @@ The **sidebar** on the left lists every card grouped by state: *Needs you* first
 
 Try it: give *Explorer* a longer task (*"List every TODO comment in this repo with its file and line."*), then zoom out with the mouse wheel. Zoomed far out a card shows its last reply in large type instead of the terminal, and ↓ on the card brings you back to the live output. The minimap at the bottom right and Ctrl+1…9 jump between cards; Ctrl+J opens *Jump to…* (type part of a title, ↑↓, Enter) and Ctrl+Shift+N goes to the next card that needs you. A card's green check means a turn finished that you have not looked at yet: its row is bold, and once you select the card it reads *Idle* again.
 
+One more view: the **globe** in the title bar (Ctrl+Shift+O) draws the whole board as a constellation. With two cards it is modest; come back to it in step 5, when a Conductor has dispatched workers: the Conductor is the core, each worker sits on a shell by how many hops from the Conductor it is, a beam over each card shows how full its context is, sparkles on the beam are the tasks it still owns, and the ring round everything is the board's task list by state. Hover a dot to light its lines, double-click it to jump to the card, Esc to close.
+
 The composer at the bottom of the sidebar sends text to the checked cards. Paste a screenshot into it (Ctrl+V) and it becomes a chip; on Send a Claude card receives it as an image, other cards as a path. This is how you give several cards the same brief at once.
 
 ## 3. Two cards and a line (10 min)

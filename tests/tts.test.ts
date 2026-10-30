@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, wavFromPcm16, VOICEBOX_URL, voiceboxGeneration, voiceboxProfile, voiceboxUrl } from '@shared/tts'
+import { DEFAULT_STYLE, GEMINI_TTS_MODEL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, voiceboxAutoplay, ttsSettings, wavFromPcm16, VOICEBOX_URL, voiceboxGeneration, voiceboxProfile, voiceboxUrl } from '@shared/tts'
 
 describe('looksLikeAudio / wavFromPcm16', () => {
   it('accepts RIFF for wav and ID3 or an MPEG frame for mp3, rejects JSON/HTML bodies', () => {
@@ -147,5 +147,14 @@ describe('ttsError', () => {
     expect(ttsError('elevenlabs', 401, '{"detail":{"status":"invalid_api_key","message":"Invalid API key"}}')).toMatch(/key rejected \(401\)\. Invalid API key$/)
     expect(ttsError('openai', 429, 'x'.repeat(500))).toMatch(/quota \(429\)\. x{200}$/)
     expect(ttsError('elevenlabs', 500, '')).toContain('HTTP 500')
+  })
+
+  it("reads Voicebox's Autoplay switch and counts anything else as off", () => {
+    expect(voiceboxAutoplay({ max_chunk_chars: 3000, crossfade_ms: 50, normalize_audio: true, autoplay_on_generate: true })).toBe(true)
+    expect(voiceboxAutoplay({ autoplay_on_generate: false })).toBe(false)
+    expect(voiceboxAutoplay({ autoplay_on_generate: 'true' })).toBe(false)
+    expect(voiceboxAutoplay({})).toBe(false)
+    expect(voiceboxAutoplay(null)).toBe(false)
+    expect(voiceboxAutoplay('nope')).toBe(false)
   })
 })

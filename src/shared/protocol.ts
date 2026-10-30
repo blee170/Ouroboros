@@ -667,6 +667,7 @@ export interface OuroborosApi {
 }
 
 export type TtsKeyEngine = 'gemini' | 'openai' | 'elevenlabs'
-export type TtsResult = { ok: true; bytes: Uint8Array; mime: string } | { ok: false; error: string }
+/** a successful clip may carry a note for the owner (something to fix in the engine's own settings) */
+export type TtsResult = { ok: true; bytes: Uint8Array; mime: string; note?: string } | { ok: false; error: string }
 
 export type { HandoffEdgeData }

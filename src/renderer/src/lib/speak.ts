@@ -68,23 +68,23 @@ function play(bytes: Uint8Array, mime: string): Promise<void> {
 
 /**
  * Say the announcement. Resolves with the engine's error when the chosen voice engine failed (the Windows
- * voice spoke instead), undefined otherwise.
+ * voice spoke instead), else with the engine's note when it has one (Voicebox's own Autoplay is on), else {}.
  */
-export async function speak(p: AnnouncePayload): Promise<string | undefined> {
+export async function speak(p: AnnouncePayload): Promise<{ error?: string; note?: string }> {
   const tts = ttsSettings(useBoard.getState().settings)
   if (tts.engine === 'windows') {
     speakWindows(p)
-    return undefined
+    return {}
   }
   try {
     const r = await window.ouroboros.tts.synthesize(phrase(p))
     if (!r.ok) throw new Error(r.error)
     await play(r.bytes, r.mime)
-    return undefined
+    return r.note ? { note: r.note } : {}
   } catch (err) {
     const m = (err as Error).message
     console.warn(`[tts] ${tts.engine}: ${m} — Windows voice instead`)
     speakWindows(p)
-    return m
+    return { error: m }
   }
 }

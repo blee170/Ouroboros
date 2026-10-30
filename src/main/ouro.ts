@@ -137,8 +137,9 @@ export class Ouro {
 
   /**
    * The phone joined the car (an automation app on it said so): after Discord's mobile-notification delay, say ready
-   * with the board's state, so the owner has a message to reply to by voice. A car that reconnects within carGapMs
-   * is not told twice; queued is false when nothing new was scheduled.
+   * with the board's state, so the owner has a message to reply to by voice. A reconnect is greeted again (Android
+   * Auto shows only what arrived during the current connection) unless it comes within carGapMs of the last greeting;
+   * queued is false when nothing new was scheduled.
    */
   carReady(): { ok: true; queued: boolean; inMs: number } | { ok: false; error: string } {
     if (!this.bot) return { ok: false, error: 'Ouro is off (Settings → Ouro)' }

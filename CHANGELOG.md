@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.7] — 2026-10-30
 
 ### Fixed
 - **Voicebox announcements no longer play twice, and a slow cloned voice gets its time.** The engine used Voicebox's `/speak`, which is its "say this aloud" route: Voicebox played the clip through its own speakers and Ouroboros played the same clip again, overlapping. It now uses `/generate`, which only makes the clip, looking the profile up in Voicebox's list first (its id, engine and language; `/generate` refuses a profile with any other engine). Voicebox gets a flat 2 minutes instead of 20 seconds after the first success: a cloned voice on Voicebox's CPU backend takes 20–60 s per sentence, so the test said "not finished within 20 s" and the Windows voice spoke while Voicebox was still working. A profile name is now required (no default); a name Voicebox does not have is said so. On the CUDA backend the first clip's record says `loading_model` before `generating`, which the engine read as a failure ("Voicebox: loading_model") while Voicebox went on to finish the clip; only the end states (failed, cancelled, not found) are failures now, anything else is still in progress.

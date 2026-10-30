@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.18.8] — 2026-10-30
 
 ### Fixed
 - **Ouro greets the car again after a reconnect.** Android Auto shows a messenger only the notifications that arrived during the current connection. On 2026-10-30 the car connected at 18:12, Ouro's ready message reached the phone at 18:13 as designed, the car reconnected at 18:18 and 18:20 (MacroDroid logged each with a 200), and the car screen showed a friend's 18:19 message but not Ouro's: the greeting belonged to the earlier connection, and the 10-minute gap kept Ouro from writing again. The gap is 2 minutes now, enough to absorb a Bluetooth link that flaps for a moment, so every reconnect after that gets a fresh ready message with the board's state.

@@ -4,6 +4,15 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Voicebox announcements no longer play twice, and a slow cloned voice gets its time.** The engine used Voicebox's `/speak`, which is its "say this aloud" route: Voicebox played the clip through its own speakers and Ouroboros played the same clip again, overlapping. It now uses `/generate`, which only makes the clip, looking the profile up in Voicebox's list first (its id, engine and language; `/generate` refuses a profile with any other engine). Voicebox gets a flat 2 minutes instead of 20 seconds after the first success: a cloned voice on Voicebox's CPU backend takes 20–60 s per sentence, so the test said "not finished within 20 s" and the Windows voice spoke while Voicebox was still working. A profile name is now required (no default); a name Voicebox does not have is said so.
+- **The wake phrase no longer dies quietly when the microphone goes away.** Two things ended the composer's microphone stream with no error and no recovery: a Settings → Voice input Test opening the same device a second time (Windows ends the first stream), and a device change (a headset reconnecting, another app taking the mic). Now a Settings test lets go of the composer mic for its duration and the listener opens it again afterwards; a stream that ends is reopened after 1.5 s (a device that refuses to open is retried 5 times, 3 s apart, then the message stays), with a line under the composer saying so until the mic is back. A push-to-talk take started meanwhile keeps its mic; a take is refused while a Settings test holds the device.
+
+### Verified
+- Unit tests for the `/generate` request and the profile lookup (709 tests); typecheck, build. Built-app probes on the owner's PC: Korean through the "Sohee" profile (qwen, CPU) back as WAV in 58 s; the wake phrase fires again after a Settings mic Test and after the device's track ends (one reopen, no storm). **Not verified:** a real device unplug (the probe ends the track by hand), and Voicebox's GPU backend.
+
 ## [0.18.6] — 2026-10-30
 
 ### Fixed

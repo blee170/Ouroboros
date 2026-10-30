@@ -8,16 +8,15 @@ import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_TTS_CHARS, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, voiceboxGeneration, voiceboxUrl, wavFromPcm16, type TtsRequest } from '@shared/tts'
+import { MAX_TTS_CHARS, VOICEBOX_URL, buildTtsRequest, geminiAudioData, looksLikeAudio, ttsError, ttsSettings, voiceboxGeneration, voiceboxProfile, voiceboxUrl, wavFromPcm16, type TtsRequest, type VoiceboxProfile } from '@shared/tts'
 import type { TtsKeyEngine, TtsResult } from '@shared/protocol'
 import type { AppSettings } from '@shared/types'
 import { log } from './diagnostics'
 import { decryptToken, encryptToken } from './updater'
 
 const TIMEOUT_MS = 20_000
-/** Voicebox loads its model on the first request; once it has answered, a slow reply means it is stuck. */
-const LOCAL_COLD_TIMEOUT_MS = 90_000
-let voiceboxWarm = false
+/** Voicebox is local and free, and a cloned voice on the CPU backend takes 20 s and more per sentence (plus a model load). */
+const VOICEBOX_TIMEOUT_MS = 120_000
 
 /** One file per engine + request body (model, voice, style, text); a changed model or voice is a new clip. */
 function cacheFile(engine: string, req: TtsRequest): string {
@@ -50,11 +49,29 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
     log(`tts ${s.engine}: no key saved`)
     return { ok: false, error: `No ${s.engine} key saved in Settings` }
   }
-  const req = buildTtsRequest(s.engine, text.slice(0, MAX_TTS_CHARS), s, key ?? '')
-  const timeoutMs = local && !voiceboxWarm ? LOCAL_COLD_TIMEOUT_MS : TIMEOUT_MS
+  const timeoutMs = local ? VOICEBOX_TIMEOUT_MS : TIMEOUT_MS
+  let req: TtsRequest
   let bytes: Uint8Array
   let file: string | undefined
+  /** which call a timeout names: the short Voicebox calls have their own 5 s limit, the main one `timeoutMs` */
+  let step = 'the request'
+  let stepMs = timeoutMs
   try {
+    let profile: VoiceboxProfile | undefined
+    if (local) {
+      // /generate wants the profile's id and engine: the name in Settings is looked up in Voicebox's list each time
+      // (a profile re-made under the same name gets a new id)
+      if (!s.voice) return { ok: false, error: 'Voicebox: put a profile name from Voicebox in Voice.' }
+      step = 'the profile list'
+      stepMs = 5000
+      const pr = await fetch(`${VOICEBOX_URL}/profiles`, { signal: AbortSignal.timeout(stepMs) })
+      if (!pr.ok) return { ok: false, error: ttsError(s.engine, pr.status, await pr.text().catch(() => '')) }
+      profile = voiceboxProfile(await pr.json(), s.voice)
+      if (!profile) return { ok: false, error: `Voicebox: no profile named "${s.voice}" (the names are in Voicebox's left column).` }
+    }
+    req = buildTtsRequest(s.engine, text.slice(0, MAX_TTS_CHARS), s, key ?? '', profile)
+    step = 'the request'
+    stepMs = timeoutMs
     // a local clip is free, and a profile re-recorded under the same name must not replay the old voice
     file = local ? undefined : cacheFile(s.engine, req)
     if (file && existsSync(file)) return { ok: true, bytes: new Uint8Array(readFileSync(file)), mime: req.mime }
@@ -74,15 +91,21 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
       // unary answers are WAV; raw L16 PCM (the streaming shape) gets a header so the renderer can play it
       if (bytes.length && !looksLikeAudio(bytes, 'audio/wav')) bytes = wavFromPcm16(bytes)
     } else if (req.response === 'voicebox-json') {
-      // /speak answers at once with a generation record; the clip exists once /history/{id} says completed
+      // /generate answers at once with a generation record; the clip exists once /history/{id} says completed
       // (the audio route answers 500 until then). One deadline covers the whole wait.
       const deadline = Date.now() + timeoutMs
       let g = voiceboxGeneration(await res.json())
       if (!g) return { ok: false, error: 'Voicebox: no generation record in the answer' }
       while (g.status === 'generating') {
-        if (Date.now() > deadline) return { ok: false, error: `Voicebox: not finished within ${timeoutMs / 1000} s` }
+        if (Date.now() > deadline) {
+          // Voicebox would keep the CPU on a clip nobody will play
+          void fetch(voiceboxUrl('cancel', g.id), { method: 'POST', signal: AbortSignal.timeout(3000) }).catch(() => {})
+          return { ok: false, error: `Voicebox: not finished within ${timeoutMs / 1000} s (a cloned voice on its CPU backend is slow; its GPU backend is in Voicebox's Settings)` }
+        }
         await new Promise((r) => setTimeout(r, 400))
-        const h = await fetch(voiceboxUrl('history', g.id), { signal: AbortSignal.timeout(5000) })
+        step = 'the progress check'
+        stepMs = 5000
+        const h = await fetch(voiceboxUrl('history', g.id), { signal: AbortSignal.timeout(stepMs) })
         if (!h.ok) return { ok: false, error: ttsError(s.engine, h.status, await h.text().catch(() => '')) }
         g = voiceboxGeneration(await h.json()) ?? { id: g.id, status: 'failed', error: 'no generation record' }
       }
@@ -90,14 +113,16 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
         log(`tts voicebox: generation failed: ${g.error ?? ''}`)
         return { ok: false, error: `Voicebox: ${g.error ?? 'generation failed'}` }
       }
-      const a = await fetch(voiceboxUrl('audio', g.id), { signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now())) })
+      step = 'the audio'
+      stepMs = Math.max(1000, deadline - Date.now())
+      const a = await fetch(voiceboxUrl('audio', g.id), { signal: AbortSignal.timeout(stepMs) })
       if (!a.ok) return { ok: false, error: ttsError(s.engine, a.status, await a.text().catch(() => '')) }
       bytes = new Uint8Array(await a.arrayBuffer())
     } else bytes = new Uint8Array(await res.arrayBuffer())
   } catch (err) {
     const m =
       (err as Error).name === 'TimeoutError'
-        ? `${s.engine}: no answer within ${timeoutMs / 1000} s`
+        ? `${s.engine}: no answer to ${step} within ${stepMs / 1000} s`
         : local && (err as { cause?: { code?: string } }).cause?.code === 'ECONNREFUSED'
           ? 'Voicebox is not running (nothing answers on 127.0.0.1:17493). Start the Voicebox app.'
           : `${s.engine}: ${(err as Error).message}`
@@ -117,6 +142,5 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
   } catch (err) {
     log(`tts cache write failed: ${(err as Error).message}`)
   }
-  if (local) voiceboxWarm = true
   return { ok: true, bytes, mime: req.mime }
 }

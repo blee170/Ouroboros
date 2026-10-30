@@ -25,6 +25,11 @@ export class Mic {
   private takeTimeout: ReturnType<typeof setTimeout> | undefined
   /** Every frame's loudness (0..1) and whether the gate counts it as speech: the composer's live meter. */
   onLevel: ((level: number, speech: boolean) => void) | undefined
+  /**
+   * The device stopped under us (unplugged, Windows switched the default device, another app took it, a second
+   * stream on the same device replaced this one): the track ends and nothing arrives any more, with no error.
+   */
+  onEnded: (() => void) | undefined
 
   private constructor(
     private stream: MediaStream,
@@ -36,6 +41,7 @@ export class Mic {
     source.connect(node)
     // a ScriptProcessor only runs while connected to the output; it writes silence there
     node.connect(ctx.destination)
+    for (const t of stream.getAudioTracks()) t.addEventListener('ended', () => this.onEnded?.(), { once: true })
   }
 
   static async open(deviceId?: string): Promise<Mic> {
@@ -63,6 +69,7 @@ export class Mic {
     this.node.onaudioprocess = null
     this.onLevel?.(0, false)
     this.onLevel = undefined
+    this.onEnded = undefined // our own stop is not a loss
     try {
       this.source.disconnect()
       this.node.disconnect()

@@ -79,8 +79,11 @@ export function voiceboxGeneration(json: unknown): { id: string; status: 'genera
   if (!j || typeof j !== 'object' || typeof j.id !== 'string' || !j.id) return undefined
   const status = typeof j.status === 'string' ? j.status : ''
   const error = typeof j.error === 'string' && j.error ? j.error : undefined
-  if (status === 'generating' || status === 'completed') return { id: j.id, status, error }
-  return { id: j.id, status: 'failed', error: error ?? status }
+  if (status === 'completed') return { id: j.id, status, error }
+  // only the end states are failures: the record also passes through loading_model (the first clip after a backend
+  // switch, measured on the CUDA backend 2026-10-30) and whatever else a later Voicebox adds before generating
+  if (status === 'failed' || status === 'cancelled' || status === 'canceled' || status === 'error' || status === 'not_found') return { id: j.id, status: 'failed', error: error ?? status }
+  return { id: j.id, status: 'generating', error }
 }
 
 export const DEFAULT_STYLE = 'calm and friendly, like a colleague letting you know'

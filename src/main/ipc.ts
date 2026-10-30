@@ -9,7 +9,7 @@ import { nanoid } from 'nanoid'
 import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, GrokReplyStatus, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { HeldCard } from '@shared/board-trust'
-import { normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
+import { normalizeEffort, normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf } from '@shared/status'
@@ -624,6 +624,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
               // the card keeps its requested mode for after the run, and a requested bypass never comes back then
               permissionMode: s.autonomy.storedPermissionMode(input.permission_mode) as NonNullable<WorkspaceNode['data']['claude']>['permissionMode'],
               model: input.model || undefined,
+              effort: normalizeEffort(input.effort),
               continue: wantContinue || undefined,
               resume: input.resume || undefined,
               boardTools: input.board_tools || undefined

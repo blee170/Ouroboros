@@ -147,4 +147,8 @@ describe('the WSL switch', () => {
     expect(privilegeView({ kind: 'claude', claude: { wsl: true } })['claude.wsl']).toBe('true')
     expect(privilegeView({ kind: 'claude', claude: {} })['claude.wsl'] ?? null).toBeNull()
   })
+  it('counts the effort level too, like the model', () => {
+    expect(privilegeView({ kind: 'claude', claude: { effort: 'max' } })['claude.effort']).toBe('"max"')
+    expect(privilegeView({ kind: 'claude', claude: {} })['claude.effort'] ?? null).toBeNull()
+  })
 })

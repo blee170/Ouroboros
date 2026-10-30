@@ -17,12 +17,23 @@ export type NodeKind = 'terminal' | 'claude' | 'conductor' | 'note' | 'external'
 /** Lifecycle status of an agent/terminal node, derived from Claude Code hooks (or PTY exit). */
 export type AgentStatus = 'starting' | 'idle' | 'working' | 'needs-you' | 'done' | 'ended'
 
+/** Reasoning effort a card is launched with: Claude Code's `--effort` levels; Codex takes the same words as `model_reasoning_effort`. */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export type EffortLevel = (typeof EFFORT_LEVELS)[number]
+
+/** Stored effort value: one of the levels, else undefined (the CLI's own default). */
+export function normalizeEffort(e: unknown): EffortLevel | undefined {
+  return (EFFORT_LEVELS as readonly unknown[]).includes(e) ? (e as EffortLevel) : undefined
+}
+
 export interface ClaudeOptions {
   /** `claude --continue` on launch (resume most recent conversation in cwd). */
   continue?: boolean
   /** `claude --resume <id>` on launch. */
   resume?: string
   model?: string
+  /** `--effort` for Claude Code, `-c model_reasoning_effort` for Codex; Gemini and Grok have no such flag and ignore it. */
+  effort?: EffortLevel
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk' | 'auto'
   /** Extra text appended to the system prompt (conductor preset uses this). */
   appendSystemPrompt?: string

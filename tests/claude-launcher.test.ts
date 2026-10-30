@@ -70,6 +70,11 @@ describe('quoteArg / buildClaudeCommand', () => {
     expect(cmd).not.toContain('be brief')
     expect(buildClaudeCommand({}, { settingsPath: 'C:\\x\\s.json' }, 'powershell')).toBe('& claude --settings C:\\x\\s.json')
   })
+  it('passes the reasoning effort as --effort and leaves it out when unset', () => {
+    expect(buildClaudeCommand({ effort: 'high' }, { settingsPath: 'C:\\x\\s.json' }, 'powershell')).toBe('& claude --settings C:\\x\\s.json --effort high')
+    expect(buildClaudeCommand({ model: 'opus', effort: 'xhigh' }, { settingsPath: '/tmp/s.json' }, 'posix')).toBe('claude --settings /tmp/s.json --model opus --effort xhigh')
+    expect(buildClaudeCommand({ effort: undefined }, { settingsPath: '/tmp/s.json' }, 'posix')).not.toContain('--effort')
+  })
 })
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'

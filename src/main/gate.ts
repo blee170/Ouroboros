@@ -53,7 +53,7 @@ export class GateKeeper extends EventEmitter {
     const verdict = decide(input.command)
     if (!verdict.decision) return { decision: 'none', reason: '' }
     const line = (decision: AuditLine['decision'], by: AuditLine['by'], reason: string): AuditLine => ({ ts: new Date(now).toISOString(), card: card.id, title: card.title, command: input.command.slice(0, 2000), cwd, decision, by, reason })
-    if (verdict.decision === 'never') return this.answer('deny', `Ouroboros action gate (autonomous run): ${verdict.reason}. Commit to your claude/* or card/* branch and push that; the owner merges.`, line('never', 'policy', verdict.reason))
+    if (verdict.decision === 'never') return this.answer('deny', `Ouroboros action gate (autonomous run): ${verdict.reason}. Commit to your claude/*, card/* or wt/* branch and push that; the owner merges.`, line('never', 'policy', verdict.reason))
     if (verdict.decision === 'auto') {
       // an allow skips every other check for the whole command line: given only when the line is nothing but gated actions
       if (!verdict.onlyGated) return this.answer('none', '', line('auto', 'policy', `${verdict.reason} (left to the normal permission flow: the command does more than that)`))

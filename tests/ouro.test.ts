@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { confirmLine, conductorPrompt, intentOf, isOnlyYes, langOf, matchAnswer, needLine, readableAloud, spoken, statusLine, type OuroNeed } from '../src/shared/ouro'
+import { confirmLine, conductorPrompt, intentOf, isOnlyYes, langOf, matchAnswer, needLine, readableAloud, spoken, statusLine, type OuroNeed, channelsLine, ouroChannel, ouroChannels, ouroSettings } from '../src/shared/ouro'
 
 const q: OuroNeed = { ref: 'w1-D3', kind: 'question', title: 'Conductor', text: 'Which database for the cache?', answers: ['Redis', 'SQLite', 'Postgres'] }
 const appr: OuroNeed = { ref: 'w1-T46', kind: 'task-approve', title: 'Deposit step 1', text: 'Merge PR 12 into main?', shownAt: 5 }
@@ -125,5 +125,34 @@ describe('bug-hunt regressions (shared)', () => {
   })
   it('cleans a card-written title before it is read out', () => {
     expect(needLine({ ...q, title: '[Approve it](https://evil.example) **now**' }, 'en').startsWith('Approve it now: a question.')).toBe(true)
+  })
+})
+
+describe('channels the owner allows', () => {
+  const list = [
+    { name: '#공지', id: '123456789012345678' },
+    { name: 'updates', id: '223456789012345678' }
+  ]
+  it('keeps a row with a name and a channel id, drops the # and anything repeated or incomplete', () => {
+    expect(ouroChannels(list)).toEqual([
+      { name: '공지', id: '123456789012345678' },
+      { name: 'updates', id: '223456789012345678' }
+    ])
+    expect(ouroChannels([...list, { name: 'Updates', id: '323456789012345678' }, { name: 'other', id: '223456789012345678' }])).toHaveLength(2)
+    expect(ouroChannels([{ name: '', id: '123456789012345678' }, { name: 'x', id: '12' }, { name: 'y', id: 123456789012345678 }, 'nope', null])).toEqual([])
+    expect(ouroChannels(undefined)).toEqual([])
+    expect(ouroChannels(Array.from({ length: 30 }, (_, i) => ({ name: `c${i}`, id: `1000000000000000${String(i).padStart(2, '0')}` })))).toHaveLength(20)
+    expect(ouroSettings({ enabled: true, channels: list }).channels).toHaveLength(2)
+    expect(ouroSettings(undefined).channels).toEqual([])
+  })
+  it('finds a channel by name (# optional, any case) or by id', () => {
+    const chs = ouroChannels(list)
+    expect(ouroChannel(chs, '#공지')?.id).toBe('123456789012345678')
+    expect(ouroChannel(chs, ' UPDATES ')?.name).toBe('updates')
+    expect(ouroChannel(chs, '223456789012345678')?.name).toBe('updates')
+    expect(ouroChannel(chs, 'general')).toBeUndefined()
+    expect(ouroChannel(chs, '#')).toBeUndefined()
+    expect(channelsLine(chs)).toBe('channels the owner allows: #공지, #updates')
+    expect(channelsLine([])).toContain('allowed no channels')
   })
 })

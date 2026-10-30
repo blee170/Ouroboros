@@ -6,10 +6,12 @@ import type { OuroNeed, OuroStatus } from '../src/shared/ouro'
 const OWNER = '281821501458743298'
 
 class FakeBot extends EventEmitter {
-  state: 'off' | 'ready' = 'off'
+  state: 'off' | 'ready' | 'failed' = 'off'
   detail = ''
   username = 'Ouro'
   sent: string[] = []
+  posts: Array<[string, string]> = []
+  refuse = ''
   started = 0
   stopped = 0
   start(): void {
@@ -20,6 +22,10 @@ class FakeBot extends EventEmitter {
   }
   async send(t: string): Promise<void> {
     this.sent.push(t)
+  }
+  async post(id: string, t: string): Promise<void> {
+    if (this.refuse) throw new Error(this.refuse)
+    this.posts.push([id, t])
   }
   ready(): void {
     this.state = 'ready'
@@ -323,5 +329,65 @@ describe('Ouro car ready', () => {
     // the read-back still waits: the yes goes to what the owner heard
     expect(await h.say('응')).toBeTruthy()
     expect(h.calls.some((c) => c.startsWith('approve 1-T4'))).toBe(true)
+  })
+})
+
+describe('posting to a channel', () => {
+  const CH = '123456789012345678'
+  const withChannels = (h: ReturnType<typeof harness>): void => h.ouro.configure({ enabled: true, token: 'tok', ownerId: OWNER, notify: true, approvals: true, channels: [{ name: '공지', id: CH }] })
+  it('posts to an allowed channel by name or id, as the bot, and notes it', async () => {
+    const h = harness()
+    withChannels(h)
+    // the same token and owner: the bot is kept, only the channels change
+    expect(h.bots).toHaveLength(1)
+    expect(await h.ouro.post('#공지', '  배포 끝났어요.  ', 'Conductor')).toEqual({ ok: true, channel: '공지' })
+    expect(await h.ouro.post(CH, 'x'.repeat(5000), 'Conductor')).toEqual({ ok: true, channel: '공지' })
+    expect(h.bot.posts).toEqual([
+      [CH, '배포 끝났어요.'],
+      [CH, 'x'.repeat(4000)]
+    ])
+    expect(h.notes).toContain('Conductor posted to Discord #공지: 배포 끝났어요.')
+    expect(h.notes.at(-1)).toMatch(/^Conductor posted to Discord #공지: x{80}…$/)
+    // a post is not a DM: nothing was said to the owner
+    expect(h.bot.sent).toHaveLength(1)
+  })
+  it('refuses a channel the owner did not allow, naming the allowed ones, and an empty text', async () => {
+    const h = harness()
+    expect(await h.ouro.post('general', 'hi', 'Conductor')).toEqual({ ok: false, error: 'no allowed channel "general": the owner has allowed no channels (Settings → Ouro → Channels)' })
+    withChannels(h)
+    expect(await h.ouro.post('general', 'hi', 'Conductor')).toEqual({ ok: false, error: 'no allowed channel "general": channels the owner allows: #공지' })
+    expect(await h.ouro.post('공지', ' ', 'Conductor')).toEqual({ ok: false, error: 'nothing to post' })
+    expect(h.bot.posts).toEqual([])
+  })
+  it('says when Ouro is off or Discord refused the post', async () => {
+    const h = harness()
+    withChannels(h)
+    h.bot.refuse = 'Discord POST /channels/…/messages → 403'
+    const r = await h.ouro.post('공지', 'hi', 'Conductor')
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.error).toContain('Discord refused the post to #공지: Discord POST /channels/…/messages → 403')
+    // a part that went out is said as such, without the permissions hint
+    h.bot.refuse = 'Discord POST /channels/…/messages → 500; 1 of 2 parts were posted'
+    expect(await h.ouro.post('공지', 'hi', 'Conductor')).toEqual({ ok: false, error: 'Discord refused the post to #공지: Discord POST /channels/…/messages → 500; 1 of 2 parts were posted' })
+    h.bot.refuse = ''
+    h.bot.state = 'failed'
+    h.bot.detail = 'Discord refused the bot token (4004)'
+    expect(await h.ouro.post('공지', 'hi', 'Conductor')).toEqual({ ok: false, error: "Ouro's bot is stopped: Discord refused the bot token (4004)" })
+    h.ouro.configure({ enabled: false, notify: true, approvals: true, channels: [{ name: '공지', id: CH }] })
+    expect(await h.ouro.post('공지', 'hi', 'Conductor')).toEqual({ ok: false, error: 'Ouro is off (Settings → Ouro)' })
+  })
+  it('caps a channel at 10 posts in 10 minutes, tries included, and posts one at a time', async () => {
+    const h = harness()
+    withChannels(h)
+    for (let i = 0; i < 10; i++) expect((await h.ouro.post('공지', `post ${i}`, 'Conductor')).ok).toBe(true)
+    expect(await h.ouro.post('공지', 'one more', 'Conductor')).toEqual({ ok: false, error: '#공지 had 10 posts in the last 10 minutes: wait before posting there again' })
+    h.advance(10 * 60_000 + 1)
+    expect((await h.ouro.post('공지', 'later', 'Conductor')).ok).toBe(true)
+    expect(h.bot.posts.map(([, t]) => t)).toEqual([...Array.from({ length: 10 }, (_, i) => `post ${i}`), 'later'])
+    // two posts at once go out in order, whole
+    h.advance(10 * 60_000 + 1)
+    const [a, b] = await Promise.all([h.ouro.post('공지', 'A', 'c1'), h.ouro.post('공지', 'B', 'c2')])
+    expect([a.ok, b.ok]).toEqual([true, true])
+    expect(h.bot.posts.slice(-2).map(([, t]) => t)).toEqual(['A', 'B'])
   })
 })

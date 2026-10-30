@@ -454,6 +454,9 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .field > span { color: var(--muted); white-space: nowrap; overflow-wrap: normal; }
 .field .ctl { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .field .ctl input.text, .field .ctl select { flex: 1; min-width: 0; }
+.field .ctl.ouro-channels { flex-direction: column; align-items: stretch; }
+.ouro-channel-row { display: flex; gap: 6px; align-items: center; }
+.ouro-channel-row input.text { flex: 1; min-width: 0; }
 .field .ctl .hint { margin: 0; white-space: nowrap; }
 .field .hint { grid-column: 2; }
 .panel label.field { display: grid; color: var(--text); }

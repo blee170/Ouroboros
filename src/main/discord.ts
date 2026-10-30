@@ -101,7 +101,33 @@ export class DiscordBot extends EventEmitter {
       if (!dm?.id) throw new Error('Discord did not open a DM channel')
       this.dmChannel = dm.id
     }
-    for (let i = 0; i < body.length; i += CHUNK) await this.api('POST', `/channels/${this.dmChannel}/messages`, { content: body.slice(i, i + CHUNK), allowed_mentions: { parse: [] } })
+    await this.post(this.dmChannel, body)
+  }
+
+  /**
+   * Posts to a channel the bot can write in (a server channel the owner allows, or the DM), split into Discord-sized
+   * parts without cutting an emoji in two; no mention resolves, and quiet hides link previews too. A failure after
+   * the first part says how many went out, so the caller does not post the whole thing again.
+   */
+  async post(channelId: string, text: string, quiet = false): Promise<void> {
+    const body = text.trim()
+    if (!body) return
+    const parts: string[] = []
+    for (let i = 0; i < body.length; ) {
+      let end = Math.min(i + CHUNK, body.length)
+      const c = body.charCodeAt(end)
+      if (end < body.length && c >= 0xdc00 && c <= 0xdfff) end--
+      parts.push(body.slice(i, end))
+      i = end
+    }
+    for (let k = 0; k < parts.length; k++) {
+      try {
+        await this.api('POST', `/channels/${channelId}/messages`, { content: parts[k], allowed_mentions: { parse: [] }, ...(quiet ? { flags: 4 } : {}) })
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err)
+        throw new Error(k ? `${m}; ${k} of ${parts.length} parts were posted` : m)
+      }
+    }
   }
 
   private async api(method: string, path: string, body?: unknown, again = true): Promise<unknown> {

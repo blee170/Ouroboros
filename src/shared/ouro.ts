@@ -55,7 +55,14 @@ export const OURO_LIMITS = {
    * reconnects needs a fresh message (2026-10-30: the 18:12 greeting was gone from the car after an 18:18 reconnect).
    * The gap only absorbs a Bluetooth link that flaps for a moment.
    */
-  carGapMs: 2 * 60_000
+  carGapMs: 2 * 60_000,
+  /** a card's post to a server channel (Discord takes 2000 per message; the bot splits it) */
+  postChars: 4000,
+  /** channels the owner may allow (Settings → Ouro → Channels) */
+  channels: 20,
+  /** posts per channel in a window, tries included: a card in a loop must not flood a channel people read */
+  postsPerWindow: 10,
+  postWindowMs: 10 * 60_000
 } as const
 
 /** Pure: Korean when the text has Hangul in it, else English. */
@@ -241,6 +248,48 @@ export function conductorPrompt(text: string, lang: Lang): string {
 
 export type OuroBotState = 'off' | 'connecting' | 'ready' | 'retrying' | 'failed'
 
+/** A server channel the owner lets cards post to (Settings → Ouro → Channels). */
+export interface OuroChannel {
+  /** how a card names it: the channel's name without the # */
+  name: string
+  /** the channel's id (Developer Mode → right-click the channel → Copy Channel ID) */
+  id: string
+}
+
+const CHANNEL_ID = /^\d{15,22}$/
+
+/**
+ * Pure: the stored channel list, cleaned: a name (the # dropped, at most 40 characters) and a channel id; a row
+ * without either, or one that repeats a name or an id, is dropped; at most OURO_LIMITS.channels.
+ */
+export function ouroChannels(raw: unknown): OuroChannel[] {
+  if (!Array.isArray(raw)) return []
+  const out: OuroChannel[] = []
+  for (const c of raw) {
+    if (typeof c !== 'object' || c === null) continue
+    const { name, id } = c as Record<string, unknown>
+    const n = typeof name === 'string' ? name.trim().replace(/^#+/, '').trim().slice(0, 40) : ''
+    const i = typeof id === 'string' ? id.trim() : ''
+    if (!n || !CHANNEL_ID.test(i)) continue
+    if (out.some((x) => x.name.toLowerCase() === n.toLowerCase() || x.id === i)) continue
+    out.push({ name: n, id: i })
+    if (out.length >= OURO_LIMITS.channels) break
+  }
+  return out
+}
+
+/** Pure: the allowed channel a card named, by name (# optional, any case) or by id. */
+export function ouroChannel(channels: OuroChannel[], nameOrId: string): OuroChannel | undefined {
+  const want = nameOrId.trim().replace(/^#+/, '').trim().toLowerCase()
+  if (!want) return undefined
+  return channels.find((c) => c.name.toLowerCase() === want || c.id === want)
+}
+
+/** Pure: what a card hears with a refused channel: the names it may use. */
+export function channelsLine(channels: OuroChannel[]): string {
+  return channels.length ? `channels the owner allows: ${channels.map((c) => `#${c.name}`).join(', ')}` : 'the owner has allowed no channels (Settings → Ouro → Channels)'
+}
+
 /** Settings → Ouro, as stored (the bot token is kept apart, encrypted). */
 export interface OuroSettingsView {
   enabled: boolean
@@ -248,6 +297,8 @@ export interface OuroSettingsView {
   ownerId: string
   notify: boolean
   approvals: boolean
+  /** server channels any agent card with board tools may post to without asking */
+  channels: OuroChannel[]
 }
 
 export interface OuroStatusView extends OuroSettingsView {
@@ -263,6 +314,7 @@ export function ouroSettings(raw: Partial<OuroSettingsView> | undefined): OuroSe
     enabled: raw?.enabled === true,
     ownerId: typeof raw?.ownerId === 'string' ? raw.ownerId.trim().slice(0, 22) : '',
     notify: raw?.notify !== false,
-    approvals: raw?.approvals !== false
+    approvals: raw?.approvals !== false,
+    channels: ouroChannels(raw?.channels)
   }
 }

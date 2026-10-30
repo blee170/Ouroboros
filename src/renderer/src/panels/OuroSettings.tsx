@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { OuroSettingsView, OuroStatusView } from '@shared/ouro'
+import { useEffect, useRef, useState } from 'react'
+import type { OuroChannel, OuroSettingsView, OuroStatusView } from '@shared/ouro'
 
 const STATE: Record<OuroStatusView['state'], string> = { off: 'Off', connecting: 'Connecting…', ready: 'Connected', retrying: 'Reconnecting', failed: 'Stopped' }
 
@@ -11,12 +11,21 @@ export function OuroSettings() {
   const [status, setStatus] = useState<OuroStatusView | null>(null)
   const [token, setToken] = useState('')
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  /** the channel rows as typed: a half-typed row stays here while the saved list keeps only complete ones */
+  const [rows, setRows] = useState<OuroChannel[] | null>(null)
+  /** the status as last loaded: a save started from a blur must not carry an older render's channels */
+  const latest = useRef<OuroStatusView | null>(null)
+  latest.current = status
   useEffect(() => {
     let live = true
     const load = (): void => {
       window.ouroboros.ouro
         .status()
-        .then((s) => live && setStatus(s))
+        .then((s) => {
+          if (!live) return
+          setStatus(s)
+          setRows((r) => r ?? s.channels)
+        })
         .catch((e: Error) => live && setNote({ ok: false, text: e.message }))
     }
     load()
@@ -29,8 +38,20 @@ export function OuroSettings() {
   }, [])
   if (!status) return note ? <div className="small error-text">Ouro: {note.text}</div> : null
   const configure = async (patch: Partial<OuroSettingsView>): Promise<void> => {
-    const { enabled, ownerId, notify, approvals } = { ...status, ...patch }
-    setStatus(await window.ouroboros.ouro.configure({ enabled, ownerId, notify, approvals }))
+    const { enabled, ownerId, notify, approvals, channels } = { ...(latest.current ?? status), ...patch }
+    setStatus(await window.ouroboros.ouro.configure({ enabled, ownerId, notify, approvals, channels }))
+  }
+  const editRow = (i: number, patch: Partial<OuroChannel>): void => setRows((r) => (r ?? []).map((c, j) => (j === i ? { ...c, ...patch } : c)))
+  const saveRows = (next?: OuroChannel[]): Promise<void> => configure({ channels: next ?? rows ?? [] })
+  /** whether a typed row is in the saved list (the same name without the #, and the same id) */
+  const saved = (c: OuroChannel): boolean => {
+    const name = c.name.trim().replace(/^#+/, '').trim().toLowerCase()
+    return status.channels.some((s) => s.id === c.id.trim() && s.name.toLowerCase() === name)
+  }
+  const removeRow = (i: number): Promise<void> => {
+    const next = (rows ?? []).filter((_, j) => j !== i)
+    setRows(next)
+    return saveRows(next)
   }
   const saveToken = async (): Promise<void> => {
     setStatus(await window.ouroboros.ouro.setToken(token))
@@ -74,6 +95,30 @@ export function OuroSettings() {
       <label className="check">
         <input type="checkbox" checked={status.approvals} onChange={(e) => void configure({ approvals: e.target.checked })} /> Let me approve and answer by voice (off: Ouro reads them out and sends me to the PC)
       </label>
+      <div className="field">
+        <span>Channels cards may post to</span>
+        <div className="ctl ouro-channels">
+          {(rows ?? []).map((c, i) => (
+            <div className="ouro-channel" key={i}>
+              <div className="ouro-channel-row">
+                <input className="text" placeholder="name, as cards will call it (no #)" value={c.name} onChange={(e) => editRow(i, { name: e.target.value })} onBlur={() => void saveRows()} />
+                <input className="text" placeholder="channel ID (Developer Mode → right-click the channel → Copy Channel ID)" value={c.id} onChange={(e) => editRow(i, { id: e.target.value })} onBlur={() => void saveRows()} />
+                <button className="btn small" onClick={() => void removeRow(i)} title="Remove this channel">
+                  ✕
+                </button>
+              </div>
+              {!saved(c) && <div className="hint error-text">Not saved yet: needs a name and a 15–22 digit ID that no other row uses.</div>}
+            </div>
+          ))}
+          <button className="btn small" onClick={() => setRows([...(rows ?? []), { name: '', id: '' }])}>
+            Add channel
+          </button>
+        </div>
+        <div className="hint">
+          Any agent card with board tools may post there without asking, as the bot (tool <code>post_discord</code>: "post the progress to #updates"). The bot needs View Channel and Send Messages in that channel. A row counts once it has a name and a 15–22 digit ID
+          {status.channels.length ? ` (${status.channels.length} saved)` : ''}.
+        </div>
+      </div>
       <div className="field">
         <span>Status</span>
         <div className="ctl">

@@ -108,6 +108,10 @@ describe('buildTtsRequest', () => {
     expect(voiceboxGeneration({ id: 'g1', status: 'completed' })).toEqual({ id: 'g1', status: 'completed', error: undefined })
     expect(voiceboxGeneration({ id: 'g1', status: 'failed', error: 'CUDA out of memory' })).toEqual({ id: 'g1', status: 'failed', error: 'CUDA out of memory' })
     expect(voiceboxGeneration({ id: 'g1', status: 'not_found' })).toEqual({ id: 'g1', status: 'failed', error: 'not_found' })
+    expect(voiceboxGeneration({ id: 'g1', status: 'cancelled' })).toEqual({ id: 'g1', status: 'failed', error: 'cancelled' })
+    // the CUDA backend reports loading_model before generating on its first clip; anything that is not an end state is still in progress
+    expect(voiceboxGeneration({ id: 'g1', status: 'loading_model', error: null })).toEqual({ id: 'g1', status: 'generating', error: undefined })
+    expect(voiceboxGeneration({ id: 'g1', status: 'queued' })).toEqual({ id: 'g1', status: 'generating', error: undefined })
     expect(voiceboxGeneration({ status: 'generating' })).toBeUndefined()
     expect(voiceboxGeneration('nope')).toBeUndefined()
     expect(voiceboxUrl('history', 'a b/c')).toBe(`${VOICEBOX_URL}/history/a%20b%2Fc`)

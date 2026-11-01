@@ -109,3 +109,16 @@ describe('post_discord route', () => {
     ])
   })
 })
+
+describe('send_prompt route', () => {
+  it('passes a refusal through with its reason, so the agent learns why (409, not a bare 404)', async () => {
+    const sent: Array<[string, string]> = []
+    const a = api as unknown as { sendPrompt: ApiHandlers['sendPrompt'] }
+    a.sendPrompt = (id, text) => (id === 'parked' ? { error: 'waiting on a permission prompt' } : id === 'gone' ? false : (sent.push([id, text]), true))
+    const headers = { 'x-ouroboros-token': server.token }
+    expect(await call('/api/agents/parked/prompt', { headers, body: JSON.stringify({ text: '1' }) })).toBe(409)
+    expect(await call('/api/agents/gone/prompt', { headers, body: JSON.stringify({ text: 'hi' }) })).toBe(404)
+    expect(await call('/api/agents/live/prompt', { headers, body: JSON.stringify({ text: 'hi' }) })).toBe(200)
+    expect(sent).toEqual([['live', 'hi']])
+  })
+})

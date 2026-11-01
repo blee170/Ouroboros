@@ -10,6 +10,9 @@ import type { Mail } from '@shared/mail'
 import type { Approval } from '@shared/gate'
 import type { Decision } from '@shared/decisions'
 import type { GrokHandoff } from '@shared/grokbot'
+import type { Routine } from '@shared/routines'
+
+export type RpanelTab = 'inspector' | 'tasks' | 'today' | 'routines'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
@@ -89,8 +92,10 @@ interface BoardState {
   decisions: Decision[]
   /** Grok Bot handoffs cards asked for (pending ones wait for Send / Discard in the Today tab) */
   grokHandoffs: GrokHandoff[]
+  /** the project's routines (saved prompts run with a button or on a schedule), as main pushes them */
+  routines: Routine[]
   /** What the right panel shows. */
-  rpanelTab: 'inspector' | 'tasks' | 'today'
+  rpanelTab: RpanelTab
   /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
   updateStatus: UpdateStatus | null
   /** Unread results and reviewed turns (shared/attention): runtime only. */
@@ -113,10 +118,11 @@ interface BoardState {
   setApprovals(a: Approval[]): void
   setDecisions(d: Decision[]): void
   setGrokHandoffs(h: GrokHandoff[]): void
+  setRoutines(r: Routine[]): void
   /** The owner's call on held cards: trust the change as it is, or put the values the app last wrote back. Either way they launch. */
   resolveHeld(ids: string[], revert: boolean): Promise<void>
   /** Show a tab of the right panel (opening the panel when it is closed). */
-  showRpanel(tab: 'inspector' | 'tasks' | 'today'): void
+  showRpanel(tab: RpanelTab): void
   setUpdateStatus(p: UpdateStatus): void
   setAccountUsage(s: UsageSnapshot): void
   setUsageOpen(open: boolean): void
@@ -198,6 +204,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   approvals: [],
   decisions: [],
   grokHandoffs: [],
+  routines: [],
+  setRoutines(r) {
+    set({ routines: r })
+  },
   rpanelTab: 'inspector',
   async resolveHeld(ids, revert) {
     const views = await api().workspace.trust(ids, revert)
@@ -280,7 +290,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, tasks: [], held: held ?? [] })
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, tasks: [], routines: [], held: held ?? [] })
     scheduleSync(get)
     // main loaded the ledger with the board file; a push follows every later change
     void api()
@@ -298,6 +308,9 @@ export const useBoard = create<BoardState>((set, get) => ({
     void api()
       .grokBot.list()
       .then((h) => set({ grokHandoffs: h }))
+    void api()
+      .routines.list()
+      .then((r) => set({ routines: r }))
   },
 
   onNodesChange(changes) {

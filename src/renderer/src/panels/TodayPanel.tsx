@@ -6,6 +6,7 @@ import { needsYou, todayView, type Need, type NeedKind, type TodayCard } from '@
 import { answersOf, DECISION_LIMITS } from '@shared/decisions'
 import { ownerNeed } from '@shared/owner-action'
 import { OwnerActionBox } from './OwnerAction'
+import { nextUp } from '@shared/routines'
 
 const KIND_LABEL: Record<NeedKind, string> = {
   approval: 'approve',
@@ -47,6 +48,8 @@ export function TodayPanel() {
   const attention = useBoard((s) => s.attention)
   const workingSince = useBoard((s) => s.workingSince)
   const autonomy = useBoard((s) => s.autonomy)
+  const routines = useBoard((s) => s.routines)
+  const nextRoutine = useMemo(() => nextUp(routines), [routines])
   const select = useBoard((s) => s.select)
   const showRpanel = useBoard((s) => s.showRpanel)
   const rf = useReactFlow()
@@ -251,6 +254,17 @@ export function TodayPanel() {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {nextRoutine && nextRoutine.nextAt !== undefined && (
+        <section className="task-group">
+          <h4>Next routine</h4>
+          <button className="task-toggle" onClick={() => showRpanel('routines')} title="Open the Routines tab">
+            <span className="task-title">
+              <b>{nextRoutine.name}</b> <span className="muted">{nextRoutine.nextAt - midnight < 86_400_000 ? `at ${hhmm(nextRoutine.nextAt)}` : new Date(nextRoutine.nextAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} → {nodes.find((n) => n.id === nextRoutine.cardId)?.data.title ?? nextRoutine.cardTitle ?? 'card gone'}</span>
+            </span>
+          </button>
         </section>
       )}
 

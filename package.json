@@ -14,8 +14,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "compat": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/cli-compat.mjs",
     "dist:win": "npm run build && electron-builder --win --x64",
-    "dist:linux": "npm run build && electron-builder --linux --x64",
+    "dist:linux": "npm run build && electron-builder --linux --x64",
     "dist:win:portable": "npm run build && electron-builder --win portable --x64",
     "build:mcp": "vite build -c vite.mcp.config.mts && vite build -c vite.mcp.config.mts --mode agent-hook"
   },

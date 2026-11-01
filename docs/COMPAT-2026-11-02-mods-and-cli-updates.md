@@ -85,21 +85,21 @@ Changes between 2.1.287 and 2.1.316 that touch these, read from the changelog:
 | Gemini CLI 0.65.0 | `-m`, `--approval-mode plan/auto_edit/yolo`, `-r [latest]`, `GEMINI_CLI_SYSTEM_SETTINGS_PATH`; hook events `SessionStart BeforeAgent BeforeTool AfterAgent Notification SessionEnd`, field `prompt_response` | Flags in `--help`, `plan` still a choice; hook names not checked statically |
 | Grok 1.0.70 | `--agent <file>`, `-m`, `--always-approve`, `-r`, `-c`; snake_case `hookEventName` ([agent-hook.ts](../src/main/agent-hook.ts) `mapGrokHook`) | Flags in `--help` |
 
-## 5. Proposal: a repeatable compatibility check
+## 5. The repeatable compatibility check (built 2026-11-02)
 
-The assumptions are spread over six files and pinned only by unit tests with hand-written fixtures. Those tests pass even when the CLI has moved on. The check has to run against the **installed** CLIs.
+The assumptions are spread over six files and pinned only by unit tests with hand-written fixtures. Those tests pass even when the CLI has moved on, so the check runs against the **installed** CLIs.
 
-**Level 1: static, free, seconds (`npm run compat`, `scripts/cli-compat.mjs`).**
+**Level 1: static, free, ~30 s (`npm run compat`, [scripts/cli-compat.mjs](../scripts/cli-compat.mjs)).**
 
-- One contract table in `src/shared/cli-contract.ts`, per engine: the flags the launchers pass, the hook event names, the notification types, the env names, and the screen strings the detectors match.
-- The script runs `<cli> --version` and `<cli> --help`, checks every flag, and searches the installed package for every string (for Claude Code, the native binary; for npm CLIs, their `dist` folder). It prints one line per assumption (`ok`, `MISSING`, `hidden`: in the binary but not in `--help`) and exits 1 on a `MISSING`.
-- A unit test asserts that every flag `buildClaudeCommand` / `buildCodexLaunch` / `buildGeminiLaunch` / `buildGrokLaunch` can emit is in the contract table, so a new flag cannot skip the table.
-- It caught this report's only finding by hand: `--append-system-prompt-file` is hidden.
+- One contract table, [src/shared/cli-contract.ts](../src/shared/cli-contract.ts), per engine: the flags the launchers pass, the hook event names, the notification types, the env names, and the screen strings the detectors match. Each entry says where Ouroboros relies on it.
+- The script runs `<cli> --version` and `<cli> --help`, checks every flag, and searches the installed files for every string: a native binary itself (Claude Code, Grok), or the npm package (Gemini, Codex). It prints one line per assumption (`ok`, `hidden`: in the files but not in `--help`, `MISSING`) and exits 1 on a `MISSING`. A CLI that is not on PATH is skipped. `npm run compat -- claude gemini` checks only those.
+- [tests/cli-contract.test.ts](../tests/cli-contract.test.ts) builds every launch variant (each permission mode, resume form and autonomous run) and fails when a launcher emits a flag, an approval mode or a hook event the table leaves out. So a new flag cannot skip the table.
+- First run on 2026-11-02: everything found; `--append-system-prompt-file` reported `hidden`; Codex skipped (not installed). Positive control: a made-up flag and string came back `MISSING` with exit 1, and removing `--name` / `--last` from the table failed the unit test.
 
 **Level 2: live probe, opt-in (`npm run compat -- --live`), one tiny Claude turn.**
 
-- Start a throwaway HTTP server on a random port (never 47821), write a `--settings` file with Ouroboros's own `buildHookSettings` pointed at it, and run `claude -p "reply ok" --setting-sources project,local --settings <file>` in a project folder outside Temp. `--setting-sources` without `user` keeps Brian's global hooks (and the Ouroboros external route) out of the probe.
-- Record the key set of each event that arrives and compare it with a checked-in snapshot (`tests/fixtures/cli-contract/claude-<version>.json`). A missing key fails; a new key is reported as information.
+- A throwaway HTTP server on a random port (never 47821), Ouroboros's hook shape for every event in `CLAUDE_HOOK_EVENTS`, and `claude -p … --model haiku --effort low --setting-sources project,local --no-session-persistence` in `~/.ouroboros-compat-probe`, which is outside Temp and removed afterwards. Leaving `user` out of `--setting-sources` keeps Brian's global hooks (and the Ouroboros external route) out of the probe, and this session's CLAUDE markers are stripped from the child.
+- It checks that each event in `CLAUDE_PAYLOAD_KEYS` arrives with the keys Ouroboros reads. First run: UserPromptSubmit, PreToolUse, PostToolUse, Stop and SessionEnd all `ok`; `~/.claude/settings.json` hash unchanged. SessionStart is not expected: Claude Code still never sends it to http hooks. The probe prints `news` if that ever changes.
 - Not covered: TUI-only text (trust dialog, interrupt), which `-p` never draws. Level 1's string search is the guard there.
 
 **When it runs.**
@@ -113,4 +113,4 @@ The assumptions are spread over six files and pinned only by unit tests with han
 - Codex was not checked (not installed here).
 - The keyboard-focus risk in section 2 comes from reading the mods' code and was not reproduced in a card.
 - File Tree's behaviour at session start in a card under 110 columns was not tested.
-- Nothing was implemented; sections 3 and 5 wait for Brian's choice.
+- Section 5 levels 1 and 2 are built; the in-app Engines-panel check and the weekly changelog Routine are not. Section 3 waits for Brian's choice.

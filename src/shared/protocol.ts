@@ -9,6 +9,7 @@ import type { HeldCard, PrivilegeView } from './board-trust'
 import type { Mail } from './mail'
 import type { Approval } from './gate'
 import type { Decision } from './decisions'
+import type { Routine, RoutineInput } from './routines'
 import type { GrokBotView, GrokHandoff } from './grokbot'
 
 export interface GrokReplyStatus {
@@ -76,6 +77,11 @@ export const IPC = {
   decisionsList: 'decisions:list',
   decisionsAnswer: 'decisions:answer',
   decisionsChanged: 'decisions:changed',
+  routinesList: 'routines:list',
+  routinesSave: 'routines:save',
+  routinesRemove: 'routines:remove',
+  routinesRun: 'routines:run',
+  routinesChanged: 'routines:changed',
   grokBotList: 'grokBot:list',
   grokBotResolve: 'grokBot:resolve',
   grokBotChanged: 'grokBot:changed',
@@ -571,6 +577,14 @@ export interface OuroborosApi {
     list(): Promise<Decision[]>
     answer(id: string, answer: string, note?: string): Promise<{ ok: boolean; error?: string; warning?: string }>
     onChange(cb: (decisions: Decision[]) => void): () => void
+  }
+  routines: {
+    /** The project's routines: a saved prompt for one card, run with a button or on a schedule. */
+    list(): Promise<Routine[]>
+    save(input: RoutineInput): Promise<{ ok: true; routine: Routine } | { ok: false; error: string }>
+    remove(id: string): Promise<boolean>
+    run(id: string): Promise<{ ok: true } | { ok: false; error: string }>
+    onChange(cb: (routines: Routine[]) => void): () => void
   }
   grokBot: {
     /** Tasks cards asked to hand to Grok Bot, and what became of them. */

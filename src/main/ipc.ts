@@ -39,6 +39,8 @@ import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
+import { RoutineDesk, routinesFile } from './routines'
+import { resolveRoutineCard, routineRefusal, type Routine, type RoutineInput } from '@shared/routines'
 import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
 import { PtyManager, defaultShell } from './pty-manager'
@@ -114,6 +116,8 @@ export interface WindowSession {
   gate: GateKeeper
   /** Questions this window's cards asked the owner (ask_owner), answered in Today or on the phone. */
   decisions: DecisionDesk
+  /** The project's routines (saved prompts run with a button or on a schedule), kept in the app's data folder. */
+  routines: RoutineDesk
   /** Fresh starts: a long conversation handed to a new one through a handoff note (set once the window is up). */
   relay?: Relay
   /** Tasks cards asked to hand to Grok Bot (the last 50): each waits for the owner to send or discard it. */
@@ -272,6 +276,21 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
   // Codex has no prompt-submitted hook; we know we just gave it work
   if (n && n.data.engine === 'codex' && n.data.status !== 'working') s.board.setStatus(nodeId, { status: 'working', statusDetail: 'prompt sent' })
   return true
+}
+
+/** A routine's timer runs this often; a routine fires within ROUTINE_GRACE_MS of its time. */
+const ROUTINE_TICK_MS = 30_000
+
+/** Deliver a routine's prompt to its card, as if the owner typed it into the composer. */
+function runRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boolean; text: string } {
+  const nodes = [...s.board.nodes.values()].map((n) => ({ id: n.id, title: n.data.title, kind: n.data.kind }))
+  const id = resolveRoutineCard(r, nodes)
+  if (!id) return { ok: false, text: r.cardTitle ? `no single card named "${r.cardTitle}" on the board` : 'its card is no longer on the board' }
+  const n = s.board.nodes.get(id)
+  const title = n?.data.title || id
+  const refused = routineRefusal(n?.data.status)
+  if (refused) return { ok: false, text: `${title}: ${refused}` }
+  return sendPrompt(ctx, s, id, r.prompt) ? { ok: true, text: `sent to ${title}` } : { ok: false, text: `${title} is not running (or the autonomous run does not allow typing into it)` }
 }
 
 /** Watch a command card's output for the completion sentinel; completion behaves like a Claude Stop. */
@@ -1530,6 +1549,14 @@ function obsidianFailed(error: string): void {
   new Notification({ title: 'Obsidian export failed', body: `${error.slice(0, 180)}. Further failures go to the log only this session.` }).show()
 }
 
+let routinesWarned = false
+/** A routines file that could not be read or written: a log line always (the desk writes it), one toast per session. */
+function routinesFailed(error: string): void {
+  if (routinesWarned || !Notification.isSupported()) return
+  routinesWarned = true
+  new Notification({ title: 'Routines could not be saved', body: `${error.slice(0, 180)}. Further failures go to the log only this session.` }).show()
+}
+
 let notionWarned = false
 /** A failed task sync or release-notes publish: a log line always, one toast per session. */
 function notionFailed(error: string): void {
@@ -1853,6 +1880,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     mail: new Mailbox(log),
     gate: new GateKeeper(log),
     decisions: new DecisionDesk(),
+    routines: null as unknown as RoutineDesk,
     grokBot: [],
     fireHandoff: () => ({ ok: false, error: 'not ready' }),
     hasNode: (nodeId) => board.nodes.has(nodeId),
@@ -1867,6 +1895,8 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
       s.vaultExport?.dispose()
       s.ledger.dispose()
       s.mail.dispose()
+      clearInterval(routineTimer)
+      s.routines.dispose()
       for (const id of board.nodes.keys()) {
         ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
@@ -1876,6 +1906,9 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     }
   }
   s.api = createApiHandlers(ctx, s)
+  s.routines = new RoutineDesk((r) => runRoutine(ctx, s, r), log, undefined, routinesFailed)
+  s.routines.on('change', (list: Routine[]) => sendToRenderer(s, IPC.routinesChanged, list))
+  const routineTimer = setInterval(() => s.routines.tick(), ROUTINE_TICK_MS)
   s.autonomy = new Autonomy(autonomyHost(ctx, s))
   s.fireHandoff = installHandoffRunner(ctx, s)
   installAnnouncer(ctx, s)
@@ -2482,6 +2515,7 @@ export function registerIpc(ctx: MainContext): void {
     const workspace = read?.workspace ?? null
     s?.ledger.load(workspace ? { tasks: workspace.tasks, nextTaskId: workspace.nextTaskId } : undefined)
     s?.mail.load(mailFile(app.getPath('userData'), projectRoot))
+    s?.routines.load(routinesFile(app.getPath('userData'), projectRoot))
     s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
     for (const d of s?.decisions.load() ?? []) s?.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): another project was opened`)
     // check() never throws: anything unexpected holds every card
@@ -2571,6 +2605,19 @@ export function registerIpc(ctx: MainContext): void {
     return resolveApproval(s, id, approve === true)
   })
   ipcMain.handle(IPC.decisionsList, (e) => sessionOf(e)?.decisions.decisions ?? [])
+  ipcMain.handle(IPC.routinesList, (e) => sessionOf(e)?.routines.list() ?? [])
+  ipcMain.handle(IPC.routinesSave, (e, input: unknown) => {
+    const s = sessionOf(e)
+    if (!s) return { ok: false, error: 'no window' }
+    if (!input || typeof input !== 'object') return { ok: false, error: 'not a routine' }
+    return s.routines.save(input as RoutineInput)
+  })
+  ipcMain.handle(IPC.routinesRemove, (e, id: unknown) => (typeof id === 'string' ? (sessionOf(e)?.routines.remove(id) ?? false) : false))
+  ipcMain.handle(IPC.routinesRun, (e, id: unknown) => {
+    const s = sessionOf(e)
+    if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }
+    return s.routines.runNow(id)
+  })
   ipcMain.handle(IPC.decisionsAnswer, (e, id: string, answer: string, note?: string) => {
     const s = sessionOf(e)
     if (!s || typeof id !== 'string') return { ok: false, error: 'no window' }

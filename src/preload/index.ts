@@ -147,6 +147,13 @@ const api: OuroborosApi = {
     revoke: (id) => ipcRenderer.invoke(IPC.phoneRevoke, id),
     notifyKey: () => ipcRenderer.invoke(IPC.phoneNotifyKey)
   },
+  routines: {
+    list: () => ipcRenderer.invoke(IPC.routinesList),
+    save: (input) => ipcRenderer.invoke(IPC.routinesSave, input),
+    remove: (id) => ipcRenderer.invoke(IPC.routinesRemove, id),
+    run: (id) => ipcRenderer.invoke(IPC.routinesRun, id),
+    onChange: (cb) => on(IPC.routinesChanged, cb)
+  },
   decisions: {
     list: () => ipcRenderer.invoke(IPC.decisionsList),
     answer: (id, answer, note) => ipcRenderer.invoke(IPC.decisionsAnswer, id, answer, note),

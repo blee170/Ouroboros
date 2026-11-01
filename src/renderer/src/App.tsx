@@ -7,6 +7,7 @@ import { Inspector } from './panels/Inspector'
 import { HeldDialog } from './panels/HeldDialog'
 import { TasksPanel } from './panels/TasksPanel'
 import { TodayPanel, needsCount } from './panels/TodayPanel'
+import { RoutinesPanel } from './panels/RoutinesPanel'
 import { Sidebar } from './panels/Sidebar'
 import { StatusBar } from './panels/StatusBar'
 import { Welcome } from './panels/Welcome'
@@ -51,6 +52,7 @@ export default function App() {
       api.gate.onChange((a) => useBoard.getState().setApprovals(a)),
       api.decisions.onChange((d) => useBoard.getState().setDecisions(d)),
       api.grokBot.onChange((h) => useBoard.getState().setGrokHandoffs(h)),
+      api.routines.onChange((r) => useBoard.getState().setRoutines(r)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onActivity((p) => useBoard.getState().applyActivity(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
@@ -120,12 +122,15 @@ export default function App() {
                   <button className={`rtab${rpanelTab === 'today' ? ' on' : ''}`} onClick={() => showRpanel('today')} aria-pressed={rpanelTab === 'today'} title="What waits on you, ranked, and what happened today">
                     Today{needs > 0 && <span className="rtab-n needs">{needs}</span>}
                   </button>
+                  <button className={`rtab${rpanelTab === 'routines' ? ' on' : ''}`} onClick={() => showRpanel('routines')} aria-pressed={rpanelTab === 'routines'} title="Saved prompts for a card, run with a button or on a schedule">
+                    Routines
+                  </button>
                 </h2>
                 <button className="ghost" onClick={toggleInspector} title="Close the panel" aria-label="Close panel">
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <div className="rpanel-body">{rpanelTab === 'tasks' ? <TasksPanel /> : rpanelTab === 'today' ? <TodayPanel /> : <Inspector />}</div>
+              <div className="rpanel-body">{rpanelTab === 'tasks' ? <TasksPanel /> : rpanelTab === 'today' ? <TodayPanel /> : rpanelTab === 'routines' ? <RoutinesPanel /> : <Inspector />}</div>
             </aside>
           )}
         </div>

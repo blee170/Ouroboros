@@ -164,7 +164,7 @@ server.registerTool(
   'send_prompt',
   {
     title: 'Send a prompt to an agent',
-    description: 'Type a prompt into the agent terminal and press Enter. Use for delegation; keep prompts self-contained.',
+    description: 'Type a prompt into the agent terminal and press Enter. Use for delegation; keep prompts self-contained. It is a message, not keystrokes: it cannot answer a permission prompt (refused; the owner answers those).',
     inputSchema: { agent_id: z.string(), text: z.string().min(1) }
   },
   async ({ agent_id, text: prompt }) => {

@@ -204,6 +204,20 @@ const launchFailed = new Set<string>()
 /** Cards whose CLI asked whether to trust the folder (needs-you until the owner answers; the ready signals then make them idle). */
 const trustAsked = new Set<string>()
 
+/**
+ * A card parked on Claude Code's permission dialog (the Notification hook's "permission: …" detail) whose prompts go
+ * into its session inbox: text sent there is a message, so it cannot press the dialog's keys. A card without an inbox
+ * (Codex, Gemini, Grok, the folder-trust question before the session starts) gets text typed, as before.
+ */
+function waitsOnPermission(c: { id: string; status?: string; statusDetail?: string }): boolean {
+  return c.status === 'needs-you' && (c.statusDetail ?? '').startsWith('permission') && inboxes.has(c.id)
+}
+
+/** Only the owner answers a permission dialog, in the card or from the phone; a board tool can only send a message. */
+const PERMISSION_REFUSAL =
+  'the card is waiting on a permission prompt. send_prompt cannot answer it: the text would arrive as a new message, not as a key in the dialog. The owner answers it in the card (or from the phone); tell the owner if it is urgent.'
+const PERMISSION_HINT = 'It is a permission prompt: only the owner answers those, in the card or from the phone. Do not send_prompt it (the text would arrive as a new message); tell the owner if it is urgent, otherwise carry on.'
+
 /** Is the owner looking at this card right now (window focused, card selected)? Then it needs no toast. */
 function viewing(s: WindowSession, nodeId: string): boolean {
   return !s.win.isDestroyed() && s.win.isFocused() && s.selectedNodeId === nodeId
@@ -416,7 +430,12 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     },
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
-    sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
+    sendPrompt: (nodeId, text) => {
+      const n = board.nodes.get(nodeId)
+      // text goes into the session as a message, not as keys: a "1" meant for the dialog became a prompt of its own
+      if (n && waitsOnPermission({ id: nodeId, ...n.data })) return { error: PERMISSION_REFUSAL }
+      return sendPrompt(ctx, s, nodeId, text)
+    },
     discordPost: (self, input) => {
       const n = board.nodes.get(self)
       if (!n) return Promise.resolve({ ok: false as const, error: 'unknown card' })
@@ -1692,7 +1711,7 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
       const msg =
         r.reason === 'silent'
           ? `[card stalled] ${title}: Working with no activity for ${r.minutes} min${detailText}.${ownsText} Check it with read_output; nudge it with send_prompt, or kill it and dispatch the work again.`
-          : `[card waiting] ${title}: waiting for input for ${r.minutes} min${detailText}.${ownsText} Read the question with read_output, then answer it with send_prompt or ask the owner.`
+          : `[card waiting] ${title}: waiting for input for ${r.minutes} min${detailText}.${ownsText} ${waitsOnPermission(a) ? PERMISSION_HINT : 'Read the question with read_output, then answer it with send_prompt or ask the owner.'}`
       const targets = new Set<string>()
       const parent = a.parentId ? s.board.nodes.get(a.parentId) : undefined
       if (parent && parent.data.kind !== 'terminal' && parent.data.kind !== 'command') targets.add(parent.id)
@@ -1848,7 +1867,7 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
       if (dst.data.status === 'needs-you') continue
       noticed.set(p.nodeId, now)
       const what = cleanLine(p.statusDetail, 200)
-      sendPrompt(ctx, s, edge.target, `[${cleanLine(src?.data.title, 80) || p.nodeId} needs input] ${what ? `card says: "${what.replace(/"/g, "'")}"` : 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
+      sendPrompt(ctx, s, edge.target, `[${cleanLine(src?.data.title, 80) || p.nodeId} needs input] ${what ? `card says: "${what.replace(/"/g, "'")}"` : 'waiting for a decision'} — ${waitsOnPermission({ id: p.nodeId, status: p.status, statusDetail: p.statusDetail }) ? PERMISSION_HINT : 'use read_output to see the question, then answer it with send_prompt or ask the owner.'}`)
     }
   })
   return (edgeId, manual) => {

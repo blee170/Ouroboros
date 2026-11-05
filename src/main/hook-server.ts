@@ -33,7 +33,8 @@ export interface ApiHandlers {
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
   listRoles(query?: string): Promise<unknown>
   readOutput(nodeId: string, lines: number): string | null
-  sendPrompt(nodeId: string, text: string): boolean
+  /** false: not delivered; an error: refused, with the reason for the caller. */
+  sendPrompt(nodeId: string, text: string): boolean | { error: string }
   createAgent(input: {
     cwd?: string
     title?: string
@@ -452,8 +453,9 @@ export class HookServer {
       if (m && method === 'POST' && m[2] === 'prompt') {
         const body = (await readJson(req)) as { text?: string }
         if (!body || typeof body.text !== 'string') return send(res, 400, { error: 'text required' })
-        const ok = api.sendPrompt(decodeURIComponent(m[1]), body.text)
-        return send(res, ok ? 200 : 404, { ok })
+        const r = api.sendPrompt(decodeURIComponent(m[1]), body.text)
+        if (typeof r === 'object') return send(res, 409, { ok: false, error: r.error })
+        return send(res, r ? 200 : 404, { ok: r })
       }
       // --- browser cards ---
       if (method === 'GET' && path === '/api/browsers') return send(res, 200, { browsers: api.browser.list() })

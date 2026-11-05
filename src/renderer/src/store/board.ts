@@ -5,7 +5,7 @@ import type { ActivityPayload, AgentStatusPayload, ExternalSessionPayload, Hando
 import type { UsageSnapshot } from '@shared/usage'
 import type { AutonomyPublic } from '@shared/autonomy'
 import type { Task } from '@shared/ledger'
-import { revertPrivileges, trustedIncoming, type HeldCard } from '@shared/board-trust'
+import { isTrustedLine, revertPrivileges, type HeldCard } from '@shared/board-trust'
 import type { Mail } from '@shared/mail'
 import type { Approval } from '@shared/gate'
 import type { Decision } from '@shared/decisions'
@@ -227,7 +227,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const keepLine = (e: BoardEdge): boolean => {
       if (removed.has(e.source) || removed.has(e.target)) return false
       if (!revert || !done.has(e.target) || !views[e.target]) return true
-      return trustedIncoming(views[e.target]).some((l) => l.from === e.source && l.mode === (e.data?.mode ?? 'auto') && l.template === (e.data?.template ?? ''))
+      return isTrustedLine(views[e.target], e)
     }
     set({
       held: get().held.filter((h) => !done.has(h.nodeId)),

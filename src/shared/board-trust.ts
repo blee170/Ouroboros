@@ -7,7 +7,8 @@ import type { NodeData } from './types'
 
 /**
  * Fields that decide what a card runs, with which rights, and what is typed into it. Title, position, notes and
- * tasks are not among them. `handoffs` is the card's incoming handoff lines (an auto line types into the card).
+ * tasks are not among them. `handoffs` is the card's incoming handoff lines (an auto line types into the card), each
+ * with its mode, template and condition.
  */
 export const PRIVILEGE_FIELDS = [
   'kind',
@@ -58,7 +59,7 @@ export interface TrustNode {
 export interface TrustEdge {
   source: string
   target: string
-  data?: { mode?: string; template?: string } | null
+  data?: { mode?: string; template?: string; condition?: unknown } | null
 }
 
 function pick(d: Record<string, unknown>, path: string): unknown {
@@ -69,13 +70,41 @@ function isUnset(v: unknown): boolean {
   return v === undefined || v === null || v === '' || v === false || (Array.isArray(v) && v.length === 0) || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0)
 }
 
-/** Incoming handoff lines of `nodeId`, in a stable order. */
+/**
+ * A line's condition as it is used: trimmed, '' = fires on every reply. A value that is not text (only a forged file
+ * has one) gets a leading space, which no trimmed text has: `["PASS"]` must not pass for `"PASS"`.
+ */
+function conditionOf(e: TrustEdge): string {
+  const c = e.data?.condition
+  if (c === undefined || c === null) return ''
+  return typeof c === 'string' ? c.trim() : ' ' + JSON.stringify(c)
+}
+
+/**
+ * Incoming handoff lines of `nodeId`, in a stable order. The condition decides when an auto line types into the card,
+ * so it is part of the line. It sorts last: without it the order is the one older records were saved in.
+ */
 function incomingOf(nodeId: string, edges: readonly TrustEdge[] | undefined): unknown {
   const lines = (edges ?? [])
     .filter((e) => e && e.target === nodeId)
-    .map((e) => ({ from: String(e.source), mode: e.data?.mode ?? 'auto', template: e.data?.template ?? '' }))
-    .sort((a, b) => (a.from + a.mode + a.template).localeCompare(b.from + b.mode + b.template))
+    .map((e) => ({ from: String(e.source), mode: e.data?.mode ?? 'auto', template: e.data?.template ?? '', condition: conditionOf(e) }))
+    .sort((a, b) => (a.from + a.mode + a.template).localeCompare(b.from + b.mode + b.template) || a.condition.localeCompare(b.condition))
   return lines
+}
+
+/**
+ * A view saved before lines carried their condition says nothing about it: such a view is compared without the
+ * condition, as it was when it was saved. The app's next save of the board records the condition.
+ */
+function sameLinesAsLegacy(was: string, is: string): boolean {
+  try {
+    const before = JSON.parse(was) as Array<Record<string, unknown>>
+    if (!Array.isArray(before) || before.some((l) => !l || typeof l !== 'object' || 'condition' in l)) return false
+    const now = (JSON.parse(is) as Array<Record<string, unknown>>).map((l) => ({ from: l.from, mode: l.mode, template: l.template }))
+    return JSON.stringify(now) === was
+  } catch {
+    return false
+  }
 }
 
 export function privilegeView(data: Partial<NodeData> | null | undefined, nodeId?: string, edges?: readonly TrustEdge[]): PrivilegeView {
@@ -109,6 +138,7 @@ export function diffPrivileges(trusted: Record<string, PrivilegeView>, nodes: re
       const was = before ? (before[f] ?? null) : null
       const is = now[f] ?? null
       if (was === is) continue
+      if (f === 'handoffs' && was !== null && is !== null && sameLinesAsLegacy(was, is)) continue
       if (!before && BENIGN_ON_NEW.has(f) && !(f === 'kind' && data.kind === 'conductor')) continue
       changes.push({ field: f, before: was, after: is })
     }
@@ -142,11 +172,27 @@ export function revertPrivileges<T extends Partial<NodeData>>(data: T, trusted: 
   return out as T
 }
 
+export interface TrustedLine {
+  from: string
+  mode: string
+  template: string
+  /** Missing in a view saved before lines carried their condition. */
+  condition?: string
+}
+
 /** Pure: which incoming handoff lines of a reverted card to keep (those in its trusted view). */
-export function trustedIncoming(trusted: PrivilegeView): Array<{ from: string; mode: string; template: string }> {
+export function trustedIncoming(trusted: PrivilegeView): TrustedLine[] {
   try {
-    return trusted.handoffs ? (JSON.parse(trusted.handoffs) as Array<{ from: string; mode: string; template: string }>) : []
+    return trusted.handoffs ? (JSON.parse(trusted.handoffs) as TrustedLine[]) : []
   } catch {
     return []
   }
+}
+
+/** Pure: is this incoming line of a reverted card one of its trusted lines? */
+export function isTrustedLine(trusted: PrivilegeView, e: TrustEdge): boolean {
+  const mode = e.data?.mode ?? 'auto'
+  const template = e.data?.template ?? ''
+  const condition = conditionOf(e)
+  return trustedIncoming(trusted).some((l) => l.from === e.source && l.mode === mode && l.template === template && (l.condition === undefined || l.condition === condition))
 }

@@ -219,3 +219,20 @@ describe('hunt fixes (safety)', () => {
     expect(problems.some((p) => /could not|save failed/.test(p))).toBe(true)
   })
 })
+
+describe('note', () => {
+  it('records what became of a run that finished later, and saves it', () => {
+    const file = join(tmp(), 'r.json')
+    const { d } = desk(file, () => ({ ok: true, text: 'collecting CLI updates…' }))
+    const r = d.save(input, at(4, 8))
+    if (!r.ok) throw new Error(r.error)
+    d.runNow(r.routine.id, at(4, 8, 1))
+    d.note(r.routine.id, true, 'no CLI updates since the last run', at(4, 8, 2))
+    expect(d.list()[0].lastRun).toEqual({ at: at(4, 8, 2), ok: true, text: 'no CLI updates since the last run' })
+    expect(JSON.parse(readFileSync(file, 'utf8')).routines[0].lastRun.text).toBe('no CLI updates since the last run')
+    // a routine deleted while its run was collecting is not brought back
+    d.remove(r.routine.id)
+    d.note(r.routine.id, false, 'late', at(4, 8, 3))
+    expect(d.list()).toEqual([])
+  })
+})

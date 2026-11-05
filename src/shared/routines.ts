@@ -1,6 +1,6 @@
 /**
- * Routines: a saved prompt for one card, run with a button or on a schedule (every day or every weekday at a local
- * time, or every n hours). Pure: main keeps the list per project in the app's data folder and runs the timer.
+ * Routines: a saved prompt for one card, run with a button or on a schedule (every day, every weekday or one day
+ * of the week at a local time, or every n hours). Pure: main keeps the list per project in the app's data folder and runs the timer.
  * A routine whose time passed while the app was off is missed, not run late.
  */
 
@@ -8,8 +8,9 @@ export const ROUTINE_LIMITS = { name: 80, prompt: 8000, count: 50, maxHours: 24 
 /** A scheduled routine still fires this long after its time (a tick that came late, a sleeping PC that woke). */
 export const ROUTINE_GRACE_MS = 10 * 60_000
 
-export type RoutineSchedule = 'manual' | 'daily' | 'weekdays' | 'hourly'
-const SCHEDULES: readonly RoutineSchedule[] = ['manual', 'daily', 'weekdays', 'hourly']
+export type RoutineSchedule = 'manual' | 'daily' | 'weekdays' | 'weekly' | 'hourly'
+const SCHEDULES: readonly RoutineSchedule[] = ['manual', 'daily', 'weekdays', 'weekly', 'hourly']
+export const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
 
 export interface RoutineRun {
   at: number
@@ -26,8 +27,10 @@ export interface Routine {
   cardId: string
   cardTitle?: string
   schedule: RoutineSchedule
-  /** HH:MM, local time (daily / weekdays) */
+  /** HH:MM, local time (daily / weekdays / weekly) */
   at?: string
+  /** weekly: the day, 0 = Sunday … 6 = Saturday */
+  weekday?: number
   /** hourly */
   everyHours?: number
   enabled: boolean
@@ -68,10 +71,15 @@ export function checkRoutine(input: RoutineInput): { ok: true; routine: Routine 
   const routine: Routine = { id: str(input.id) || newId(), name, prompt, cardId, schedule, enabled: input.enabled !== false }
   const title = str(input.cardTitle)
   if (title) routine.cardTitle = title.slice(0, 200)
-  if (schedule === 'daily' || schedule === 'weekdays') {
+  if (schedule === 'daily' || schedule === 'weekdays' || schedule === 'weekly') {
     const t = normTime(input.at)
     if (!t) return { ok: false, error: 'the time must be HH:MM (00:00 to 23:59)' }
     routine.at = t
+    if (schedule === 'weekly') {
+      const d = input.weekday
+      if (typeof d !== 'number' || !Number.isInteger(d) || d < 0 || d > 6) return { ok: false, error: 'pick the day of the week' }
+      routine.weekday = d
+    }
   } else if (schedule === 'hourly') {
     const h = input.everyHours
     if (typeof h !== 'number' || !Number.isInteger(h) || h < 1 || h > ROUTINE_LIMITS.maxHours) return { ok: false, error: `every 1 to ${ROUTINE_LIMITS.maxHours} hours` }
@@ -97,6 +105,10 @@ export function nextRunAt(r: Routine, now: number): number | undefined {
   d.setHours(h, m, 0, 0)
   if (d.getTime() <= now) d.setDate(d.getDate() + 1)
   if (r.schedule === 'weekdays') while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1)
+  if (r.schedule === 'weekly') {
+    if (r.weekday === undefined) return undefined
+    while (d.getDay() !== r.weekday) d.setDate(d.getDate() + 1)
+  }
   // a day change can carry a DST shift from the first day (02:30 that did not exist became 03:30): set the time again
   d.setHours(h, m, 0, 0)
   return d.getTime()
@@ -172,7 +184,7 @@ export function resolveRoutineCard(r: Routine, nodes: ReadonlyArray<{ id: string
 /** Pure: when a routine runs, in words, for its row. */
 export function scheduleText(r: Routine): string {
   const when =
-    r.schedule === 'daily' ? `every day at ${r.at}` : r.schedule === 'weekdays' ? `weekdays at ${r.at}` : r.schedule === 'hourly' ? (r.everyHours === 1 ? 'every hour' : `every ${r.everyHours} hours`) : 'button only'
+    r.schedule === 'daily' ? `every day at ${r.at}` : r.schedule === 'weekdays' ? `weekdays at ${r.at}` : r.schedule === 'weekly' ? `every ${WEEKDAY_NAMES[r.weekday ?? 0]} at ${r.at}` : r.schedule === 'hourly' ? (r.everyHours === 1 ? 'every hour' : `every ${r.everyHours} hours`) : 'button only'
   return r.schedule !== 'manual' && !r.enabled ? `${when} (off)` : when
 }
 

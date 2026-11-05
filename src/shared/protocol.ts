@@ -12,6 +12,7 @@ import type { Decision } from './decisions'
 import type { Routine, RoutineInput } from './routines'
 import type { GrokBotView, GrokHandoff } from './grokbot'
 import type { ActivitySummary, EditTurn, SubagentRun, TouchedFile } from './activity'
+import type { CompatView } from './cli-watch'
 
 export interface GrokReplyStatus {
   enabled: boolean
@@ -122,6 +123,7 @@ export const IPC = {
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   enginesDetect: 'engines:detect',
+  enginesCompat: 'engines:compat',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   worktreeCreate: 'worktree:create',
@@ -160,6 +162,7 @@ export const IPC = {
   // main -> renderer (send)
   autonomyChanged: 'autonomy:changed',
   usageChanged: 'usage:changed',
+  enginesCompatChanged: 'engines:compatChanged',
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
   agentStatus: 'agent:status',
@@ -517,6 +520,12 @@ export interface OuroborosApi {
   engines: {
     /** Installed / signed-in state of claude, codex and gemini. */
     detect(): Promise<EngineInfo[]>
+    /**
+     * Whether each installed CLI still has what Ouroboros relies on (shared/cli-contract.ts). CLIs whose version
+     * changed since their last check are checked now; `force` checks every installed one again.
+     */
+    compat(force?: boolean): Promise<CompatView>
+    onCompat(cb: (v: CompatView) => void): () => void
   }
   files: {
     /** Absolute path of a File dropped from the OS (empty for in-browser files). */

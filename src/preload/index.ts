@@ -100,7 +100,9 @@ const api: OuroborosApi = {
     onChange: (cb) => on(IPC.usageChanged, cb)
   },
   engines: {
-    detect: () => ipcRenderer.invoke(IPC.enginesDetect)
+    detect: () => ipcRenderer.invoke(IPC.enginesDetect),
+    compat: (force) => ipcRenderer.invoke(IPC.enginesCompat, force),
+    onCompat: (cb) => on(IPC.enginesCompatChanged, cb)
   },
   files: {
     pathFor: (file) => {

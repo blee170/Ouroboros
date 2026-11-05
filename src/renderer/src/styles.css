@@ -637,6 +637,14 @@ body.ouro-dragging webview { pointer-events: none; }
 .engine-state.good { color: var(--ok-text); }
 .engine-state.warn { color: var(--warn); }
 .engine-state.bad { color: var(--muted); }
+.engine-compat { grid-column: 1 / -1; font-size: 11px; display: flex; align-items: center; gap: 5px; }
+.engine-compat.good { color: var(--muted); }
+.engine-compat.good .ico, .engine-compat.good svg { color: var(--ok-text); }
+details.engine-compat { display: block; color: var(--text); }
+details.engine-compat summary { color: var(--warn); cursor: pointer; }
+details.engine-compat ul { margin: 6px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+details.engine-compat code { font-family: var(--font-mono); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.engine-compat-foot { gap: 10px; }
 .engine-help { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .engine-help .cmd { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 2px 8px; font-size: 12px; user-select: all; font-family: var(--font-mono); }
 .engines.compact .engine-list li { padding: 6px 8px; }

@@ -40,6 +40,8 @@ import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
 import { RoutineDesk, routinesFile } from './routines'
+import type { CliWatch } from './cli-watch'
+import { CLI_UPDATES_TOKEN } from '@shared/cli-watch'
 import { resolveRoutineCard, routineRefusal, type Routine, type RoutineInput } from '@shared/routines'
 import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
@@ -148,6 +150,8 @@ export interface MainContext {
   ouro: Ouro
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
   usage: UsageMonitor
+  /** The CLI compatibility check, re-run when an installed CLI's version changes (Settings → Engines, the CLI-watch routine). */
+  cliWatch: CliWatch
   store: UserStore
   browsers: BrowserManager
   updater: Updater
@@ -291,7 +295,33 @@ function runRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boole
   const title = n?.data.title || id
   const refused = routineRefusal(n?.data.status)
   if (refused) return { ok: false, text: `${title}: ${refused}` }
+  if (r.prompt.includes(CLI_UPDATES_TOKEN)) return runCliWatchRoutine(ctx, s, r)
   return sendPrompt(ctx, s, id, r.prompt) ? { ok: true, text: `sent to ${title}` } : { ok: false, text: `${title} is not running (or the autonomous run does not allow typing into it)` }
+}
+
+/**
+ * A routine whose prompt carries {{cli-updates}}: the CLIs are looked at first, and the prompt goes out only when a
+ * version changed since this routine's last run, with the token replaced by what changed. The answer is "checking"
+ * now; what became of it is noted on the routine when the look is done.
+ */
+function runCliWatchRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boolean; text: string } {
+  void ctx.cliWatch
+    .digest()
+    .then((d) => {
+      if ('none' in d) return s.routines.note(r.id, true, d.none)
+      // the board may have changed while the CLIs were checked: find the card again
+      const nodes = [...s.board.nodes.values()].map((n) => ({ id: n.id, title: n.data.title, kind: n.data.kind }))
+      const id = resolveRoutineCard(r, nodes)
+      const n = id ? s.board.nodes.get(id) : undefined
+      const refused = n ? routineRefusal(n.data.status) : 'its card is no longer on the board'
+      if (!id || !n || refused) return s.routines.note(r.id, false, `${n?.data.title ?? r.cardTitle ?? 'card'}: ${refused}`)
+      if (!sendPrompt(ctx, s, id, r.prompt.split(CLI_UPDATES_TOKEN).join(d.text))) return s.routines.note(r.id, false, `${n.data.title} is not running (or the autonomous run does not allow typing into it)`)
+      // covered only once it was sent: a run that could not send has the same updates next time
+      d.commit()
+      s.routines.note(r.id, true, `sent to ${n.data.title}: ${d.summary}`)
+    })
+    .catch((e: Error) => s.routines.note(r.id, false, `could not check the CLIs: ${e.message}`))
+  return { ok: true, text: 'checking the CLIs for updates…' }
 }
 
 /** Watch a command card's output for the completion sentinel; completion behaves like a Claude Stop. */
@@ -2941,6 +2971,8 @@ export function registerIpc(ctx: MainContext): void {
   // a card's status line brought new plan numbers: every window shows them (the account is one)
   ctx.usage.onChange(() => void ctx.usage.snapshot().then((snap) => broadcast(ctx, IPC.usageChanged, snap)).catch(() => undefined))
   ipcMain.handle(IPC.enginesDetect, () => detectEngines())
+  ipcMain.handle(IPC.enginesCompat, (_e, force: unknown) => ctx.cliWatch.refresh(force === true))
+  ctx.cliWatch.on('change', (v) => broadcast(ctx, IPC.enginesCompatChanged, v))
   ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number, includeOwn: boolean) => (await sessionOf(e)?.api.tidy({ olderThanMinutes: minutes, includeOwn }, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
     const s = sessionOf(e)
@@ -3123,6 +3155,10 @@ export function initialProjectArg(): string | undefined {
 
 export function resolveHookScriptPath(): string {
   return resolveMcpScriptPath().replace(/mcp-server\.js$/, 'agent-hook.js')
+}
+
+export function resolveCompatScriptPath(): string {
+  return resolveMcpScriptPath().replace(/mcp-server\.js$/, 'cli-compat-run.js')
 }
 
 export function resolveMcpScriptPath(): string {

@@ -6,6 +6,7 @@ import type { SkillEntry } from '@shared/protocol'
 /** Claude Code's own commands that are always there (the ones the picker should offer). */
 const BUILTIN: Array<[string, string]> = [
   ['clear', 'Start a fresh conversation'],
+  ['code-review', 'Review the current diff, or a PR / branch / path, for bugs in a fresh sub-agent (effort first: low … max)'],
   ['compact', 'Compact the conversation (optional focus text)'],
   ['config', 'Settings'],
   ['cost', 'Token usage of this session'],
@@ -64,7 +65,7 @@ function skillsIn(dir: string, prefix: string, source: SkillEntry['source'], out
  * commands and skills, and every installed plugin's (as `plugin:name`). Pure over the given roots.
  */
 export function listSkillsIn(o: { configDir: string; cwd: string }): SkillEntry[] {
-  const out: SkillEntry[] = BUILTIN.map(([name, description]) => ({ name, description, source: 'builtin' }))
+  const out: SkillEntry[] = []
   commandsIn(join(o.configDir, 'commands'), '', 'user', out)
   skillsIn(join(o.configDir, 'skills'), '', 'user', out)
   if (o.cwd) {
@@ -83,6 +84,8 @@ export function listSkillsIn(o: { configDir: string; cwd: string }): SkillEntry[
   } catch {
     /* no plugins */
   }
+  // built-ins last: a command or skill of the same name on disk is listed as what it is (the owner's, the project's)
+  for (const [name, description] of BUILTIN) out.push({ name, description, source: 'builtin' })
   const seen = new Set<string>()
   return out
     .filter((s) => (seen.has(s.name) ? false : (seen.add(s.name), true)))

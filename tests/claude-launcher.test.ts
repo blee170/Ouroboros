@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { buildClaudeCommand, buildHookSettings, buildMcpConfig, quoteArg, safeSessionName } from '../src/main/claude-launcher'
+import { CONDUCTOR_SYSTEM_PROMPT, buildClaudeCommand, buildHookSettings, buildMcpConfig, quoteArg, safeSessionName } from '../src/main/claude-launcher'
+
+describe('CONDUCTOR_SYSTEM_PROMPT', () => {
+  it('sizes the team to the task before it sets up cards, and keeps one change in one card', () => {
+    const p = CONDUCTOR_SYSTEM_PROMPT
+    const size = p.indexOf('## Team size')
+    expect(size).toBeGreaterThan(0)
+    expect(size).toBeLessThan(p.indexOf('## Operating procedure'))
+    expect(p).toContain('one worker card does plan → implement → test')
+    expect(p).toContain('one independent review')
+    // a worker's own review is its word: the Conductor still reads the diff
+    expect(p).toMatch(/code-review skill \(when it has one\) on its own diff[^.]*; that is the worker's word, so read the diff yourself with get_changes/)
+    // a built board's role cards and lines are used as wired
+    expect(p).toContain('use them as wired')
+    expect(p).toContain('## Full pipeline, for large or risky work')
+    // the old rules pushed every task towards many cards
+    expect(p).not.toContain('Prefer small parallel cards')
+    expect(p).not.toContain('one role per card')
+    expect(p).not.toContain('## Default pipeline')
+    // every section the Conductor relies on is still there
+    for (const h of ['## Tools (MCP server "ouroboros")', '## How results reach you', '## Decision briefs', '## Markers every card must end its reply with', '## Rules']) expect(p).toContain(h)
+    expect(p).toContain('APPROVED BY OWNER')
+    expect(p).not.toContain('`'.repeat(3))
+  })
+})
 
 describe('buildHookSettings', () => {
   it('registers http hooks for every lifecycle event with matcher on tool events', () => {

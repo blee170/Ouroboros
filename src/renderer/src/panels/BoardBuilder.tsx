@@ -336,7 +336,11 @@ export function BoardBuilder({ onClose }: { onClose: () => void }) {
               </>
             )}
             <div className="muted small" style={{ marginTop: 10 }}>
-              Lines: Implementer → Tester (auto) · Tester → Reviewer (auto when the reply contains PASS) · Reviewer → Implementer (manual ▶) · every card reports to the Conductor
+              Lines:{' '}
+              {roles.implementer && roles.reviewer && !roles.tester
+                ? 'Implementer → Reviewer (auto when the reply has RESULT:)'
+                : 'Implementer → Tester (auto) · Tester → Reviewer (auto when the reply contains PASS)'}{' '}
+              · Reviewer → Implementer (manual ▶) · every card reports to the Conductor
             </div>
             {existing > 0 && (
               <label className="row" style={{ marginTop: 10 }}>

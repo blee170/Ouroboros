@@ -11,6 +11,7 @@ import type { Approval } from './gate'
 import type { Decision } from './decisions'
 import type { Routine, RoutineInput } from './routines'
 import type { GrokBotView, GrokHandoff } from './grokbot'
+import type { ActivitySummary, EditTurn, SubagentRun, TouchedFile } from './activity'
 
 export interface GrokReplyStatus {
   enabled: boolean
@@ -108,6 +109,8 @@ export const IPC = {
   phonePair: 'phone:pair',
   phoneRevoke: 'phone:revoke',
   phoneNotifyKey: 'phone:notifyKey',
+  activityGet: 'activity:get',
+  activityAll: 'activity:all',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -169,6 +172,7 @@ export const IPC = {
   boardSetNote: 'board:setNote',
   boardUpdateNode: 'board:updateNode',
   boardActivity: 'board:activity',
+  cardActivity: 'card:activity',
   externalSession: 'external:session',
   announce: 'announce'
 } as const
@@ -220,6 +224,14 @@ export interface ActivityPayload {
   nodeId: string
   doing?: string | null
   topic?: string
+}
+
+/** A Claude card's record as the Inspector reads it: its recent turns' edits, the files it touched, its subagents. */
+export interface CardActivityView {
+  turns: EditTurn[]
+  files: TouchedFile[]
+  subagents: SubagentRun[]
+  rev: number
 }
 
 export interface HookEventPayload {
@@ -469,6 +481,13 @@ export interface OuroborosApi {
     stop(): Promise<AutonomyPublic | null>
     state(): Promise<AutonomyPublic | null>
     onChange(cb: (p: AutonomyPublic) => void): () => void
+  }
+  /** What Claude cards did, read from their hooks (shared/activity.ts): kept in memory while the app runs. */
+  activity: {
+    get(nodeId: string): Promise<CardActivityView | null>
+    /** the summaries of this window's cards (a renderer that reloaded asks once) */
+    all(): Promise<ActivitySummary[]>
+    onChange(cb: (p: ActivitySummary) => void): () => void
   }
   changes: {
     summary(cwd: string): Promise<ChangesSummary>

@@ -4,6 +4,7 @@ import { DEFAULT_HANDOFF_TEMPLATE } from '@shared/handoff'
 import { EFFORT_LEVELS, MCP_PRESETS, normalizeEffort, normalizeEngine, type ClaudeOptions, type McpServerSpec } from '@shared/types'
 import { Icon } from '@/lib/icons'
 import type { RoleEntry } from '@shared/roles'
+import { ActivityPanel } from './ActivityPanel'
 import { ChangesPanel } from './ChangesPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
 import { ReplyView } from './ReplyView'
@@ -213,6 +214,7 @@ export function Inspector() {
 
       {isProcess && (
         <Section title="Work">
+          {isAgent && (d.engine ?? 'claude') === 'claude' && <ActivityPanel key={`act-${nodeId}`} nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />}
           <ChangesPanel key={nodeId} nodeId={nodeId} cwd={d.worktree?.path || d.cwd} />
           <CheckpointsPanel key={`cp-${nodeId}`} cwd={d.worktree?.path || d.cwd} />
           <div className="row">

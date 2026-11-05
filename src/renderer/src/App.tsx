@@ -55,6 +55,7 @@ export default function App() {
       api.routines.onChange((r) => useBoard.getState().setRoutines(r)),
       api.board.onAgentStatus((p) => useBoard.getState().applyStatus(p)),
       api.board.onActivity((p) => useBoard.getState().applyActivity(p)),
+      api.activity.onChange((p) => useBoard.getState().applyCardActivity(p)),
       api.board.onHandoffFired((p) => useBoard.getState().applyHandoffFired(p)),
       api.board.onExternalSession((p) => useBoard.getState().applyExternal(p)),
       api.board.onAnnounce((p) => void speak(p)),

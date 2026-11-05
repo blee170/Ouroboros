@@ -11,6 +11,7 @@ import type { Approval } from '@shared/gate'
 import type { Decision } from '@shared/decisions'
 import type { GrokHandoff } from '@shared/grokbot'
 import type { Routine } from '@shared/routines'
+import type { ActivitySummary } from '@shared/activity'
 
 export type RpanelTab = 'inspector' | 'tasks' | 'today' | 'routines'
 import { normalizeEngine, type AppSettings, type HandoffEdgeData, type NodeData, type NodeKind, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
@@ -94,6 +95,8 @@ interface BoardState {
   grokHandoffs: GrokHandoff[]
   /** the project's routines (saved prompts run with a button or on a schedule), as main pushes them */
   routines: Routine[]
+  /** What each Claude card did, as main last summed it up (running subagents, edits in its last turn, files touched). */
+  activity: Record<string, ActivitySummary>
   /** What the right panel shows. */
   rpanelTab: RpanelTab
   /** The updater's last word, kept here so the status bar sees an update found before a project was open. */
@@ -119,6 +122,7 @@ interface BoardState {
   setDecisions(d: Decision[]): void
   setGrokHandoffs(h: GrokHandoff[]): void
   setRoutines(r: Routine[]): void
+  applyCardActivity(p: ActivitySummary): void
   /** The owner's call on held cards: trust the change as it is, or put the values the app last wrote back. Either way they launch. */
   resolveHeld(ids: string[], revert: boolean): Promise<void>
   /** Show a tab of the right panel (opening the panel when it is closed). */
@@ -205,6 +209,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   decisions: [],
   grokHandoffs: [],
   routines: [],
+  activity: {},
+  applyCardActivity(p) {
+    set({ activity: { ...get().activity, [p.nodeId]: p } })
+  },
   setRoutines(r) {
     set({ routines: r })
   },
@@ -290,7 +298,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (alreadyOpen) return // another window has it and was focused
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
-    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, tasks: [], routines: [], held: held ?? [] })
+    set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, activity: {}, tasks: [], routines: [], held: held ?? [] })
     scheduleSync(get)
     // main loaded the ledger with the board file; a push follows every later change
     void api()
@@ -311,6 +319,11 @@ export const useBoard = create<BoardState>((set, get) => ({
     void api()
       .routines.list()
       .then((r) => set({ routines: r }))
+    // a window that reloaded: main still holds what its cards did
+    void api()
+      .activity.all()
+      .then((list) => set({ activity: Object.fromEntries(list.map((a) => [a.nodeId, a])) }))
+      .catch(() => undefined)
   },
 
   onNodesChange(changes) {

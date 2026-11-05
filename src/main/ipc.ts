@@ -6,7 +6,7 @@ import { open } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
-import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, GrokReplyStatus, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, CardActivityView, ClaudeLaunchOptions, GrokReplyStatus, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { HeldCard } from '@shared/board-trust'
 import { normalizeEffort, normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
@@ -43,6 +43,7 @@ import { RoutineDesk, routinesFile } from './routines'
 import { resolveRoutineCard, routineRefusal, type Routine, type RoutineInput } from '@shared/routines'
 import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
+import { emptyActivity, endRunningSubagents, recordActivity, summarize, type CardActivity } from '@shared/activity'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -339,6 +340,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   inboxes.delete(id)
   for (const d of s.decisions.withdraw(id)) s.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): the card was removed`)
   transcripts.delete(id)
+  activities.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -1982,6 +1984,7 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   const s = ctx.windows.forNode(nodeId)
   if (!s) return
   noteActivity(s, nodeId, event)
+  noteCardActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
   // a card that reports from its CLI is running: a "failed at launch" read from its output was wrong
   if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
@@ -1999,6 +2002,26 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   }
   s.board.applyHook(nodeId, event)
   return reply
+}
+
+/** What each Claude card did (its turns' edits, the files it touched, its subagents), from its hooks; in memory only. */
+const activities = new Map<string, { record: CardActivity; rev: number }>()
+
+function noteCardActivity(s: WindowSession, nodeId: string, event: HookEvent): void {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return
+  let a = activities.get(nodeId)
+  if (!a) activities.set(nodeId, (a = { record: emptyActivity(), rev: 0 }))
+  if (!recordActivity(a.record, event, Date.now())) return
+  sendToRenderer(s, IPC.cardActivity, summarize(nodeId, a.record, ++a.rev))
+}
+
+/** The card's process is gone: nothing of it runs any more. */
+function endCardSubagents(s: WindowSession | undefined, nodeId: string): void {
+  const a = activities.get(nodeId)
+  if (!a || !endRunningSubagents(a.record, Date.now())) return
+  a.rev++
+  if (s) sendToRenderer(s, IPC.cardActivity, summarize(nodeId, a.record, a.rev))
 }
 
 /** Claude cards' transcripts and how far the topic reader got. */
@@ -2365,6 +2388,7 @@ export function registerIpc(ctx: MainContext): void {
     clearTimeout(exitChecks.get(nodeId))
     exitChecks.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
+    endCardSubagents(s, nodeId)
     const ended = s?.board.nodes.get(nodeId)
     if (s && ended?.data.doing) {
       ended.data.doing = undefined
@@ -2903,6 +2927,15 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
+  // only the cards of the asking window: a card's edits are its project's
+  ipcMain.handle(IPC.activityGet, (e, nodeId: unknown): CardActivityView | null => {
+    const a = typeof nodeId === 'string' && sessionOf(e)?.board.nodes.has(nodeId) ? activities.get(nodeId) : undefined
+    return a ? { turns: a.record.turns, files: a.record.files, subagents: a.record.subagents, rev: a.rev } : null
+  })
+  ipcMain.handle(IPC.activityAll, (e) => {
+    const s = sessionOf(e)
+    return s ? [...activities].filter(([id]) => s.board.nodes.has(id)).map(([id, a]) => summarize(id, a.record, a.rev)) : []
+  })
   ipcMain.handle(IPC.usageGet, () => ctx.usage.snapshot())
   ipcMain.handle(IPC.usageRefresh, () => ctx.usage.snapshot({ refresh: true }))
   // a card's status line brought new plan numbers: every window shows them (the account is one)

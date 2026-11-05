@@ -3,6 +3,7 @@ import { setDragShield } from '@/lib/dragShield'
 import { Handle, NodeResizer, Position, useStore, type NodeProps } from '@xyflow/react'
 import { STATUS_LABEL } from '@shared/status'
 import { shownDetail } from '@shared/doing'
+import { elapsedText } from '@shared/activity'
 import type { BoardNode } from '@/store/board'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
@@ -47,6 +48,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
   const usage = useBoard((s) => s.usage[id])
+  // subagents the card runs right now (from its hooks)
+  const subagents = useBoard((s) => s.activity[id]?.running)
   // board mail waiting for this card (sent to it, not acknowledged yet)
   const unreadMail = useBoard((s) => s.mail.filter((m) => m.to === id && !m.ackedAt).length)
   const select = useBoard((s) => s.select)
@@ -122,6 +125,15 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
           <span className="mail-badge" title={`${unreadMail} board message(s) for this card not acknowledged yet (Inspector → Mail)`}>
             ✉ {unreadMail}
           </span>
+        )}
+        {subagents && subagents.length > 0 && (
+          <button
+            className="sub-badge nodrag"
+            title={[`${subagents.length} subagent${subagents.length === 1 ? '' : 's'} running — click for the list in the Inspector`, ...subagents.map((r) => `${r.type}${r.description ? `: ${r.description}` : ''} (${elapsedText(Date.now() - r.startedAt)})`)].join('\n')}
+            onClick={() => select(id, null)}
+          >
+            <span className="sub-dot" aria-hidden="true" /> {subagents.length}
+          </button>
         )}
         {usage && (
           <span

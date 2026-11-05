@@ -75,6 +75,11 @@ const api: OuroborosApi = {
     state: () => ipcRenderer.invoke(IPC.autonomyState),
     onChange: (cb) => on(IPC.autonomyChanged, cb)
   },
+  activity: {
+    get: (nodeId) => ipcRenderer.invoke(IPC.activityGet, nodeId),
+    all: () => ipcRenderer.invoke(IPC.activityAll),
+    onChange: (cb) => on(IPC.cardActivity, cb)
+  },
   changes: {
     summary: (cwd) => ipcRenderer.invoke(IPC.changesSummary, cwd),
     diff: (cwd, file) => ipcRenderer.invoke(IPC.changesDiff, cwd, file),

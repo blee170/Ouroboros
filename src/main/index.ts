@@ -3,6 +3,8 @@ import { whisper } from './stt'
 import { initDiagnostics, log } from './diagnostics'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { remoteFileUrl } from '@shared/visuals'
 import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer, PREFERRED_HOOK_PORT } from './hook-server'
@@ -219,6 +221,15 @@ async function main(): Promise<void> {
   app.on('session-created', guardMedia)
   guardMedia(session.defaultSession)
   guardMedia(session.fromPartition('persist:ouroboros-browser'))
+  // Nothing the app's own window draws (a reply's markdown, a diagram in the chat view) may fetch from another
+  // machine over file: (a UNC share): Windows would offer the owner's sign-in to it, and the page's CSP does not
+  // stop it. Browser cards have their own session and are not touched.
+  const ownHost = pathToFileURL(__dirname).host
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    const cancel = remoteFileUrl(details.url, ownHost)
+    if (cancel) log(`blocked a file request to another machine: ${new URL(details.url).host}`)
+    callback({ cancel })
+  })
   registerVoiceHotkey(ctx)
   const phoneView = store.getSettings().phone
   if (phoneView?.enabled) {

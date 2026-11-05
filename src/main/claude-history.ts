@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { ClaudeProjectHistory, ClaudeSessionInfo, FolderInfo, SessionUsage } from '@shared/protocol'
@@ -15,6 +15,23 @@ export function transcriptPath(p: unknown, configDir = claudeConfigDir()): strin
   const full = resolve(p)
   const rel = relative(join(configDir, 'projects'), full)
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? full : undefined
+}
+
+/**
+ * The same check on the file a path really is (links and junctions followed on both sides): what the chat view
+ * shows comes from a transcript inside the config dir, not from wherever a link in there points. Undefined when
+ * the file does not exist yet.
+ */
+export function realTranscriptPath(p: unknown, configDir = claudeConfigDir()): string | undefined {
+  const named = transcriptPath(p, configDir)
+  if (!named) return undefined
+  try {
+    const real = realpathSync(named)
+    const rel = relative(realpathSync(join(configDir, 'projects')), real)
+    return rel && !rel.startsWith('..') && !isAbsolute(rel) && real.endsWith('.jsonl') ? real : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function textOf(content: unknown): string | undefined {
@@ -214,14 +231,14 @@ export function parseUsageTail(text: string): SessionUsage | null {
 
 const usageFileCache = new Map<string, string>()
 
-/** Find a session's transcript (any project folder) and report the context usage of its last turn. */
-export function readSessionUsage(sessionId: string, configDir = claudeConfigDir()): SessionUsage | null {
-  if (!/^[\w-]+$/.test(sessionId)) return null
+/** A session's transcript, in whichever project folder holds it; undefined when there is none. */
+export function sessionTranscript(sessionId: string, configDir = claudeConfigDir()): string | undefined {
+  if (!/^[\w-]+$/.test(sessionId)) return undefined
   let file = usageFileCache.get(sessionId)
   if (!file || !existsSync(file)) {
     file = undefined
     const projectsDir = join(configDir, 'projects')
-    if (!existsSync(projectsDir)) return null
+    if (!existsSync(projectsDir)) return undefined
     for (const dirName of readdirSync(projectsDir)) {
       const candidate = join(projectsDir, dirName, `${sessionId}.jsonl`)
       if (existsSync(candidate)) {
@@ -229,9 +246,16 @@ export function readSessionUsage(sessionId: string, configDir = claudeConfigDir(
         break
       }
     }
-    if (!file) return null
+    if (!file) return undefined
     usageFileCache.set(sessionId, file)
   }
+  return file
+}
+
+/** Find a session's transcript (any project folder) and report the context usage of its last turn. */
+export function readSessionUsage(sessionId: string, configDir = claudeConfigDir()): SessionUsage | null {
+  const file = sessionTranscript(sessionId, configDir)
+  if (!file) return null
   try {
     return parseUsageTail(readTail(file))
   } catch {

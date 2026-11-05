@@ -10,6 +10,7 @@ import { ReplyView } from './ReplyView'
 import { MailPanel } from './MailPanel'
 import { MODEL_PRESETS, modelChoice } from '@shared/models'
 import type { AgentEngine } from '@shared/types'
+import { chatCapable, normalizeCardView } from '@shared/chat'
 
 /** A titled group of fields; the same grammar as the Settings dialog. */
 /** Model: the engine's presets, its CLI default, or a name typed in (what the CLI's own /model lists). */
@@ -66,6 +67,7 @@ export function Inspector() {
   const restartNode = useBoard((s) => s.restartNode)
   const projectRoot = useBoard((s) => s.projectRoot)
   const retireMinutes = useBoard((s) => s.settings.retireMinutes ?? 5)
+  const defaultCardView = useBoard((s) => normalizeCardView(s.settings.defaultCardView) ?? 'terminal')
   // specialist roles for the Launch section; read once per project
   const [roles, setRoles] = useState<RoleEntry[] | null>(null)
   const isAgentNode = node?.data.kind === 'claude' || node?.data.kind === 'conductor'
@@ -329,6 +331,19 @@ export function Inspector() {
               </select>
             </div>
           </label>
+          {chatCapable(d) && (
+            <label className="field">
+              <span>View</span>
+              <div className="ctl">
+                <select value={normalizeCardView(d.view) ?? ''} onChange={(e) => updateNodeData(nodeId, { view: normalizeCardView(e.target.value) })}>
+                  <option value="">Default ({defaultCardView === 'chat' ? 'chat' : 'terminal'}, from Settings)</option>
+                  <option value="chat">Chat</option>
+                  <option value="terminal">Terminal</option>
+                </select>
+              </div>
+              <div className="hint">The same session either way: the chat view shows the conversation with replies as markdown and diagrams, the terminal shows Claude Code itself. The button in the card's header switches at any time. A card started in chat view is told it may answer with diagrams; one switched later learns that at its next Restart.</div>
+            </label>
+          )}
           <label className="field">
             <span>Specialist</span>
             <div className="ctl">

@@ -12,6 +12,8 @@ import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
 import { useCardChanges } from '@/lib/useCardInfo'
 import { Icon } from '@/lib/icons'
+import { cardView, chatCapable } from '@shared/chat'
+import { ChatView } from './ChatView'
 
 function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const ref = useRef<HTMLDivElement>(null)
@@ -21,6 +23,25 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const removeNode = useBoard((s) => s.removeNode)
   const updateNodeData = useBoard((s) => s.updateNodeData)
   const [editing, setEditing] = useState(false)
+  // Chat view: the same session shown as a conversation. The terminal stays mounted underneath at its own size,
+  // so the PTY, the hooks and everything that reads the terminal work as before.
+  const view = cardView(data, useBoard((s) => s.settings.defaultCardView))
+  // the terminal shown for a moment to answer a question the card asks; the chat returns when the card carries on
+  const [peek, setPeek] = useState(false)
+  useEffect(() => {
+    if (data.status !== 'needs-you') setPeek(false)
+  }, [data.status])
+  const chat = view === 'chat' && !peek
+  // once shown the chat stays mounted (hidden under the terminal view): a prompt sent from it that the conversation
+  // has not shown yet must still be there, marked, when the owner comes back
+  const [chatMounted, setChatMounted] = useState(false)
+  useEffect(() => {
+    if (view === 'chat') setChatMounted(true)
+  }, [view])
+  // the terminal under the chat must not keep the keyboard: keys typed "into the chat" would go to Claude Code unseen
+  useEffect(() => {
+    if (chat) handle?.term.blur()
+  }, [chat, handle])
   const launchedSeq = useRef<number>(-1)
   // Redraw sharp at the new zoom once the gesture settles (until then the canvas just scales the old frame).
   useEffect(() => {
@@ -72,7 +93,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     if (kind === 'terminal' || kind === 'command') {
       void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined }).then(report)
     } else if (kind === 'claude' || kind === 'conductor') {
-      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title }).then(report)
+      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title, chatView: view === 'chat' }).then(report)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, seq, id, kind])
@@ -142,6 +163,21 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span className="add">+{changes.added}</span> <span className="del">−{changes.deleted}</span>
           </button>
         )}
+        {chatCapable(data) && (
+          <button
+            className={`icon-btn nodrag${chat ? ' active' : ''}`}
+            title={chat ? 'Chat view: click for the terminal (the same session)' : 'Terminal: click for the chat view (the same session, replies as markdown with diagrams)'}
+            aria-label={chat ? 'Show the terminal' : 'Show the chat view'}
+            aria-pressed={chat}
+            onClick={() => {
+              setPeek(false)
+              updateNodeData(id, { view: chat ? 'terminal' : 'chat' })
+              if (chat) setTimeout(() => handle?.term.focus(), 0)
+            }}
+          >
+            <Icon name={chat ? 'terminal' : 'chat'} size={14} />
+          </button>
+        )}
         <button className="icon-btn nodrag" title="Restart" aria-label="Restart" onClick={() => void restartNode(id)}>
           <Icon name="refresh" size={14} />
         </button>
@@ -152,6 +188,18 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
       <div className="scale-wrap">
         {/* sized and scaled by useTerminal (render scale), not by React: a re-render must not undo it */}
         <div className="terminal-host nodrag nowheel" ref={ref} onMouseDown={() => handle?.term.focus()} />
+        {(view === 'chat' || chatMounted) && chatCapable(data) && (
+          <ChatView
+            id={id}
+            data={data}
+            status={status}
+            hidden={!chat}
+            onShowTerminal={() => {
+              setPeek(true)
+              setTimeout(() => handle?.term.focus(), 0)
+            }}
+          />
+        )}
         {far && (
           <div className="card-summary">
             <div className="summary-title">{data.title}</div>
@@ -166,7 +214,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             {summary && <div className="summary-text">{summary}</div>}
           </div>
         )}
-        {!far && scrolledUp && (
+        {!far && !chat && scrolledUp && (
           <button
             className="jump-bottom nodrag"
             title="Scroll to the latest output"

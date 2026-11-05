@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   ListChecks,
   Maximize2,
+  MessageSquare,
   Moon,
   PanelLeft,
   PanelRight,
@@ -35,9 +36,11 @@ import {
   RotateCcw,
   Save,
   Search,
+  SendHorizontal,
   Settings,
   Sparkles,
   Square,
+  SquareTerminal,
   Star,
   Undo2,
   Volume2,
@@ -92,6 +95,9 @@ export type IconName =
   | 'play'
   | 'usage'
   | 'orbit'
+  | 'chat'
+  | 'terminal'
+  | 'send'
 
 const ICONS: Record<IconName, LucideIcon> = {
   usage: Activity,
@@ -135,7 +141,10 @@ const ICONS: Record<IconName, LucideIcon> = {
   moon: Moon,
   stop: Square,
   play: Play,
-  orbit: Earth
+  orbit: Earth,
+  chat: MessageSquare,
+  terminal: SquareTerminal,
+  send: SendHorizontal
 }
 
 export function Icon({ name, size = 16, className, ...rest }: { name: IconName; size?: number } & Omit<LucideProps, 'size' | 'ref'>) {

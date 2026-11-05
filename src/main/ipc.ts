@@ -83,7 +83,9 @@ function liveCards(board: Board): Set<string> {
   return new Set(board.snapshot().filter((a) => a.status === 'starting' || (a.ptyAlive && a.status !== 'ended')).map((a) => a.id))
 }
 import { createWorktree, removeWorktree } from './worktree'
-import { listClaudeSessions, listSubfolders, readSessionUsage, transcriptPath } from './claude-history'
+import { listClaudeSessions, listSubfolders, readSessionUsage, realTranscriptPath, sessionTranscript, transcriptPath } from './claude-history'
+import { readChat, type ChatCursor } from './chat-transcript'
+import { CHAT_VIEW_PROMPT, chatCapable, type ChatRead } from '@shared/chat'
 import { getChanges, getDiff, revertFile } from './git-changes'
 import { createCheckpoint, deleteCheckpoint, listCheckpoints, restoreCheckpoint } from './checkpoints'
 import { normalizePath, type SessionRegistry } from './windows'
@@ -2432,7 +2434,12 @@ export function registerIpc(ctx: MainContext): void {
         kind: opts.kind,
         engine,
         // during an autonomous run every Claude launch is auto mode (plan stays plan), the owner's own cards included
-        claude: { ...opts.claude, permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'] },
+        claude: {
+          ...opts.claude,
+          permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'],
+          // a card shown as a chat is told what the chat can draw (fixed text, Claude cards only)
+          ...(opts.chatView === true && chatCapable({ kind: opts.kind, engine, claude: opts.claude }) ? { appendSystemPrompt: [opts.claude.appendSystemPrompt, CHAT_VIEW_PROMPT].filter((t) => t && t.trim()).join('\n\n') } : {})
+        },
         shell,
         baseUrl: hookServer.baseUrl,
         token: hookServer.hookToken(opts.nodeId),
@@ -2903,6 +2910,18 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
   ipcMain.handle(IPC.sessionUsage, (_e, sessionId: string) => readSessionUsage(sessionId))
+  // Chat view: the conversation of one of this window's Claude cards, from the transcript its hooks named (or, before
+  // its first hook, the one of the session it resumes). Read only; the path never comes from the renderer.
+  ipcMain.handle(IPC.chatRead, async (e, nodeId: unknown, cursor: unknown): Promise<ChatRead> => {
+    const s = sessionOf(e)
+    const n = s && typeof nodeId === 'string' ? s.board.nodes.get(nodeId) : undefined
+    if (!n) return { ok: false, error: 'No such card on this board.', events: [] }
+    if (!chatCapable(n.data)) return { ok: false, error: 'The chat view reads Claude Code conversations on this machine; this card has none.', events: [] }
+    const path = realTranscriptPath(transcripts.get(n.id)?.path ?? (typeof n.data.sessionId === 'string' ? sessionTranscript(n.data.sessionId) : undefined))
+    if (!path) return { ok: true, events: [] } // nothing said yet: the transcript appears with the first turn
+    const c = (cursor && typeof cursor === 'object' ? cursor : {}) as ChatCursor
+    return readChat(path, { key: typeof c.key === 'string' ? c.key : undefined, offset: typeof c.offset === 'number' ? c.offset : undefined })
+  })
   ipcMain.handle(IPC.usageGet, () => ctx.usage.snapshot())
   ipcMain.handle(IPC.usageRefresh, () => ctx.usage.snapshot({ refresh: true }))
   // a card's status line brought new plan numbers: every window shows them (the account is one)

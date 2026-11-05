@@ -119,6 +119,8 @@ export interface NodeData {
   keep?: boolean
   /** When the card was made; a card whose process has not started yet counts as starting, not exited, for a minute. */
   createdAt?: number
+  /** Claude cards: shown as a chat or as the terminal (shared/chat.ts); unset = the Settings default. The session is the same either way. */
+  view?: 'chat' | 'terminal'
   // --- runtime-only fields (not persisted) ---
   status?: AgentStatus
   statusDetail?: string
@@ -241,6 +243,8 @@ export interface AppSettings {
   claudeLinksExternal?: boolean
   /** Engine new agent/conductor cards use when none is chosen (claude by default). */
   defaultEngine?: AgentEngine
+  /** How Claude cards are shown unless a card says otherwise: the terminal (default) or a chat view of the same session. */
+  defaultCardView?: 'chat' | 'terminal'
   /** Pass an ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the environment into Claude cards even when `claude` is signed in (default false: a signed-in owner's cards use the sign-in). */
   keepEnvApiKey?: boolean
   /** Pass deploy / database / cloud tokens (GITHUB_TOKEN, SUPABASE_ACCESS_TOKEN, …) and the other engines' keys from the environment into agent cards (default false: dropped). */

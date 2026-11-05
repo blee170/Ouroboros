@@ -212,7 +212,7 @@ export function signedInFromFiles(engine: AgentEngine, home: string, env: NodeJS
  * PATH as the app saw it at launch plus the folders the installers use, so a CLI installed while
  * Ouroboros is open is found on re-check without a restart.
  */
-function probePath(): string {
+export function probePath(): string {
   const home = homedir()
   const extra =
     process.platform === 'win32'

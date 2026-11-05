@@ -168,3 +168,30 @@ describe('hunt fixes (model)', () => {
     expect(checkRoutine({ ...base, cardId: 'x'.repeat(201) }).ok).toBe(false)
   })
 })
+
+describe('weekly', () => {
+  const monday: Routine = { ...base, schedule: 'weekly', weekday: 1 }
+  it('runs on its day of the week: this week when still ahead, else next week', () => {
+    expect(nextRunAt(monday, at(WED, 8))).toBe(at(9, 9)) // Wed 4th → Mon 9th
+    expect(nextRunAt(monday, at(9, 8))).toBe(at(9, 9)) // Monday before the time
+    expect(nextRunAt(monday, at(9, 9))).toBe(at(16, 9)) // at the time: next week
+    expect(nextRunAt({ ...monday, weekday: 3 }, at(WED, 8))).toBe(at(WED, 9))
+    expect(nextRunAt({ ...monday, weekday: undefined }, at(WED, 8))).toBeUndefined()
+  })
+  it('needs a time and a day, and says when it runs', () => {
+    const ok = checkRoutine({ name: 'Watch', prompt: 'p', cardId: 'c', schedule: 'weekly', at: '9:00', weekday: 1 })
+    expect(ok).toMatchObject({ ok: true, routine: { schedule: 'weekly', at: '09:00', weekday: 1 } })
+    expect(checkRoutine({ name: 'Watch', prompt: 'p', cardId: 'c', schedule: 'weekly', at: '09:00' })).toEqual({ ok: false, error: 'pick the day of the week' })
+    expect(checkRoutine({ name: 'Watch', prompt: 'p', cardId: 'c', schedule: 'weekly', at: '09:00', weekday: 7 }).ok).toBe(false)
+    expect(checkRoutine({ name: 'Watch', prompt: 'p', cardId: 'c', schedule: 'weekly', weekday: 1 }).ok).toBe(false)
+    // a day on a routine that is not weekly is dropped
+    expect((checkRoutine({ name: 'Watch', prompt: 'p', cardId: 'c', schedule: 'daily', at: '09:00', weekday: 1 }) as { routine: Routine }).routine.weekday).toBeUndefined()
+    expect(scheduleText(monday)).toBe('every Monday at 09:00')
+    expect(sanitizeRoutines({ routines: [{ ...monday, nextAt: 5 }] })[0]).toMatchObject({ schedule: 'weekly', weekday: 1, nextAt: 5 })
+  })
+  it('fires within the grace on its day and waits a week', () => {
+    const t = tickRoutines([{ ...monday, nextAt: at(9, 9) }], at(9, 9, 1))
+    expect(t.fire).toEqual([monday.id])
+    expect(t.routines[0].nextAt).toBe(at(16, 9))
+  })
+})

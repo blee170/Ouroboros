@@ -18,7 +18,7 @@
     "dist:win": "npm run build && electron-builder --win --x64",
     "dist:linux": "npm run build && electron-builder --linux --x64",
     "dist:win:portable": "npm run build && electron-builder --win portable --x64",
-    "build:mcp": "vite build -c vite.mcp.config.mts && vite build -c vite.mcp.config.mts --mode agent-hook"
+    "build:mcp": "vite build -c vite.mcp.config.mts && vite build -c vite.mcp.config.mts --mode agent-hook && vite build -c vite.mcp.config.mts --mode cli-compat-run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

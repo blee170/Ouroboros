@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { EngineInfo } from '@shared/protocol'
+import type { CompatView } from '@shared/cli-watch'
 import { normalizeEngine, type AgentEngine } from '@shared/types'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
@@ -19,6 +20,39 @@ const FALLBACK: EngineInfo[] = (
 ).map(([engine, label, loginCommand]) => ({ engine, label, installed: true, installCommand: '', loginCommand, signupUrl: '', needsNode: engine !== 'claude', nodeAvailable: true }))
 
 /**
+ * Whether this version of the CLI still has what Ouroboros relies on (flags, hook names, prompt text): checked by
+ * main whenever the installed version changes (shared/cli-contract.ts).
+ */
+function CompatLine({ info, compat }: { info: EngineInfo; compat: CompatView | null }) {
+  const c = compat?.engines[info.engine]
+  if (!c || (info.version && c.version !== info.version)) return compat?.checking ? <div className="engine-compat muted">checking that Ouroboros works with this version…</div> : null
+  const hidden = c.hidden.length > 0 ? ` · ${c.hidden.length} flag${c.hidden.length === 1 ? '' : 's'} no longer in its --help` : ''
+  if (c.missing.length === 0) {
+    return (
+      <div className="engine-compat good" title={c.hidden.length > 0 ? `Still works, but may go without notice:\n${c.hidden.map((h) => `${h.text} (${h.why})`).join('\n')}` : `${c.total} flags and strings checked`}>
+        <Icon name="check" size={12} /> has everything Ouroboros relies on{hidden}
+      </div>
+    )
+  }
+  return (
+    <details className="engine-compat warn">
+      <summary>
+        {c.missing.length} thing{c.missing.length === 1 ? '' : 's'} Ouroboros relies on {c.missing.length === 1 ? 'is' : 'are'} missing in v{c.version}
+        {c.previousVersion ? ` (v${c.previousVersion} was the last one checked before)` : ''}: cards on it may misbehave
+      </summary>
+      <ul>
+        {c.missing.map((m) => (
+          <li key={`${m.kind}-${m.text}`}>
+            <code>{m.text}</code> <span className="muted">{m.why}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="muted small">Update Ouroboros if a newer release is out. If cards still fail, go back to the CLI version that worked.</div>
+    </details>
+  )
+}
+
+/**
  * "Which AI do you use?" setup: shows whether claude / codex / gemini / grok are installed and signed in,
  * the install and sign-in commands (copyable), and lets the user pick the default engine. A ChatGPT
  * or Gemini subscriber never needs Claude.
@@ -31,6 +65,12 @@ export function EnginesPanel({ compact = false }: { compact?: boolean }) {
   const [engines, setEngines] = useState<EngineInfo[] | null>(null)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
+  const [compat, setCompat] = useState<CompatView | null>(null)
+  useEffect(() => {
+    const off = window.ouroboros.engines.onCompat(setCompat)
+    void window.ouroboros.engines.compat().then(setCompat).catch(() => undefined)
+    return off
+  }, [])
   const refresh = (): void => {
     setError('')
     void window.ouroboros.engines.detect()
@@ -76,6 +116,7 @@ export function EnginesPanel({ compact = false }: { compact?: boolean }) {
               <span className={`engine-state ${e.installed ? (e.signedIn === false ? 'warn' : 'good') : 'bad'}`}>
                 {e.installed ? `installed${e.version ? ` v${e.version}` : ''}${e.signedIn === true ? ' · signed in' : e.signedIn === false ? ' · not signed in' : ''}` : 'not installed'}
               </span>
+              {e.installed && <CompatLine info={e} compat={compat} />}
               {!e.installed && (
                 <div className="engine-help">
                   {e.needsNode && !e.nodeAvailable && (
@@ -111,6 +152,14 @@ export function EnginesPanel({ compact = false }: { compact?: boolean }) {
             </li>
           ))}
         </ul>
+      )}
+      {engines?.some((e) => e.installed) && (
+        <div className="row between engine-compat-foot">
+          <span className="muted small">{compat?.error ? `Compatibility could not be checked: ${compat.error}` : "Each CLI is checked against what Ouroboros relies on whenever its version changes."}</span>
+          <button className="btn small" disabled={!compat || compat.checking} onClick={() => void window.ouroboros.engines.compat(true).then(setCompat).catch(() => undefined)}>
+            {compat?.checking ? 'Checking…' : 'Check now'}
+          </button>
+        </div>
       )}
       <div className="muted small">
         The selected engine is used for new agent and Conductor cards; any card can switch engine in the Inspector. All engines get the same status, lines, reports and board tools.

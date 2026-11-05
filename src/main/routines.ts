@@ -101,6 +101,13 @@ export class RoutineDesk extends EventEmitter {
     return res.ok ? { ok: true } : { ok: false, error: res.text }
   }
 
+  /** What became of a run that finishes later than its fire (a routine that first collects what it sends). */
+  note(id: string, ok: boolean, text: string, now = Date.now()): void {
+    if (!this.routines.some((r) => r.id === id)) return
+    this.log(`routines: "${this.routines.find((r) => r.id === id)?.name}" ${ok ? text : `not sent (${text})`}`)
+    this.set(this.routines.map((r) => (r.id === id ? { ...r, lastRun: { at: now, ok, text: text.slice(0, 200) } } : r)))
+  }
+
   /** One timer tick: due routines run, missed ones are recorded; saved only when something moved. */
   tick(now = Date.now(), graceMs?: number): void {
     const t = tickRoutines(this.routines, now, graceMs)

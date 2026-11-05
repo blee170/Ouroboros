@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { diffPrivileges, privilegeView, revertPrivileges, trustedIncoming } from '../src/shared/board-trust'
+import { diffPrivileges, isTrustedLine, privilegeView, revertPrivileges, trustedIncoming } from '../src/shared/board-trust'
 import { BoardTrust } from '../src/main/board-trust'
 import { onBoardWritten, readWorkspace, saveLedger, saveWorkspace, WORKSPACE_FILE } from '../src/main/workspace-store'
 import type { NodeData, Workspace } from '../src/shared/types'
@@ -32,6 +32,40 @@ describe('diffPrivileges', () => {
     const held = diffPrivileges(before, [node('w', {}), node('chief', { kind: 'conductor' })], edges)
     expect(held.map((h) => [h.nodeId, h.changes[0].field])).toEqual([['chief', 'handoffs']])
   })
+  it('holds the target of a line whose condition was added, removed or changed outside the app', () => {
+    const cards = [node('tester', {}), node('ops', {})]
+    const line = (condition?: unknown) => [{ source: 'tester', target: 'ops', data: { mode: 'auto', template: 'deploy', condition } }]
+    const trusted = (condition?: string) => Object.fromEntries(cards.map((n) => [n.id, privilegeView(n.data, n.id, line(condition))]))
+    const heldFor = (was: string | undefined, is: unknown) => diffPrivileges(trusted(was), cards, line(is) as never).map((h) => [h.nodeId, h.changes[0].field])
+    expect(heldFor('PASS', undefined)).toEqual([['ops', 'handoffs']]) // the gate is gone: the line now fires on every reply
+    expect(heldFor('PASS', '/PASS|FAIL/')).toEqual([['ops', 'handoffs']])
+    expect(heldFor(undefined, '/(a+)+$/')).toEqual([['ops', 'handoffs']])
+    // not text: a change, whatever it would read as (such a value makes the line throw when it is used)
+    // an object whose toString is not a function throws when it is turned into text: it must be held, not thrown on
+    for (const [was, forged] of [['PASS', 5], ['PASS', ['PASS']], [undefined, []], ['5', 5], ['["PASS"]', ['PASS']], [undefined, false], ['PASS', { toString: 1 }], [undefined, { toString: 1 }]] as const) {
+      expect(heldFor(was, forged), JSON.stringify(forged)).toEqual([['ops', 'handoffs']])
+    }
+    // the condition is trimmed before it is used, so spaces around it change nothing
+    expect(heldFor('PASS', '  PASS ')).toEqual([])
+    expect(heldFor(undefined, '   ')).toEqual([])
+    expect(heldFor('PASS', 'PASS')).toEqual([])
+  })
+  it('compares a view saved before lines carried their condition without it', () => {
+    const cards = [node('s', {}), node('s2', {}), node('t', {})]
+    const edges = (template: string) => [
+      { source: 's2', target: 't', data: { mode: 'auto', template: 'x', condition: 'FAIL' } },
+      { source: 's', target: 't', data: { mode: 'auto', template: 'xy' } },
+      { source: 's', target: 't', data: { mode: 'auto', template, condition: '/PASS/' } }
+    ]
+    // what the record holds for a board saved by an older version: the lines as that version listed and sorted them
+    const oldLines = edges('x')
+      .map((e) => ({ from: e.source, mode: e.data.mode, template: e.data.template }))
+      .sort((a, b) => (a.from + a.mode + a.template).localeCompare(b.from + b.mode + b.template))
+    const legacy = { ...views(...cards), t: { ...privilegeView(cards[2].data, 't', []), handoffs: JSON.stringify(oldLines) } }
+    expect(diffPrivileges(legacy, cards, edges('x'))).toEqual([])
+    expect(diffPrivileges(legacy, cards, edges('y')).map((h) => h.nodeId)).toEqual(['t'])
+    expect(diffPrivileges(legacy, cards, edges('x').slice(1)).map((h) => h.nodeId)).toEqual(['t'])
+  })
   it('treats empty values as unset and survives a card with no data', () => {
     expect(diffPrivileges(views(node('a', {})), [node('a', { claude: { extraArgs: [], mcpServers: {}, boardTools: false } })])).toEqual([])
     expect(() => diffPrivileges({}, [{ id: 'z', data: null }])).not.toThrow()
@@ -49,8 +83,24 @@ describe('revertPrivileges', () => {
   })
   it('lists the trusted incoming lines', () => {
     const v = privilegeView(node('t', {}).data, 't', [{ source: 's', target: 't', data: { mode: 'manual', template: 'x' } }])
-    expect(trustedIncoming(v)).toEqual([{ from: 's', mode: 'manual', template: 'x' }])
+    expect(trustedIncoming(v)).toEqual([{ from: 's', mode: 'manual', template: 'x', condition: '' }])
     expect(trustedIncoming({})).toEqual([])
+  })
+  it('Revert keeps a line only when its condition is the trusted one', () => {
+    const edge = (condition?: string) => ({ source: 's', target: 't', data: { mode: 'auto', template: 'x', condition } })
+    const v = privilegeView(node('t', {}).data, 't', [edge('PASS')])
+    expect(isTrustedLine(v, edge('PASS'))).toBe(true)
+    expect(isTrustedLine(v, edge(' PASS '))).toBe(true)
+    expect(isTrustedLine(v, edge())).toBe(false)
+    expect(isTrustedLine(v, edge('/./'))).toBe(false)
+    expect(isTrustedLine(v, edge(['PASS'] as never))).toBe(false)
+    expect(isTrustedLine(v, edge({ toString: 1 } as never))).toBe(false) // Revert must not throw half way
+    expect(isTrustedLine(v, { ...edge('PASS'), source: 'other' })).toBe(false)
+    // a view saved before lines carried their condition cannot tell: the line stays
+    const legacy = { handoffs: JSON.stringify([{ from: 's', mode: 'auto', template: 'x' }]) }
+    expect(isTrustedLine(legacy, edge('PASS'))).toBe(true)
+    expect(isTrustedLine(legacy, { ...edge('PASS'), data: { mode: 'auto', template: 'y' } })).toBe(false)
+    expect(isTrustedLine({}, edge())).toBe(false)
   })
 })
 
@@ -111,6 +161,30 @@ describe('BoardTrust with the board file', () => {
     })
     saveLedger(dir, { tasks: [], nextTaskId: 2 }) // a card claims a task: the ledger re-reads the forged file
     expect(open(true, new BoardTrust(recFile()))).toEqual(['a'])
+  })
+
+  it('holds the target of a line whose condition was dropped in the file, through a ledger write and a fresh process', () => {
+    const gated = { id: 'e1', source: 'a', target: 'b', data: { mode: 'auto' as const, template: 'deploy', condition: '/\\bPASS\\b/' } }
+    saveWorkspace({ ...ws([node('a', {}), node('b', {})]), edges: [gated] })
+    expect(open()).toEqual([])
+    saveLedger(dir, { tasks: [], nextTaskId: 2 })
+    expect(open(true, new BoardTrust(recFile()))).toEqual([])
+    forge((w) => {
+      delete w.edges[0].data.condition
+    })
+    saveLedger(dir, { tasks: [], nextTaskId: 3 })
+    expect(open(true, new BoardTrust(recFile()))).toEqual(['b'])
+  })
+
+  it('holds only the line target when a forged condition is not text, and an app save of that file still records', () => {
+    const gated = { id: 'e1', source: 'a', target: 'b', data: { mode: 'auto' as const, template: 'deploy', condition: 'PASS' } }
+    saveWorkspace({ ...ws([node('a', {}), node('b', {})]), edges: [gated] })
+    forge((w) => {
+      ;(w.edges[0].data as Record<string, unknown>).condition = { toString: 1 }
+    })
+    expect(open()).toEqual(['b']) // compared, not the hold-everything fallback of a check that threw
+    expect(() => saveWorkspace(readWorkspace(dir)!.workspace)).not.toThrow()
+    expect(open(true, new BoardTrust(recFile()))).toEqual(['b'])
   })
 
   it('a ledger write of an untouched board keeps it trusted', () => {

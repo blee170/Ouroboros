@@ -33,6 +33,7 @@ describe('listSkillsIn', () => {
     const list = listSkillsIn({ configDir, cwd })
     const by = Object.fromEntries(list.map((s) => [s.name, s]))
     expect(by['help']).toMatchObject({ source: 'builtin' })
+    expect(by['code-review']).toMatchObject({ source: 'builtin' }) // Claude Code's bundled review skill has no file on disk
     expect(by['ship']).toEqual({ name: 'ship', description: 'Ship it', source: 'user' })
     expect(by['aside-browser']).toEqual({ name: 'aside-browser', description: 'Read when you need a browser.', source: 'user' })
     expect(by['noname']).toEqual({ name: 'noname', description: undefined, source: 'user' })
@@ -40,6 +41,15 @@ describe('listSkillsIn', () => {
     expect(by['ecc:code-review']).toEqual({ name: 'ecc:code-review', description: 'Review the diff', source: 'plugin' })
     expect(by['ecc:checkpoint']).toMatchObject({ source: 'plugin' })
     expect(list.map((s) => s.name)).toEqual([...list.map((s) => s.name)].sort((a, b) => a.localeCompare(b)))
+  })
+
+  it('a command on disk with a built-in name is listed as what it is, not as the built-in', () => {
+    const configDir = tmp()
+    const cwd = tmp()
+    file(join(cwd, '.claude', 'commands', 'code-review.md'), '---\ndescription: "This repo\'s own review"\n---\nbody')
+    const list = listSkillsIn({ configDir, cwd })
+    expect(list.filter((s) => s.name === 'code-review')).toEqual([{ name: 'code-review', description: "This repo's own review", source: 'project' }])
+    expect(list.find((s) => s.name === 'help')).toMatchObject({ source: 'builtin' })
   })
 
   it('copes with an empty config dir and no cwd', () => {

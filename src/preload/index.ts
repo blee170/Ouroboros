@@ -89,6 +89,9 @@ const api: OuroborosApi = {
   session: {
     usage: (sessionId) => ipcRenderer.invoke(IPC.sessionUsage, sessionId)
   },
+  chat: {
+    read: (nodeId, cursor) => ipcRenderer.invoke(IPC.chatRead, nodeId, cursor)
+  },
   usage: {
     get: () => ipcRenderer.invoke(IPC.usageGet),
     refresh: () => ipcRenderer.invoke(IPC.usageRefresh),

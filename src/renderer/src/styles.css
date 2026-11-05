@@ -359,6 +359,59 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .card-summary .summary-text { font-size: 22px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; flex: 1; min-height: 0; -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); mask-image: linear-gradient(to bottom, #000 80%, transparent); }
 .jump-bottom { position: absolute; right: 14px; bottom: 10px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text); cursor: pointer; opacity: 0.85; box-shadow: var(--shadow); transition: border-color var(--t), opacity var(--t); }
 .jump-bottom:hover { opacity: 1; border-color: var(--ring); }
+/* chat view: a Claude card's conversation over its terminal (the terminal stays mounted underneath, same size) */
+.chat-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); cursor: auto; user-select: text; font-size: 13px; }
+.agent-node.far .chat-view { visibility: hidden; }
+.chat-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 4px; }
+.chat-inner { display: flex; flex-direction: column; gap: 8px; }
+.chat-row { display: flex; gap: 4px; min-width: 0; }
+.chat-row.user { flex-direction: column; align-items: flex-end; }
+.chat-bubble { max-width: 85%; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r); padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-row.pending .chat-bubble { opacity: 0.7; border-style: dashed; }
+.chat-row.pending.late .chat-bubble { opacity: 1; border-color: var(--warn); }
+.chat-pending-state { font-size: 11px; color: var(--muted); max-width: 85%; text-align: right; }
+.chat-row.pending.late .chat-pending-state { color: var(--warn); }
+.link.inline { display: inline; padding: 0; font-size: inherit; color: inherit; }
+.chat-row.assistant { align-items: flex-start; }
+.chat-reply { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.chat-reply .md { font-size: 13px; }
+.chat-reply .md table { font-size: 12.5px; }
+.chat-reply .md th, .chat-reply .md td { white-space: normal; }
+.chat-copy { flex: none; opacity: 0; width: 20px; height: 20px; }
+.chat-row.assistant:hover .chat-copy, .chat-copy:focus-visible { opacity: 1; }
+.chat-note { align-self: center; max-width: 90%; font-size: 11px; color: var(--muted); text-align: center; padding: 2px 8px; overflow-wrap: anywhere; }
+.chat-note.error { color: var(--danger); }
+.chat-empty { margin: 24px auto; max-width: 320px; text-align: center; color: var(--muted); }
+.chat-working { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); padding: 2px 0; }
+.chat-fold { border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel); font-size: 12px; min-width: 0; }
+.chat-fold > summary { display: flex; align-items: center; gap: 6px; padding: 3px 8px; cursor: pointer; color: var(--muted); list-style: none; min-width: 0; }
+.chat-fold > summary::-webkit-details-marker { display: none; }
+.chat-fold > summary:hover { color: var(--text); }
+.chat-fold-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none; }
+.chat-fold.running .chat-fold-dot { background: var(--warn); }
+.chat-fold.error .chat-fold-dot { background: var(--danger); }
+.chat-fold:not(.tool) > summary::before { content: '›'; }
+.chat-fold-name { font-weight: 600; color: var(--text); flex: none; }
+.chat-fold-summary { font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chat-fold-state { margin-left: auto; color: var(--danger); flex: none; }
+.chat-fold-label { padding: 4px 8px 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.chat-fold pre, .chat-visual pre { margin: 4px 8px 8px; padding: 6px 8px; max-height: 260px; overflow: auto; background: var(--panel-2); border-radius: var(--r-sm); font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-visual { border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel); padding: 10px; overflow: auto; text-align: center; }
+.chat-visual svg { max-width: 100%; height: auto; max-height: 520px; }
+.chat-visual.drawing { color: var(--muted); font-size: 12px; }
+.chat-visual.failed { text-align: left; padding: 0; }
+.chat-visual-why { padding: 6px 8px 0; font-size: 12px; color: var(--warn); }
+.chat-visual-source { margin-top: 6px; text-align: left; font-size: 11px; color: var(--muted); }
+.chat-visual-source > summary { cursor: pointer; }
+.chat-visual-source pre { margin: 4px 0 0; }
+.chat-jump { bottom: 58px; }
+.chat-needs { flex: none; display: flex; align-items: center; gap: 10px; margin: 0 10px 6px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--needs) 60%, var(--border-strong)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--needs) 8%, var(--panel)); font-size: 12.5px; }
+.chat-needs-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-needs-tool { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-notice { flex: none; margin: 0 10px 6px; padding: 5px 8px; border-radius: var(--r-sm); background: var(--panel-2); font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+.chat-composer { flex: none; display: flex; align-items: flex-end; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--border); background: var(--panel); }
+.chat-composer textarea { flex: 1; min-width: 0; resize: none; max-height: 140px; }
+.chat-send:disabled { opacity: 0.35; cursor: default; }
 .note-node { border-color: var(--note-border); }
 .note-node .node-header { background: var(--note-bg); }
 .note-body { flex: 1; resize: none; border: none; border-radius: 0; background: var(--note-bg); color: var(--note-text); padding: 10px; font-family: var(--font-ui); font-size: 13px; }

@@ -10,6 +10,7 @@ import type { Mail } from './mail'
 import type { Approval } from './gate'
 import type { Decision } from './decisions'
 import type { Routine, RoutineInput } from './routines'
+import type { ChatRead } from './chat'
 import type { GrokBotView, GrokHandoff } from './grokbot'
 
 export interface GrokReplyStatus {
@@ -116,6 +117,7 @@ export const IPC = {
   checkpointsRestore: 'checkpoints:restore',
   checkpointsDelete: 'checkpoints:delete',
   sessionUsage: 'session:usage',
+  chatRead: 'chat:read',
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   enginesDetect: 'engines:detect',
@@ -194,6 +196,8 @@ export interface ClaudeLaunchOptions {
   claude: NonNullable<NodeData['claude']>
   /** Card title, used as the Claude session display name (--name). */
   title?: string
+  /** The card is shown as a chat (shared/chat.ts): a Claude card is told its replies may carry diagrams. */
+  chatView?: boolean
 }
 
 export interface BoardSyncPayload {
@@ -485,6 +489,11 @@ export interface OuroborosApi {
   session: {
     /** Context usage of the last turn, read from the Claude Code transcript. */
     usage(sessionId: string): Promise<SessionUsage | null>
+  }
+  /** Chat view: a Claude card's conversation, read from its transcript (shared/chat.ts). */
+  chat: {
+    /** What the transcript gained since `cursor` (the key and offset of the last read; none = the end of the conversation). */
+    read(nodeId: string, cursor?: { key?: string; offset?: number }): Promise<ChatRead>
   }
   /** Account usage per engine: plan windows (5-hour, weekly, per model), token totals; see shared/usage.ts. */
   usage: {

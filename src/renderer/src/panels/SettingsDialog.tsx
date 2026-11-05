@@ -252,6 +252,16 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <section className="settings-section" {...pane('engines')}>
               <h4>Engines</h4>
               <EnginesPanel />
+              <label className="field">
+                <span>Card view</span>
+                <div className="ctl">
+                  <select value={settings.defaultCardView === 'chat' ? 'chat' : 'terminal'} onChange={(e) => void setSettings({ defaultCardView: e.target.value === 'chat' ? 'chat' : 'terminal' })}>
+                    <option value="terminal">Terminal (Claude Code itself)</option>
+                    <option value="chat">Chat (the conversation, with markdown and diagrams)</option>
+                  </select>
+                </div>
+                <div className="hint">Chat is another view of the same Claude Code session: the same sign-in and plan, the same hooks and board tools, and the terminal one click away in the card's header. A card can choose its own view in the Inspector. Questions a card asks (permission prompts) are answered in its terminal. Codex, Gemini, Grok and WSL cards always open as a terminal.</div>
+              </label>
             </section>
 
             <section className="settings-section" {...pane('window')}>

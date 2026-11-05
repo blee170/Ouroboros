@@ -596,7 +596,8 @@ body.ouro-dragging webview { pointer-events: none; }
 .sub-badge { display: inline-flex; align-items: center; gap: 4px; background: color-mix(in srgb, var(--working) 12%, transparent); border: 1px solid color-mix(in srgb, var(--working) 40%, transparent); border-radius: 6px; font-size: 10px; padding: 1px 6px; cursor: pointer; color: var(--working); white-space: nowrap; font-family: var(--font-mono); flex: none; }
 @keyframes sub-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .sub-list li.running .sub-dot, .sub-badge .sub-dot { animation: none; } }
-.touched-filter { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.panel label.touched-filter { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; white-space: nowrap; margin: 0; }
+.touched-filter input { width: auto; }
 .change-file.touched-file { grid-template-columns: 14px 1fr auto auto; }
 .touch-kind { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .touch-kind.w { color: var(--git-mod); }

@@ -16,7 +16,7 @@ export const ROLE_PRESETS: Record<RoleKind, RolePreset> = {
     icon: '🛠',
     permissionMode: 'acceptEdits',
     prompt:
-      'Role: Implementer card on an Ouroboros board. You receive tasks from the Conductor or from a human. Work in small, reviewable commits; run the relevant tests before you report. When you finish a task, end your reply with a short RESULT: section listing changed files, how you verified, and anything left open — that text is handed to the Tester card automatically.'
+      'Role: Implementer card on an Ouroboros board. You receive tasks from the Conductor or from a human. Work in small, reviewable commits; run the relevant tests before you report. When you finish a task, end your reply with a short RESULT: section listing changed files, how you verified, and anything left open — that text is handed to the next card automatically.'
   },
   tester: {
     title: 'Tester',
@@ -41,6 +41,13 @@ export const ROLE_PRESETS: Record<RoleKind, RolePreset> = {
 }
 
 export const ROLE_ORDER: RoleKind[] = ['implementer', 'tester', 'reviewer', 'ops']
+
+/**
+ * Line condition: the reply has a RESULT section, however the model wrote the label ("RESULT:", "**RESULT:**",
+ * "## Result", "결과:"). The label must start a line, so a question that mentions RESULT: in passing is not a
+ * finished report. No whitespace class that crosses lines: the reply is a card's text, and the match stays linear.
+ */
+export const RESULT_SECTION = '/^[ \\t>#*_`-]*(?:RESULT\\b|결과)[*_` \\t]*(?:[:：—–]|$)/im'
 
 export interface BuildBoardInput {
   projectRoot: string
@@ -76,13 +83,32 @@ export function conductorPrompt(input: BuildBoardInput): string {
   const roleLines = input.roles.map((r) => `- "${ROLE_PRESETS[r].title}": ${ROLE_PRESETS[r].prompt.split('.')[0].replace(/^Role: /, '')}`)
   const extras = input.extraFolders.map((f) => `- "${f.title}": folder ${f.cwd}`)
   const specialists = (input.specialists ?? []).map((sp) => `- "${specialistTitle(sp)}": specialist card (role ${sp.id}); give it the work its title says, with the markers you expect`)
+  const has = (r: RoleKind): boolean => input.roles.includes(r)
+  // only the roles on this board: a rule about a card that is not there sends the Conductor looking for it
+  const routing: string[] = []
+  if (has('implementer')) {
+    const next =
+      has('tester') && has('reviewer')
+        ? '; after it reports RESULT the Tester runs automatically through a handoff line and the Reviewer follows when tests PASS'
+        : has('tester')
+          ? '; after it reports RESULT the Tester runs automatically through a handoff line'
+          : has('reviewer')
+            ? '; after it reports RESULT the Reviewer follows automatically through a handoff line'
+            : ''
+    routing.push(`implementation work goes to the Implementer${next}.`)
+    if (has('reviewer')) routing.push('If the Reviewer says CHANGES REQUESTED, send the findings back to the Implementer with send_prompt.')
+  } else if (has('tester') && has('reviewer')) {
+    routing.push('When the Tester reports PASS the Reviewer runs automatically through a handoff line.')
+  }
+  if (has('ops')) routing.push('Ops handles deploys and health checks only.')
+  routing.push('Keep your own replies to the human short: what was dispatched, what is waiting on them, what finished.')
   return [
     `Board for project ${basename(input.conductor.cwd)} (${input.conductor.cwd}).`,
     'Cards available on this board (use list_agents for live ids and statuses):',
     ...roleLines,
     ...specialists,
     ...extras,
-    'Routing rules: implementation work goes to the Implementer; after it reports RESULT the Tester runs automatically through a handoff line and the Reviewer follows when tests PASS. If the Reviewer says CHANGES REQUESTED, send the findings back to the Implementer with send_prompt. Ops handles deploys and health checks only. Keep your own replies to the human short: what was dispatched, what is waiting on them, what finished.'
+    `Routing rules: ${routing.join(' ')}`
   ].join('\n')
 }
 
@@ -105,6 +131,8 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
   const specialistRows = Math.ceil(specialists.length / SPECIALISTS_PER_ROW)
   const columns = Math.max(roles.length, input.extraFolders.length, Math.min(SPECIALISTS_PER_ROW, specialists.length), 2)
   const rowWidth = columns * CARD_W + (columns - 1) * GAP_X
+  // one worker and one reviewer, no Tester between them: the Implementer's finished work goes straight to review
+  const directReview = roles.includes('implementer') && roles.includes('reviewer') && !roles.includes('tester')
 
   // Row 0: note + conductor
   const noteId = makeId()
@@ -121,8 +149,9 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
         `# ${basename(input.conductor.cwd)} board`,
         '',
         '1. Talk to **Conductor** only; it dispatches to the role cards with MCP tools. Every worker card reports back to it through a line when it finishes.',
-        '2. Implementer → Tester fires automatically when the Implementer finishes a reply.',
-        '3. Tester → Reviewer fires only when the Tester\'s reply contains PASS.',
+        ...(directReview
+          ? ['2. Implementer → Reviewer fires automatically when the Implementer\'s reply has a RESULT: section.', '3. The Implementer runs its own tests; the Reviewer is the independent check.']
+          : ['2. Implementer → Tester fires automatically when the Implementer finishes a reply.', '3. Tester → Reviewer fires only when the Tester\'s reply contains PASS.']),
         '4. Reviewer → Implementer is manual: press ▶ on the line to send review findings back.',
         '5. Ops never deploys without the phrase APPROVED BY OWNER in its prompt.',
         '6. The Browser card is a real browser: log in there once and agents can use it (browser_* tools).',
@@ -227,6 +256,18 @@ export function buildBoard(input: BuildBoardInput, makeId: () => string): BuiltB
         mode: 'auto',
         condition: '/\\bPASS\\b|통과|all tests pass/i',
         template: 'Tests passed ({{source_title}} report below). Review the current diff and write the PR description.\n\n{{last_assistant_message}}'
+      }
+    })
+  }
+  if (directReview && roleIds.implementer && roleIds.reviewer) {
+    edges.push({
+      id: makeId(),
+      source: roleIds.implementer,
+      target: roleIds.reviewer,
+      data: {
+        mode: 'auto',
+        condition: RESULT_SECTION,
+        template: 'The Implementer ("{{source_title}}") just finished. Their report:\n\n{{last_assistant_message}}\n\nReview the changes the report lists (the uncommitted diff and any new commits) and write the PR description.'
       }
     })
   }

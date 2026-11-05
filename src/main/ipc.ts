@@ -6,7 +6,7 @@ import { open } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
 import { nanoid } from 'nanoid'
-import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, ClaudeLaunchOptions, GrokReplyStatus, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
+import type { AddNodePayload, AgentStatusPayload, BoardSyncPayload, CardActivityView, ClaudeLaunchOptions, GrokReplyStatus, HandoffFiredPayload, PtySpawnOptions, NotionDatabaseKind, TtsKeyEngine, WorkspaceLoadResult } from '@shared/protocol'
 import { IPC } from '@shared/protocol'
 import type { HeldCard } from '@shared/board-trust'
 import { normalizeEffort, normalizeEngine, type AppSettings, type ClaudeOptions, type HookEvent, type NodeData, type Workspace, type WorkspaceEdge, type WorkspaceNode } from '@shared/types'
@@ -40,9 +40,12 @@ import { setGlobalExternalHooks } from './external'
 import type { ApiHandlers, GateInput, GateReply, HookReply, HookServer } from './hook-server'
 import { Mailbox, mailFile } from './mail'
 import { RoutineDesk, routinesFile } from './routines'
+import type { CliWatch } from './cli-watch'
+import { CLI_UPDATES_TOKEN } from '@shared/cli-watch'
 import { resolveRoutineCard, routineRefusal, type Routine, type RoutineInput } from '@shared/routines'
 import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
+import { emptyActivity, endRunningSubagents, recordActivity, summarize, type CardActivity } from '@shared/activity'
 import { PtyManager, defaultShell } from './pty-manager'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
@@ -149,6 +152,8 @@ export interface MainContext {
   ouro: Ouro
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
   usage: UsageMonitor
+  /** The CLI compatibility check, re-run when an installed CLI's version changes (Settings → Engines, the CLI-watch routine). */
+  cliWatch: CliWatch
   store: UserStore
   browsers: BrowserManager
   updater: Updater
@@ -203,6 +208,20 @@ const LAUNCH_OUT_CAP = 16_000
 const launchFailed = new Set<string>()
 /** Cards whose CLI asked whether to trust the folder (needs-you until the owner answers; the ready signals then make them idle). */
 const trustAsked = new Set<string>()
+
+/**
+ * A card parked on Claude Code's permission dialog (the Notification hook's "permission: …" detail) whose prompts go
+ * into its session inbox: text sent there is a message, so it cannot press the dialog's keys. A card without an inbox
+ * (Codex, Gemini, Grok, the folder-trust question before the session starts) gets text typed, as before.
+ */
+function waitsOnPermission(c: { id: string; status?: string; statusDetail?: string }): boolean {
+  return c.status === 'needs-you' && (c.statusDetail ?? '').startsWith('permission') && inboxes.has(c.id)
+}
+
+/** Only the owner answers a permission dialog, in the card or from the phone; a board tool can only send a message. */
+const PERMISSION_REFUSAL =
+  'the card is waiting on a permission prompt. send_prompt cannot answer it: the text would arrive as a new message, not as a key in the dialog. The owner answers it in the card (or from the phone); tell the owner if it is urgent.'
+const PERMISSION_HINT = 'It is a permission prompt: only the owner answers those, in the card or from the phone. Do not send_prompt it (the text would arrive as a new message); tell the owner if it is urgent, otherwise carry on.'
 
 /** Is the owner looking at this card right now (window focused, card selected)? Then it needs no toast. */
 function viewing(s: WindowSession, nodeId: string): boolean {
@@ -292,7 +311,37 @@ function runRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boole
   const title = n?.data.title || id
   const refused = routineRefusal(n?.data.status)
   if (refused) return { ok: false, text: `${title}: ${refused}` }
+  if (r.prompt.includes(CLI_UPDATES_TOKEN)) return runCliWatchRoutine(ctx, s, r)
   return sendPrompt(ctx, s, id, r.prompt) ? { ok: true, text: `sent to ${title}` } : { ok: false, text: `${title} is not running (or the autonomous run does not allow typing into it)` }
+}
+
+/**
+ * A routine whose prompt carries {{cli-updates}}: the CLIs are looked at first, and the prompt goes out only when a
+ * version changed since this routine's last run, with the token replaced by what changed. The answer is "checking"
+ * now; what became of it is noted on the routine when the look is done.
+ */
+function runCliWatchRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boolean; text: string } {
+  const root = s.board.projectRoot
+  void ctx.cliWatch
+    .digest()
+    .then((d) => {
+      // the look takes up to a few minutes: the window may show another project by now, or the routine may be gone.
+      // Nothing is sent then (a card of the same title in the other project is not this routine's card)
+      if (s.board.projectRoot !== root || !s.routines.list().some((x) => x.id === r.id)) return
+      if ('none' in d) return s.routines.note(r.id, true, d.none)
+      // the board may have changed while the CLIs were checked: find the card again
+      const nodes = [...s.board.nodes.values()].map((n) => ({ id: n.id, title: n.data.title, kind: n.data.kind }))
+      const id = resolveRoutineCard(r, nodes)
+      const n = id ? s.board.nodes.get(id) : undefined
+      const refused = n ? routineRefusal(n.data.status) : 'its card is no longer on the board'
+      if (!id || !n || refused) return s.routines.note(r.id, false, `${n?.data.title ?? r.cardTitle ?? 'card'}: ${refused}`)
+      if (!sendPrompt(ctx, s, id, r.prompt.split(CLI_UPDATES_TOKEN).join(d.text))) return s.routines.note(r.id, false, `${n.data.title} is not running (or the autonomous run does not allow typing into it)`)
+      // covered only once it was sent: a run that could not send has the same updates next time
+      d.commit()
+      s.routines.note(r.id, true, `sent to ${n.data.title}: ${d.summary}`)
+    })
+    .catch((e: Error) => s.routines.note(r.id, false, `could not check the CLIs: ${e.message}`))
+  return { ok: true, text: 'checking the CLIs for updates…' }
 }
 
 /** Watch a command card's output for the completion sentinel; completion behaves like a Claude Stop. */
@@ -341,6 +390,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   inboxes.delete(id)
   for (const d of s.decisions.withdraw(id)) s.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): the card was removed`)
   transcripts.delete(id)
+  activities.delete(id)
   sendToRenderer(s, IPC.boardRemoveNode, id)
 }
 
@@ -416,7 +466,12 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
     },
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
-    sendPrompt: (nodeId, text) => sendPrompt(ctx, s, nodeId, text),
+    sendPrompt: (nodeId, text) => {
+      const n = board.nodes.get(nodeId)
+      // text goes into the session as a message, not as keys: a "1" meant for the dialog became a prompt of its own
+      if (n && waitsOnPermission({ id: nodeId, ...n.data })) return { error: PERMISSION_REFUSAL }
+      return sendPrompt(ctx, s, nodeId, text)
+    },
     discordPost: (self, input) => {
       const n = board.nodes.get(self)
       if (!n) return Promise.resolve({ ok: false as const, error: 'unknown card' })
@@ -1692,7 +1747,7 @@ function installWatchdog(ctx: MainContext, s: WindowSession): void {
       const msg =
         r.reason === 'silent'
           ? `[card stalled] ${title}: Working with no activity for ${r.minutes} min${detailText}.${ownsText} Check it with read_output; nudge it with send_prompt, or kill it and dispatch the work again.`
-          : `[card waiting] ${title}: waiting for input for ${r.minutes} min${detailText}.${ownsText} Read the question with read_output, then answer it with send_prompt or ask the owner.`
+          : `[card waiting] ${title}: waiting for input for ${r.minutes} min${detailText}.${ownsText} ${waitsOnPermission(a) ? PERMISSION_HINT : 'Read the question with read_output, then answer it with send_prompt or ask the owner.'}`
       const targets = new Set<string>()
       const parent = a.parentId ? s.board.nodes.get(a.parentId) : undefined
       if (parent && parent.data.kind !== 'terminal' && parent.data.kind !== 'command') targets.add(parent.id)
@@ -1848,7 +1903,7 @@ function installHandoffRunner(ctx: MainContext, s: WindowSession): WindowSession
       if (dst.data.status === 'needs-you') continue
       noticed.set(p.nodeId, now)
       const what = cleanLine(p.statusDetail, 200)
-      sendPrompt(ctx, s, edge.target, `[${cleanLine(src?.data.title, 80) || p.nodeId} needs input] ${what ? `card says: "${what.replace(/"/g, "'")}"` : 'waiting for a decision'} — use read_output to see the question, then answer it with send_prompt or ask the owner.`)
+      sendPrompt(ctx, s, edge.target, `[${cleanLine(src?.data.title, 80) || p.nodeId} needs input] ${what ? `card says: "${what.replace(/"/g, "'")}"` : 'waiting for a decision'} — ${waitsOnPermission({ id: p.nodeId, status: p.status, statusDetail: p.statusDetail }) ? PERMISSION_HINT : 'use read_output to see the question, then answer it with send_prompt or ask the owner.'}`)
     }
   })
   return (edgeId, manual) => {
@@ -1984,6 +2039,7 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   const s = ctx.windows.forNode(nodeId)
   if (!s) return
   noteActivity(s, nodeId, event)
+  noteCardActivity(s, nodeId, event)
   clearMailBlockWatch(nodeId)
   // a card that reports from its CLI is running: a "failed at launch" read from its output was wrong
   if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
@@ -2001,6 +2057,26 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   }
   s.board.applyHook(nodeId, event)
   return reply
+}
+
+/** What each Claude card did (its turns' edits, the files it touched, its subagents), from its hooks; in memory only. */
+const activities = new Map<string, { record: CardActivity; rev: number }>()
+
+function noteCardActivity(s: WindowSession, nodeId: string, event: HookEvent): void {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor') || (n.data.engine ?? 'claude') !== 'claude') return
+  let a = activities.get(nodeId)
+  if (!a) activities.set(nodeId, (a = { record: emptyActivity(), rev: 0 }))
+  if (!recordActivity(a.record, event, Date.now())) return
+  sendToRenderer(s, IPC.cardActivity, summarize(nodeId, a.record, ++a.rev))
+}
+
+/** The card's process is gone: nothing of it runs any more. */
+function endCardSubagents(s: WindowSession | undefined, nodeId: string): void {
+  const a = activities.get(nodeId)
+  if (!a || !endRunningSubagents(a.record, Date.now())) return
+  a.rev++
+  if (s) sendToRenderer(s, IPC.cardActivity, summarize(nodeId, a.record, a.rev))
 }
 
 /** Claude cards' transcripts and how far the topic reader got. */
@@ -2367,6 +2443,7 @@ export function registerIpc(ctx: MainContext): void {
     clearTimeout(exitChecks.get(nodeId))
     exitChecks.delete(nodeId)
     const s = ctx.windows.forNode(nodeId)
+    endCardSubagents(s, nodeId)
     const ended = s?.board.nodes.get(nodeId)
     if (s && ended?.data.doing) {
       ended.data.doing = undefined
@@ -2384,6 +2461,8 @@ export function registerIpc(ctx: MainContext): void {
     if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
     try {
       ctx.windows.bindNode(opts.nodeId, s.id)
+      // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
+      endCardSubagents(s, opts.nodeId)
       await throttledSpawn(() => ptys.spawn(opts))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'idle', statusDetail: 'shell' })
@@ -2479,6 +2558,8 @@ export function registerIpc(ctx: MainContext): void {
       }
       // only what WSLENV names crosses into Linux (and from there into the Windows helpers): the card's own variables
       if (wsl) launchEnv.WSLENV = wslEnvNames([...Object.keys(launchEnv), ...WSL_HELPER_ENV], process.env.WSLENV)
+      // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
+      endCardSubagents(s, opts.nodeId)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: launchEnv, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
@@ -2922,11 +3003,22 @@ export function registerIpc(ctx: MainContext): void {
     const c = (cursor && typeof cursor === 'object' ? cursor : {}) as ChatCursor
     return readChat(path, { key: typeof c.key === 'string' ? c.key : undefined, offset: typeof c.offset === 'number' ? c.offset : undefined })
   })
+  // only the cards of the asking window: a card's edits are its project's
+  ipcMain.handle(IPC.activityGet, (e, nodeId: unknown): CardActivityView | null => {
+    const a = typeof nodeId === 'string' && sessionOf(e)?.board.nodes.has(nodeId) ? activities.get(nodeId) : undefined
+    return a ? { turns: a.record.turns, files: a.record.files, subagents: a.record.subagents, rev: a.rev } : null
+  })
+  ipcMain.handle(IPC.activityAll, (e) => {
+    const s = sessionOf(e)
+    return s ? [...activities].filter(([id]) => s.board.nodes.has(id)).map(([id, a]) => summarize(id, a.record, a.rev)) : []
+  })
   ipcMain.handle(IPC.usageGet, () => ctx.usage.snapshot())
   ipcMain.handle(IPC.usageRefresh, () => ctx.usage.snapshot({ refresh: true }))
   // a card's status line brought new plan numbers: every window shows them (the account is one)
   ctx.usage.onChange(() => void ctx.usage.snapshot().then((snap) => broadcast(ctx, IPC.usageChanged, snap)).catch(() => undefined))
   ipcMain.handle(IPC.enginesDetect, () => detectEngines())
+  ipcMain.handle(IPC.enginesCompat, (_e, force: unknown) => ctx.cliWatch.refresh(force === true))
+  ctx.cliWatch.on('change', (v) => broadcast(ctx, IPC.enginesCompatChanged, v))
   ipcMain.handle(IPC.tidyCandidates, async (e, minutes: number, includeOwn: boolean) => (await sessionOf(e)?.api.tidy({ olderThanMinutes: minutes, includeOwn }, true))?.candidates ?? [])
   ipcMain.handle(IPC.tidyApply, async (e, ids: string[]) => {
     const s = sessionOf(e)
@@ -3109,6 +3201,10 @@ export function initialProjectArg(): string | undefined {
 
 export function resolveHookScriptPath(): string {
   return resolveMcpScriptPath().replace(/mcp-server\.js$/, 'agent-hook.js')
+}
+
+export function resolveCompatScriptPath(): string {
+  return resolveMcpScriptPath().replace(/mcp-server\.js$/, 'cli-compat-run.js')
 }
 
 export function resolveMcpScriptPath(): string {

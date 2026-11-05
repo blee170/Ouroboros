@@ -12,6 +12,8 @@ import type { Decision } from './decisions'
 import type { Routine, RoutineInput } from './routines'
 import type { ChatRead } from './chat'
 import type { GrokBotView, GrokHandoff } from './grokbot'
+import type { ActivitySummary, EditTurn, SubagentRun, TouchedFile } from './activity'
+import type { CompatView } from './cli-watch'
 
 export interface GrokReplyStatus {
   enabled: boolean
@@ -109,6 +111,8 @@ export const IPC = {
   phonePair: 'phone:pair',
   phoneRevoke: 'phone:revoke',
   phoneNotifyKey: 'phone:notifyKey',
+  activityGet: 'activity:get',
+  activityAll: 'activity:all',
   changesSummary: 'changes:summary',
   changesDiff: 'changes:diff',
   changesRevert: 'changes:revert',
@@ -121,6 +125,7 @@ export const IPC = {
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   enginesDetect: 'engines:detect',
+  enginesCompat: 'engines:compat',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   worktreeCreate: 'worktree:create',
@@ -159,6 +164,7 @@ export const IPC = {
   // main -> renderer (send)
   autonomyChanged: 'autonomy:changed',
   usageChanged: 'usage:changed',
+  enginesCompatChanged: 'engines:compatChanged',
   ptyData: 'pty:data',
   ptyExit: 'pty:exit',
   agentStatus: 'agent:status',
@@ -171,6 +177,7 @@ export const IPC = {
   boardSetNote: 'board:setNote',
   boardUpdateNode: 'board:updateNode',
   boardActivity: 'board:activity',
+  cardActivity: 'card:activity',
   externalSession: 'external:session',
   announce: 'announce'
 } as const
@@ -224,6 +231,14 @@ export interface ActivityPayload {
   nodeId: string
   doing?: string | null
   topic?: string
+}
+
+/** A Claude card's record as the Inspector reads it: its recent turns' edits, the files it touched, its subagents. */
+export interface CardActivityView {
+  turns: EditTurn[]
+  files: TouchedFile[]
+  subagents: SubagentRun[]
+  rev: number
 }
 
 export interface HookEventPayload {
@@ -474,6 +489,13 @@ export interface OuroborosApi {
     state(): Promise<AutonomyPublic | null>
     onChange(cb: (p: AutonomyPublic) => void): () => void
   }
+  /** What Claude cards did, read from their hooks (shared/activity.ts): kept in memory while the app runs. */
+  activity: {
+    get(nodeId: string): Promise<CardActivityView | null>
+    /** the summaries of this window's cards (a renderer that reloaded asks once) */
+    all(): Promise<ActivitySummary[]>
+    onChange(cb: (p: ActivitySummary) => void): () => void
+  }
   changes: {
     summary(cwd: string): Promise<ChangesSummary>
     diff(cwd: string, file?: string): Promise<string>
@@ -507,6 +529,12 @@ export interface OuroborosApi {
   engines: {
     /** Installed / signed-in state of claude, codex and gemini. */
     detect(): Promise<EngineInfo[]>
+    /**
+     * Whether each installed CLI still has what Ouroboros relies on (shared/cli-contract.ts). CLIs whose version
+     * changed since their last check are checked now; `force` checks every installed one again.
+     */
+    compat(force?: boolean): Promise<CompatView>
+    onCompat(cb: (v: CompatView) => void): () => void
   }
   files: {
     /** Absolute path of a File dropped from the OS (empty for in-browser files). */

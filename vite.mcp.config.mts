@@ -8,7 +8,7 @@ import { builtinModules } from 'node:module'
 import { resolve } from 'node:path'
 
 export default defineConfig(({ mode }) => {
-  const entry = mode === 'agent-hook' ? 'agent-hook' : 'mcp-server'
+  const entry = mode === 'agent-hook' || mode === 'cli-compat-run' ? mode : 'mcp-server'
   return {
   build: {
     outDir: 'out/main',

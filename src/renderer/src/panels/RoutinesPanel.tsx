@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useBoard } from '@/store/board'
-import { ROUTINE_LIMITS, scheduleText, type Routine, type RoutineInput, type RoutineSchedule } from '@shared/routines'
+import { ROUTINE_LIMITS, WEEKDAY_NAMES, scheduleText, type Routine, type RoutineInput, type RoutineSchedule } from '@shared/routines'
+import { CLI_UPDATES_TOKEN, CLI_WATCH_ROUTINE } from '@shared/cli-watch'
 
 const AGENT_KINDS = new Set(['claude', 'conductor', 'command'])
-const EMPTY: RoutineInput = { name: '', prompt: '', cardId: '', schedule: 'manual', at: '09:00', everyHours: 1, enabled: true }
+const EMPTY: RoutineInput = { name: '', prompt: '', cardId: '', schedule: 'manual', at: '09:00', weekday: 1, everyHours: 1, enabled: true }
 
 const when = (t: number): string => {
   const d = new Date(t)
@@ -12,8 +13,8 @@ const when = (t: number): string => {
 }
 
 /**
- * The Routines tab: saved prompts for one card each, run with ▶ or on a schedule (every day or every weekday at a
- * time, or every n hours) while the app is running. Main keeps them per project in the app's data folder.
+ * The Routines tab: saved prompts for one card each, run with ▶ or on a schedule (every day, every weekday or once a
+ * week at a time, or every n hours) while the app is running. Main keeps them per project in the app's data folder.
  */
 export function RoutinesPanel() {
   const routines = useBoard((s) => s.routines)
@@ -24,9 +25,9 @@ export function RoutinesPanel() {
   const [busy, setBusy] = useState(false)
 
   const api = window.ouroboros.routines
-  const startNew = (): void => {
+  const startNew = (template: RoutineInput = {}): void => {
     const conductor = nodes.find((n) => n.data.kind === 'conductor')
-    setForm({ ...EMPTY, cardId: conductor?.id ?? cards[0]?.id ?? '' })
+    setForm({ ...EMPTY, ...template, cardId: conductor?.id ?? cards[0]?.id ?? '' })
     setError('')
   }
   const save = async (): Promise<void> => {
@@ -61,9 +62,19 @@ export function RoutinesPanel() {
       {error && <div className="task-error">{error}</div>}
       {!form && (
         <div className="row">
-          <button className="btn small" onClick={startNew} disabled={cards.length === 0} title={cards.length === 0 ? 'Add an agent card first' : undefined}>
+          <button className="btn small" onClick={() => startNew()} disabled={cards.length === 0} title={cards.length === 0 ? 'Add an agent card first' : undefined}>
             New routine
           </button>
+          {!routines.some((r) => r.prompt.includes(CLI_UPDATES_TOKEN)) && (
+            <button
+              className="btn small quiet"
+              onClick={() => startNew(CLI_WATCH_ROUTINE)}
+              disabled={cards.length === 0}
+              title="A weekly routine: when Claude Code or another agent CLI on this PC was updated, a card reads what changed (versions, Ouroboros's compatibility check, the changelog lines that matter) and reports. Nothing is sent in a week without an update."
+            >
+              + CLI update watch
+            </button>
+          )}
         </div>
       )}
       {form && (
@@ -87,16 +98,34 @@ export function RoutinesPanel() {
             <span>Prompt</span>
             <textarea className="text" rows={5} value={form.prompt ?? ''} maxLength={ROUTINE_LIMITS.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} placeholder="Read my calendar and inbox and brief me on today: meetings, mail that needs an answer, the three things to do first." />
           </label>
+          {form.prompt?.includes(CLI_UPDATES_TOKEN) && (
+            <p className="muted small">
+              <code>{CLI_UPDATES_TOKEN}</code> is replaced, when the routine runs, by the agent CLIs whose version changed since its last run, Ouroboros's compatibility check and the Claude Code changelog lines that matter. When no CLI changed, nothing is sent.
+            </p>
+          )}
           <label>
             <span>When</span>
-            <select value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value as RoutineSchedule })}>
+            <select value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value as RoutineSchedule, ...(e.target.value === 'weekly' && form.weekday === undefined ? { weekday: 1 } : {}) })}>
               <option value="manual">Button only</option>
               <option value="daily">Every day</option>
               <option value="weekdays">Weekdays (Mon–Fri)</option>
+              <option value="weekly">Once a week</option>
               <option value="hourly">Every n hours</option>
             </select>
           </label>
-          {(form.schedule === 'daily' || form.schedule === 'weekdays') && (
+          {form.schedule === 'weekly' && (
+            <label>
+              <span>On</span>
+              <select value={form.weekday ?? 1} onChange={(e) => setForm({ ...form, weekday: Number(e.target.value) })}>
+                {WEEKDAY_NAMES.map((d, i) => (
+                  <option key={d} value={i}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(form.schedule === 'daily' || form.schedule === 'weekdays' || form.schedule === 'weekly') && (
             <label>
               <span>At (this PC's time)</span>
               <input className="text" type="time" value={form.at ?? ''} onChange={(e) => setForm({ ...form, at: e.target.value })} />

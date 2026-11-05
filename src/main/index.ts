@@ -21,7 +21,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveMcpScriptPath, createPhone, createGrokReply, createOuro, applyOuro, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveCompatScriptPath, resolveMcpScriptPath, createPhone, createGrokReply, createOuro, applyOuro, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -30,7 +30,9 @@ import { UserStore } from './workspace-store'
 import { Updater, decryptToken } from './updater'
 import { SessionRegistry } from './windows'
 import { UsageMonitor } from './usage'
-import { detectEngines } from './engines'
+import { ENGINE_META, detectEngines, probePath } from './engines'
+import { CliWatch, readTextCapped, runCompatCheck } from './cli-watch'
+import { findNodeBinary } from './node-runner'
 import { issueRef } from '@shared/grokreply'
 import { homedir } from 'node:os'
 
@@ -176,7 +178,28 @@ async function main(): Promise<void> {
     grokReply: null as unknown as MainContext['grokReply'],
     ouro: null as unknown as Ouro,
     boardTrust: new BoardTrust(join(app.getPath('userData'), 'board-trust.json'), log),
-    usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines })
+    usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines }),
+    cliWatch: new CliWatch({
+      file: join(app.getPath('userData'), 'cli-compat.json'),
+      detect: async () => (await detectEngines()).map((e) => ({ engine: e.engine, label: ENGINE_META[e.engine].label, installed: e.installed, version: e.version })),
+      // the CLIs are looked up on the same PATH the Engines panel detects them with
+      check: (engines) => runCompatCheck({ script: resolveCompatScriptPath(), nodeBin: findNodeBinary(), execPath: process.execPath, env: { ...process.env, PATH: probePath(), Path: probePath() } }, engines),
+      fetchText: async (url) => {
+        // a fixed address that answers directly: a redirect elsewhere is refused, and the body is read up to 4 MB
+        const r = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'error' })
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return readTextCapped(r, 4_000_000)
+      },
+      log,
+      onBroke: (label, version, missing) => {
+        if (!Notification.isSupported()) return
+        const what = missing
+          .slice(0, 3)
+          .map((m) => m.text)
+          .join(', ')
+        new Notification({ title: `${label} ${version} may not work with Ouroboros`, body: `${missing.length} thing${missing.length === 1 ? '' : 's'} Ouroboros relies on ${missing.length === 1 ? 'is' : 'are'} missing (${what}${missing.length > 3 ? ', …' : ''}). Settings → Engines has the list.` }).show()
+      }
+    })
   }
   onBoardWritten((root, text, fromDisk) => ctx.boardTrust.record(root, text, { fromDisk }))
   ctx.updater = new Updater(() => decryptToken(store.getSettings().githubTokenEnc))
@@ -231,6 +254,9 @@ async function main(): Promise<void> {
     callback({ cancel })
   })
   registerVoiceHotkey(ctx)
+  // a CLI that updated itself is checked against what Ouroboros relies on: a while after start, then every 6 hours
+  setTimeout(() => void ctx.cliWatch.refresh(), 45_000)
+  setInterval(() => void ctx.cliWatch.refresh(), 6 * 3_600_000)
   const phoneView = store.getSettings().phone
   if (phoneView?.enabled) {
     void ctx.phone.apply(phoneView).then((err) => {

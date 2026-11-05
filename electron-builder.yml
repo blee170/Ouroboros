@@ -15,6 +15,7 @@ asarUnpack:
   - "**/node_modules/node-pty/**"
   - out/main/mcp-server.js
   - out/main/agent-hook.js
+  - out/main/cli-compat-run.js
 npmRebuild: false   # node-pty ships N-API prebuilds (win32-x64/arm64); no Electron rebuild needed
 win:
   icon: resources/icon.ico

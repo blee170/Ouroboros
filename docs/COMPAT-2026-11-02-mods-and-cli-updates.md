@@ -9,6 +9,8 @@ Short answers: all three load in cards, because cards use Brian's real `~/.claud
 
 Nothing was installed into `~/.claude`. The repos were read from shallow clones; nothing in them was run.
 
+Update 2026-11-05: the three native ideas of section 3 and the two "later" items of section 5 (the check in Settings → Engines, the weekly routine) are built, on branch `claude/card-activity` (not merged when this line was written). CHANGELOG `[Unreleased]` says what was verified and what was not.
+
 ## 1. What a "mod" is
 
 Since Claude Code 2.1.287, a plugin can ship a **hooks module**: `hooks/hooks.json` holds `{ "modules": ["./register.tsx"] }` in place of shell or HTTP hooks. The module's `register(on)` subscribes to in-process events (`session.start`, `turn.start`, `turn.step`, `turn.complete`, `tool.call`, `tool.check`, `agent.spawn`, `prompt.submit`, `command.run`, `ui.render`) and gets a `$` handle with `$.ui.open` (a Pane), `$.command.register` (a slash command), `$.tool.register` (an MCP-style tool), `$.fs`, `$.process.spawn` and `$.http.fetch`. The Pane is docked right in the fullscreen layout, capped at 45% of the terminal width (2.1.305), or drawn inline above the prompt. The desktop app renders the same tree with SVG; the terminal falls back to text rows.
@@ -40,6 +42,8 @@ How cards are set up, as far as the mods care:
 ## 3. What Ouroboros should copy natively
 
 Ouroboros already receives the same events through its HTTP hooks (every `PreToolUse`/`PostToolUse` payload carries `tool_name` and `tool_input`; `SubagentStart`/`SubagentStop` carry `agent_id`), and it can show them in React on the canvas, where the board, the phone page and the Conductor can all use them. That beats a mod inside one card's terminal.
+
+All three below were built on 2026-11-05 (Inspector → Work: *Last turn*, *Subagents*, *Files touched*; a chip on the card). What differs from the sketch: the edits are grouped by the payload's `prompt_id` (a background subagent's late edit carries the id of the turn that launched it), the diff is the tool's own `structuredPatch`, the turn end's `background_tasks` closes subagents whose stop never came, and Orbit has no chip yet.
 
 1. **Replay of the last turn's edits (recommended first).** Record `PostToolUse` for Edit, Write and MultiEdit between `UserPromptSubmit` and `Stop`, per card, and show them as steps in the Inspector next to the Changes panel. A reviewer card and the Conductor's `get_changes` could use the same list ("what did this turn change", not "what is uncommitted"). Small to medium; no new CLI dependency.
 2. **Subagent strip on the card.** Running and finished subagents (type, description, time) from `SubagentStart`/`SubagentStop`, as a chip on the card and in Orbit. Small. Cost per subagent is not needed: the status line already gives the card's real total.
@@ -105,12 +109,13 @@ The assumptions are spread over six files and pinned only by unit tests with han
 **When it runs.**
 
 - By hand after `claude update` (and before a release): `npm run compat`.
-- In the app, later: Settings → Engines already reads each CLI's version. When a version differs from the last one checked, run Level 1 in the background and show "Claude Code 2.1.317: 1 assumption failed (details)" on the Engines panel, without blocking anything.
-- A weekly Routine (PR #71) could hand a card the new changelog sections filtered by the contract's keywords. That is cheap and catches behaviour changes no string search sees.
+- In the app (built 2026-11-05): 45 s after start, every 6 hours and when Settings → Engines opens, Level 1 runs in a child process for each CLI whose version is not the one last checked, and the panel shows the result under the CLI (a toast once per version when something is missing). A check that could not be made is shown as such and never saved as a verdict.
+- A weekly routine (built 2026-11-05: Routines → *+ CLI update watch*): it sends its card the version changes, the check's result and the Claude Code changelog entries filtered by the contract's keywords, only in a week with an update. That is cheap and catches behaviour changes no string search sees.
 
 ## 6. Open items
 
 - Codex was not checked (not installed here).
 - The keyboard-focus risk in section 2 comes from reading the mods' code and was not reproduced in a card.
 - File Tree's behaviour at session start in a card under 110 columns was not tested.
-- Section 5 levels 1 and 2 are built; the in-app Engines-panel check and the weekly changelog Routine are not. Section 3 waits for Brian's choice.
+- Sections 3 and 5 are built (2026-11-05). Not verified there: a real Claude card's turn inside the app, a subagent started by a subagent, the toast, a weekly run at its real time, the packaged installer.
+- The Ouroboros mod (`--plugin-dir`) of section 3 stays undecided.

@@ -29,7 +29,7 @@ import { Updater, decryptToken } from './updater'
 import { SessionRegistry } from './windows'
 import { UsageMonitor } from './usage'
 import { ENGINE_META, detectEngines, probePath } from './engines'
-import { CliWatch, runCompatCheck } from './cli-watch'
+import { CliWatch, readTextCapped, runCompatCheck } from './cli-watch'
 import { findNodeBinary } from './node-runner'
 import { issueRef } from '@shared/grokreply'
 import { homedir } from 'node:os'
@@ -183,9 +183,10 @@ async function main(): Promise<void> {
       // the CLIs are looked up on the same PATH the Engines panel detects them with
       check: (engines) => runCompatCheck({ script: resolveCompatScriptPath(), nodeBin: findNodeBinary(), execPath: process.execPath, env: { ...process.env, PATH: probePath(), Path: probePath() } }, engines),
       fetchText: async (url) => {
-        const r = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+        // a fixed address that answers directly: a redirect elsewhere is refused, and the body is read up to 4 MB
+        const r = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'error' })
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.text()
+        return readTextCapped(r, 4_000_000)
       },
       log,
       onBroke: (label, version, missing) => {

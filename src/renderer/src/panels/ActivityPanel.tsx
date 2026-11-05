@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CardActivityView, ChangesSummary } from '@shared/protocol'
 import { elapsedText, shownPath, type EditTurn, type SubagentRun, type TouchedFile } from '@shared/activity'
 import { useBoard } from '@/store/board'
@@ -21,24 +21,32 @@ function openFile(path: string, cwd: string): void {
 export function ActivityPanel({ nodeId, cwd }: { nodeId: string; cwd: string }) {
   const rev = useBoard((s) => s.activity[nodeId]?.rev)
   const [view, setView] = useState<CardActivityView | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const alive = useRef(true)
   useEffect(() => {
-    let alive = true
-    // a busy turn changes the record several times a second: read it once things settle for a moment
-    const t = setTimeout(
+    alive.current = true
+    return () => {
+      alive.current = false
+      clearTimeout(timer.current)
+      timer.current = undefined
+    }
+  }, [])
+  useEffect(() => {
+    // a busy turn changes the record several times a second: one read per 300 ms. A read that is already due sees
+    // this change too, so it is not pushed back (a card that never pauses would otherwise never be read)
+    if (timer.current !== undefined) return
+    timer.current = setTimeout(
       () => {
+        timer.current = undefined
         void window.ouroboros.activity
           .get(nodeId)
           .then((v) => {
-            if (alive) setView(v)
+            if (alive.current) setView((cur) => (v && cur && cur.rev > v.rev ? cur : v))
           })
           .catch(() => undefined)
       },
       rev === undefined ? 0 : 300
     )
-    return () => {
-      alive = false
-      clearTimeout(t)
-    }
   }, [nodeId, rev])
   if (!view) return null
   return (
@@ -55,10 +63,12 @@ function EditReplay({ turns, cwd }: { turns: EditTurn[]; cwd: string }) {
   const [open, setOpen] = useState(true)
   // null = the latest turn, the latest edit: both follow the card while it works
   const [picked, setPicked] = useState<string | null>(null)
-  const [step, setStep] = useState<number | null>(null)
+  // a step belongs to the turn it was picked in: on another turn the replay is at its latest edit again
+  const [step, setStepOf] = useState<{ turn: string; i: number } | null>(null)
   const turn = turns.find((t) => t.id === picked) ?? turns[turns.length - 1]
   const total = turn.edits.length
-  const at = step === null ? total - 1 : Math.min(step, total - 1)
+  const at = step && step.turn === turn.id ? Math.min(step.i, total - 1) : total - 1
+  const setStep = (i: number | null): void => setStepOf(i === null ? null : { turn: turn.id, i })
   const edit = turn.edits[at]
   const added = turn.edits.reduce((n, e) => n + e.added, 0)
   const removed = turn.edits.reduce((n, e) => n + e.removed, 0)
@@ -125,6 +135,7 @@ function EditReplay({ turns, cwd }: { turns: EditTurn[]; cwd: string }) {
                 {'\n'}
               </span>
             ))}
+            {edit.lines.length === 0 && !edit.truncated && <span className="dl-hunk">no change: the file was written with the content it already had{'\n'}</span>}
             {edit.truncated && <span className="dl-hunk">… the rest of this diff is not kept (see Changes below for the file as it is now){'\n'}</span>}
           </pre>
           <div className="row between">
@@ -183,11 +194,16 @@ function Subagents({ runs }: { runs: SubagentRun[] }) {
   )
 }
 
-/** Git's letter for a touched file: the changed file whose path ends the touched one (git paths are relative to the repo). */
-function gitStatusOf(path: string, changes: ChangesSummary | null): string | undefined {
+/**
+ * Git's letter for a touched file. Git's paths are relative to the repo's root and the card's folder is that root or
+ * a folder inside it: the changed file that is the touched one's path from the card's folder, else the one that ends
+ * with it. A file outside the card's folder has no letter (it is not in this repo's list under that path).
+ */
+function gitStatusOf(path: string, cwd: string, changes: ChangesSummary | null): string | undefined {
   if (!changes?.repo) return undefined
-  const p = path.replace(/\\/g, '/').toLowerCase()
-  return changes.files.find((f) => p.endsWith(`/${f.path.toLowerCase()}`))?.status
+  const rel = shownPath(path, cwd).toLowerCase()
+  if (rel === path.replace(/\\/g, '/').toLowerCase()) return undefined
+  return (changes.files.find((f) => f.path.toLowerCase() === rel) ?? changes.files.find((f) => f.path.toLowerCase().endsWith(`/${rel}`)))?.status
 }
 
 /** The files the card read and wrote since the app started, most recent first, with git's status where it has one. */
@@ -226,7 +242,7 @@ function TouchedFiles({ files, cwd, rev }: { files: TouchedFile[]; cwd: string; 
       {open && (
         <ul className="change-list">
           {list.slice(0, SHOWN_FILES).map((f) => {
-            const st = gitStatusOf(f.path, changes)
+            const st = gitStatusOf(f.path, cwd, changes)
             return (
               <li key={f.path}>
                 <button className="change-file touched-file" title={`${f.path}\nread ${f.reads}×, written ${f.writes}× · last ${clock(f.lastAt)}\nClick to open`} onClick={() => openFile(f.path, cwd)}>

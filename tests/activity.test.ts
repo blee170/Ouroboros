@@ -46,6 +46,9 @@ describe('editDiff', () => {
       ]
     })
   })
+  it('shows no lines for a Write that left the file as it was', () => {
+    expect(editDiff('Write', { file_path: 'a', content: 'one\ntwo' }, { type: 'update', structuredPatch: [] })).toEqual({ kind: 'update', added: 0, removed: 0, lines: [] })
+  })
   it('falls back to what the tool was asked when the payload has no response', () => {
     expect(editDiff('Edit', { old_string: 'a\nb', new_string: 'c' }, {})).toMatchObject({ kind: 'update', added: 1, removed: 2 })
     expect(editDiff('MultiEdit', { edits: [{ old_string: 'a', new_string: 'b' }, { old_string: 'c', new_string: 'd\ne' }] }, {})).toMatchObject({ added: 3, removed: 2 })
@@ -225,6 +228,47 @@ describe('recordActivity: subagents', () => {
     expect(a.subagents[0].id).toBe('keep')
     expect(recordActivity(a, stop('nobody'), 99)).toBe(false)
     expect(recordActivity(a, { ...base, hook_event_name: 'SubagentStart' }, 99)).toBe(false)
+  })
+  it('lets the real SubagentStop correct an end that was only assumed', () => {
+    const a = emptyActivity()
+    recordActivity(a, start('nested'), 1)
+    // the turn's Stop does not list it (it belongs to a background subagent): its end is assumed
+    recordActivity(a, { ...base, hook_event_name: 'Stop', background_tasks: [] }, 5)
+    expect(a.subagents[0]).toMatchObject({ endedAt: 5, assumed: true })
+    expect(recordActivity(a, stop('nested', 'the report'), 9)).toBe(true)
+    expect(a.subagents[0]).toEqual({ id: 'nested', type: 'general-purpose', startedAt: 1, endedAt: 9, result: 'the report' })
+    // a second stop changes nothing
+    expect(recordActivity(a, stop('nested', 'again'), 12)).toBe(false)
+  })
+  it('names a subagent from an Agent call that gave no type', () => {
+    const a = emptyActivity()
+    recordActivity(a, { ...base, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { description: 'look around', prompt: 'x' } }, 1)
+    recordActivity(a, start('d1'), 2)
+    expect(a.subagents[0].description).toBe('look around')
+  })
+  it('never keeps more subagents than the cap, even when none of them ends', () => {
+    const a = emptyActivity()
+    for (let i = 0; i < ACTIVITY_LIMITS.subagents + 30; i++) recordActivity(a, start(`r${i}`), i)
+    expect(a.subagents).toHaveLength(ACTIVITY_LIMITS.subagents)
+    expect(a.subagents[0].id).toBe('r30')
+    // the chip counts every running one
+    expect(summarize('n', a, 1).running).toHaveLength(ACTIVITY_LIMITS.subagents)
+  })
+  it('cuts ids and type names, and does not record an edit whose path is absurdly long', () => {
+    const a = emptyActivity()
+    const long = 'x'.repeat(5000)
+    expect(recordActivity(a, edit({ tool_input: { file_path: long, old_string: 'a', new_string: 'b' } }), 1)).toBe(false)
+    expect(a.files).toEqual([])
+    expect(a.turns).toEqual([])
+    recordActivity(a, edit({ prompt_id: long }), 2)
+    expect(a.turns[0].id).toHaveLength(ACTIVITY_LIMITS.id)
+    recordActivity(a, agentCall('d', long), 3)
+    recordActivity(a, start(long, long), 3)
+    expect(a.subagents[0]).toMatchObject({ id: long.slice(0, ACTIVITY_LIMITS.id), type: long.slice(0, ACTIVITY_LIMITS.id), description: 'd' })
+    // the cut id is still the same subagent: a Stop that lists it keeps it, and its stop ends it
+    recordActivity(a, { ...base, hook_event_name: 'Stop', background_tasks: [{ id: long, status: 'running' }] }, 4)
+    expect(a.subagents[0].endedAt).toBeUndefined()
+    expect(recordActivity(a, stop(long), 5)).toBe(true)
   })
 })
 

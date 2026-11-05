@@ -129,7 +129,7 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
         {subagents && subagents.length > 0 && (
           <button
             className="sub-badge nodrag"
-            title={[`${subagents.length} subagent${subagents.length === 1 ? '' : 's'} running — click for the list in the Inspector`, ...subagents.map((r) => `${r.type}${r.description ? `: ${r.description}` : ''} (${elapsedText(Date.now() - r.startedAt)})`)].join('\n')}
+            title={[`${subagents.length} subagent${subagents.length === 1 ? '' : 's'} running — click for the list in the Inspector`, ...subagents.slice(0, 12).map((r) => `${r.type}${r.description ? `: ${r.description}` : ''} (${elapsedText(Date.now() - r.startedAt)})`), ...(subagents.length > 12 ? [`… ${subagents.length - 12} more`] : [])].join('\n')}
             onClick={() => select(id, null)}
           >
             <span className="sub-dot" aria-hidden="true" /> {subagents.length}

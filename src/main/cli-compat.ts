@@ -4,6 +4,9 @@
  * (works today, may go without notice), "missing" otherwise; strings are searched in the installed files (the native
  * binary, or the npm package). Read-only: it runs `--version` and `--help` and reads files.
  *
+ * A check that could not be made is an `error`, never a verdict: a CLI that timed out once (a virus scan of a fresh
+ * binary) must not be recorded as lacking everything.
+ *
  * Used from two places, so it imports nothing but Node built-ins and types: `npm run compat` loads this file with
  * Node's own type stripping (scripts/cli-compat.mjs), and the app runs it in a child process (cli-compat-run.ts),
  * because searching a 300 MB binary would stall the main process.
@@ -29,6 +32,8 @@ export interface CompatReport {
   version?: string
   path?: string
   lines: CompatLine[]
+  /** the check could not be made for this CLI: `lines` says nothing about it */
+  error?: string
 }
 
 const win = process.platform === 'win32'
@@ -36,13 +41,21 @@ const CHUNK = 4 * 1024 * 1024
 /** an npm package's files are searched up to this many bytes in all */
 const PACKAGE_BYTES = 800_000_000
 
-/** Run a CLI with fixed arguments; its output, or '' when it could not run. npm shims on Windows are .cmd files, which only start through a shell. */
-function run(bin: string, args: string[], env: NodeJS.ProcessEnv, timeout = 30_000): Promise<string> {
+/**
+ * Run a CLI with fixed arguments: its output, and whether that is an answer. A timeout, a start that failed or no
+ * output at all is not one; a non-zero exit with output is (some CLIs print their help that way). npm shims on
+ * Windows are .cmd files, which only start through a shell.
+ */
+function run(bin: string, args: string[], env: NodeJS.ProcessEnv, timeout = 30_000): Promise<{ ok: boolean; out: string }> {
   const shell = win && /\.(cmd|bat)$/i.test(bin)
   return new Promise((resolve) => {
     // through a shell the line is ours to write: the shim's path quoted (it may sit under "Program Files"), then the
     // args, which are fixed words from the contract (--help, resume)
-    execFile(shell ? `"${bin}" ${args.join(' ')}` : bin, shell ? [] : args, { encoding: 'utf8', timeout, shell, windowsHide: true, env, maxBuffer: 8 * 1024 * 1024 }, (_err, stdout, stderr) => resolve(`${stdout ?? ''}${stderr ?? ''}`))
+    execFile(shell ? `"${bin}" ${args.join(' ')}` : bin, shell ? [] : args, { encoding: 'utf8', timeout, shell, windowsHide: true, env, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const out = `${stdout ?? ''}${stderr ?? ''}`
+      const failed = !!err && (err.killed === true || typeof err.code === 'string')
+      resolve({ ok: !failed && out.trim().length > 0, out })
+    })
   })
 }
 
@@ -58,7 +71,10 @@ export async function whichCli(bin: string, env: NodeJS.ProcessEnv = process.env
 
 /** The files to search: a native binary itself, else the npm package's code (its vendored binaries included). */
 async function scanTargets(path: string, npmPackage: string | undefined): Promise<string[]> {
-  if (!npmPackage || (await stat(path)).size > 2_000_000) return [path]
+  const size = (await stat(path)).size
+  if (size > 2_000_000) return [path]
+  // a small file is a launcher (an npm shim, a wrapper script): searching it alone would report every string missing
+  if (!npmPackage) throw new Error(`${path} is a launcher, not the CLI's own binary: its files were not found`)
   const candidates = [join(dirname(path), 'node_modules', ...npmPackage.split('/'))]
   // posix: the bin is a symlink into …/node_modules/<pkg>/…; walk up to the package root
   let dir = dirname(await realpath(path))
@@ -70,7 +86,7 @@ async function scanTargets(path: string, npmPackage: string | undefined): Promis
     }
   }
   const root = candidates.find((c) => existsSync(c))
-  if (!root) return [path]
+  if (!root) throw new Error(`the files of ${npmPackage} were not found next to ${path}`)
   const files: string[] = []
   let total = 0
   const walk = async (d: string): Promise<void> => {
@@ -133,18 +149,28 @@ export function inHelp(help: string, text: string): boolean {
 export async function checkCli(c: CliContract, env: NodeJS.ProcessEnv = process.env): Promise<CompatReport> {
   const path = await whichCli(c.bin, env)
   if (!path) return { engine: c.engine, installed: false, lines: [] }
-  const version = (await run(path, ['--version'], env)).trim().split(/\r?\n/)[0]
-  // nothing to read help or files from: one line, not a column of false "missing"
-  if (!version) return { engine: c.engine, installed: true, path, lines: [{ status: 'missing', kind: 'run', text: `${c.bin} --version`, why: 'the CLI did not run' }] }
-  const helps = new Map<string, Promise<string>>()
-  const help = (args: string[]): Promise<string> => {
+  const fail = (error: string): CompatReport => ({ engine: c.engine, installed: true, path, lines: [], error })
+  const v = await run(path, ['--version'], env)
+  const version = v.out.trim().split(/\r?\n/)[0]
+  if (!v.ok || !version) return fail(`${c.bin} --version did not run (timed out, or printed nothing)`)
+  // every help text first: one that did not come would turn each of its flags into a false "hidden" or "missing"
+  const helps = new Map<string, string>()
+  for (const f of c.flags) {
+    const args = f.helpArgs ?? ['--help']
     const key = args.join(' ')
-    if (!helps.has(key)) helps.set(key, run(path, args, env))
-    return helps.get(key) as Promise<string>
+    if (helps.has(key)) continue
+    const h = await run(path, args, env)
+    if (!h.ok) return fail(`${c.bin} ${key} did not run (timed out, or printed nothing)`)
+    helps.set(key, h.out)
   }
-  const found = await findStrings(await scanTargets(path, c.npmPackage), [...c.flags, ...c.strings].map((x) => x.text))
+  let found: Set<string>
+  try {
+    found = await findStrings(await scanTargets(path, c.npmPackage), [...c.flags, ...c.strings].map((x) => x.text))
+  } catch (e) {
+    return fail((e as Error).message)
+  }
   const lines: CompatLine[] = []
-  for (const f of c.flags) lines.push({ status: inHelp(await help(f.helpArgs ?? ['--help']), f.text) ? 'ok' : found.has(f.text) ? 'hidden' : 'missing', kind: 'flag', text: f.text, why: f.why })
+  for (const f of c.flags) lines.push({ status: inHelp(helps.get((f.helpArgs ?? ['--help']).join(' ')) ?? '', f.text) ? 'ok' : found.has(f.text) ? 'hidden' : 'missing', kind: 'flag', text: f.text, why: f.why })
   for (const s of c.strings) lines.push({ status: found.has(s.text) ? 'ok' : 'missing', kind: 'string', text: s.text, why: s.why })
   return { engine: c.engine, installed: true, version, path, lines }
 }

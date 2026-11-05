@@ -33,12 +33,17 @@ for (const c of CLI_CONTRACTS) {
     console.log(`skipped   ${c.engine.padEnd(7)} ${c.bin} is not on PATH`)
     continue
   }
+  if (r.error) {
+    failures++
+    console.log(`\n${c.engine}  (${r.path})\nNOT CHECKED ${r.error}`)
+    continue
+  }
   console.log(`\n${c.engine} ${r.version || '(no version output)'}  (${r.path})`)
   for (const l of r.lines) line(l.status === 'missing' ? 'MISSING' : l.status, c.engine, l.kind, l.kind === 'string' ? JSON.stringify(l.text) : l.text, l.status === 'ok' ? '' : l.why)
 }
 
 if (live) await liveProbe()
-console.log(failures ? `\n${failures} assumption(s) MISSING` : '\nall assumptions found')
+console.log(failures ? `\n${failures} assumption(s) MISSING or not checked` : '\nall assumptions found')
 process.exit(failures ? 1 : 0)
 
 /**

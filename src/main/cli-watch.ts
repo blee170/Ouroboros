@@ -80,6 +80,10 @@ export class CliWatch extends EventEmitter {
       if (installed.length === 0) return { none: 'no agent CLI was found on this PC' }
       const updates = cliUpdates(this.state, detected)
       if (updates.length === 0) return { none: `no CLI updates since the last run (${installed.map((d) => `${d.label} ${d.version}`).join(', ')})` }
+      // only a version whose check was made counts as covered: one that could not be checked comes up again next
+      // time, and when none could be, nothing is sent (the routine's row says why)
+      const checked = updates.filter((u) => this.state.engines[u.engine]?.version === u.to)
+      if (checked.length === 0) throw new Error(this.error ?? 'the compatibility check did not finish')
       const claude = updates.find((u) => u.engine === 'claude')
       let changelog: { lines: string[]; more: number } | undefined
       let changelogError: string | undefined
@@ -94,9 +98,9 @@ export class CliWatch extends EventEmitter {
         }
       }
       return {
-        text: buildDigest({ updates, state: this.state, changelog, changelogError }),
+        text: buildDigest({ updates, state: this.state, changelog, changelogError, checkError: this.error }),
         summary: updates.map((u) => `${u.label} ${u.from ? `${u.from} → ` : ''}${u.to}`).join(', '),
-        commit: () => this.review(updates)
+        commit: () => this.review(checked)
       }
     })
   }
@@ -133,14 +137,16 @@ export class CliWatch extends EventEmitter {
       const before = this.state
       const applied = applyReports(this.state, reports, versions, (this.deps.now ?? Date.now)())
       this.state = applied.state
-      this.error = undefined
+      const label = (engine: AgentEngine): string => detected.find((d) => d.engine === engine)?.label ?? engine
+      this.error = applied.failed.length ? applied.failed.map((f) => `${label(f.engine)}: ${f.error}`).join('; ') : undefined
+      if (this.error) this.log(`not checked: ${this.error}`)
       this.save()
       for (const b of applied.broke) {
         this.log(`${b.engine} ${b.version}: ${b.missing.length} assumption(s) missing: ${b.missing.map((m) => m.text).join(', ')}`)
         // once per version: a forced re-check of a version already known to be broken stays quiet
         const prev = before.engines[b.engine]
         if (prev && prev.version === b.version && prev.missing.length > 0) continue
-        this.deps.onBroke?.(detected.find((d) => d.engine === b.engine)?.label ?? b.engine, b.version, b.missing)
+        this.deps.onBroke?.(label(b.engine), b.version, b.missing)
       }
     } catch (e) {
       this.error = (e as Error).message || 'the check failed'
@@ -169,6 +175,25 @@ export class CliWatch extends EventEmitter {
   }
 }
 
+/** A response's body as text, read up to `max` bytes (the changelog is newest first: what is cut off is the oldest). */
+export async function readTextCapped(r: { body: ReadableStream<Uint8Array> | null }, max: number): Promise<string> {
+  if (!r.body) return ''
+  const reader = r.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value.subarray(0, max - size))
+    size += value.length
+    if (size >= max) {
+      await reader.cancel().catch(() => undefined)
+      break
+    }
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
 /**
  * Run the check in its own process (out/main/cli-compat-run.js) with a system node, or the app binary as node.
  * `env` carries the PATH the CLIs are looked up on.
@@ -176,8 +201,10 @@ export class CliWatch extends EventEmitter {
 export function runCompatCheck(opts: { script: string; nodeBin?: string; execPath: string; env: NodeJS.ProcessEnv }, engines: AgentEngine[]): Promise<CheckReport[]> {
   return new Promise((resolve, reject) => {
     if (!existsSync(opts.script)) return reject(new Error('the check script is not built (out/main/cli-compat-run.js)'))
-    const env = { ...opts.env, ...(opts.nodeBin ? {} : { ELECTRON_RUN_AS_NODE: '1' }) }
-    execFile(opts.nodeBin ?? opts.execPath, [opts.script, ...engines], { env, timeout: 180_000, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
+    // a node that is a .cmd shim cannot be started without a shell: the app's own binary runs the script then
+    const node = opts.nodeBin && !/\.(cmd|bat)$/i.test(opts.nodeBin) ? opts.nodeBin : undefined
+    const env = { ...opts.env, ...(node ? {} : { ELECTRON_RUN_AS_NODE: '1' }) }
+    execFile(node ?? opts.execPath, [opts.script, ...engines], { env, timeout: 180_000, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
       if (err) return reject(new Error(`the check did not finish: ${String(stderr || err.message).slice(0, 200)}`))
       try {
         const reports = JSON.parse(stdout) as unknown

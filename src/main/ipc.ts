@@ -305,9 +305,13 @@ function runRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boole
  * now; what became of it is noted on the routine when the look is done.
  */
 function runCliWatchRoutine(ctx: MainContext, s: WindowSession, r: Routine): { ok: boolean; text: string } {
+  const root = s.board.projectRoot
   void ctx.cliWatch
     .digest()
     .then((d) => {
+      // the look takes up to a few minutes: the window may show another project by now, or the routine may be gone.
+      // Nothing is sent then (a card of the same title in the other project is not this routine's card)
+      if (s.board.projectRoot !== root || !s.routines.list().some((x) => x.id === r.id)) return
       if ('none' in d) return s.routines.note(r.id, true, d.none)
       // the board may have changed while the CLIs were checked: find the card again
       const nodes = [...s.board.nodes.values()].map((n) => ({ id: n.id, title: n.data.title, kind: n.data.kind }))
@@ -2436,6 +2440,8 @@ export function registerIpc(ctx: MainContext): void {
     if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
     try {
       ctx.windows.bindNode(opts.nodeId, s.id)
+      // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
+      endCardSubagents(s, opts.nodeId)
       await throttledSpawn(() => ptys.spawn(opts))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'idle', statusDetail: 'shell' })
@@ -2526,6 +2532,8 @@ export function registerIpc(ctx: MainContext): void {
       }
       // only what WSLENV names crosses into Linux (and from there into the Windows helpers): the card's own variables
       if (wsl) launchEnv.WSLENV = wslEnvNames([...Object.keys(launchEnv), ...WSL_HELPER_ENV], process.env.WSLENV)
+      // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
+      endCardSubagents(s, opts.nodeId)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: launchEnv, omitEnv }))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })

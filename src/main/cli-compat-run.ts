@@ -8,6 +8,8 @@ import { checkCli, type CompatReport } from './cli-compat'
 
 async function main(argv: string[]): Promise<void> {
   const only = argv.filter((a) => !a.startsWith('-'))
+  // the app may run this file with its own binary as node: the CLIs it starts must not inherit that switch
+  delete process.env.ELECTRON_RUN_AS_NODE
   const reports: CompatReport[] = []
   for (const c of CLI_CONTRACTS) {
     if (only.length && !only.includes(c.engine)) continue
@@ -15,7 +17,7 @@ async function main(argv: string[]): Promise<void> {
       reports.push(await checkCli(c))
     } catch (e) {
       // one CLI that cannot be read does not hide the others
-      reports.push({ engine: c.engine, installed: true, lines: [{ status: 'missing', kind: 'run', text: `${c.bin}: the check failed`, why: (e as Error).message }] })
+      reports.push({ engine: c.engine, installed: true, lines: [], error: (e as Error).message || 'the check failed' })
     }
   }
   process.stdout.write(JSON.stringify(reports))

@@ -105,7 +105,7 @@ export function RoutinesPanel() {
           )}
           <label>
             <span>When</span>
-            <select value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value as RoutineSchedule })}>
+            <select value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value as RoutineSchedule, ...(e.target.value === 'weekly' && form.weekday === undefined ? { weekday: 1 } : {}) })}>
               <option value="manual">Button only</option>
               <option value="daily">Every day</option>
               <option value="weekdays">Weekdays (Mon–Fri)</option>

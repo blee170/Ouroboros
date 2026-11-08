@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OuroChannel, OuroSettingsView, OuroStatusView } from '@shared/ouro'
+import { OuroCallSettings } from './OuroCallSettings'
 
 const STATE: Record<OuroStatusView['state'], string> = { off: 'Off', connecting: 'Connecting…', ready: 'Connected', retrying: 'Reconnecting', failed: 'Stopped' }
 
@@ -38,8 +39,8 @@ export function OuroSettings() {
   }, [])
   if (!status) return note ? <div className="small error-text">Ouro: {note.text}</div> : null
   const configure = async (patch: Partial<OuroSettingsView>): Promise<void> => {
-    const { enabled, ownerId, notify, approvals, channels } = { ...(latest.current ?? status), ...patch }
-    setStatus(await window.ouroboros.ouro.configure({ enabled, ownerId, notify, approvals, channels }))
+    const { enabled, ownerId, notify, approvals, mentions, channels } = { ...(latest.current ?? status), ...patch }
+    setStatus(await window.ouroboros.ouro.configure({ enabled, ownerId, notify, approvals, mentions, channels }))
   }
   const editRow = (i: number, patch: Partial<OuroChannel>): void => setRows((r) => (r ?? []).map((c, j) => (j === i ? { ...c, ...patch } : c)))
   const saveRows = (next?: OuroChannel[]): Promise<void> => configure({ channels: next ?? rows ?? [] })
@@ -95,6 +96,9 @@ export function OuroSettings() {
       <label className="check">
         <input type="checkbox" checked={status.approvals} onChange={(e) => void configure({ approvals: e.target.checked })} /> Let me approve and answer by voice (off: Ouro reads them out and sends me to the PC)
       </label>
+      <label className="check">
+        <input type="checkbox" checked={status.mentions} onChange={(e) => void configure({ mentions: e.target.checked })} /> Tell me when someone @mentions me or replies to me in a server the bot is in (a DM; with Phone calls on, a call after the wait)
+      </label>
       <div className="field">
         <span>Channels cards may post to</span>
         <div className="ctl ouro-channels">
@@ -136,6 +140,7 @@ export function OuroSettings() {
       <div className="hint">
         Setup: in the Discord developer portal make an application, turn on <b>Message Content Intent</b> on its Bot tab and copy the token here; invite the bot to a server you are in (OAuth2 → URL Generator → <code>bot</code>, Send Messages), so it can DM you.
       </div>
+      <OuroCallSettings />
     </section>
   )
 }

@@ -59,13 +59,13 @@ function harness() {
 }
 
 describe('DiscordBot gateway', () => {
-  it('identifies with the DM and content intents on hello, then heartbeats with the last sequence', () => {
+  it('identifies with the guild, DM and content intents on hello, then heartbeats with the last sequence', () => {
     const h = harness()
     h.bot.start()
     const ws = h.ws()
     expect(ws.url).toContain('gateway.discord.gg')
     ws.push({ op: 10, d: { heartbeat_interval: 1000 } })
-    expect(ws.sent[0]).toMatchObject({ op: 2, d: { token: 'tok.en', intents: (1 << 12) | (1 << 15) } })
+    expect(ws.sent[0]).toMatchObject({ op: 2, d: { token: 'tok.en', intents: (1 << 9) | (1 << 12) | (1 << 15) } })
     ws.push({ op: 0, s: 7, t: 'READY', d: { user: { username: 'Ouro' } } })
     expect(h.bot.state).toBe('ready')
     expect(h.bot.username).toBe('Ouro')
@@ -188,5 +188,50 @@ describe('post to a channel', () => {
     expect(h.calls).toEqual([])
     h.setStatus(403)
     await expect(h.bot.post('123456789012345678', 'hi')).rejects.toThrow('Discord POST /channels/…/messages → 403')
+  })
+})
+
+describe('DiscordBot mentions', () => {
+  it('tells when someone asks for the owner, and when the owner answers in a server channel', () => {
+    const h = harness()
+    const got: unknown[] = []
+    h.bot.on('mention', (m) => got.push(['mention', m]))
+    h.bot.on('ownerSpoke', (m) => got.push(['ownerSpoke', m]))
+    h.bot.on('message', (m) => got.push(['message', m]))
+    h.bot.start()
+    const ws = h.ws()
+    // a server message that does not ask for the owner: nothing
+    ws.push({ op: 0, s: 1, t: 'MESSAGE_CREATE', d: { id: '1', channel_id: 'c1', guild_id: 'g', content: 'lunch?', author: { id: '123', username: 'noah' }, mentions: [] } })
+    // an @mention, a reply to the owner, a DM to the bot from someone else
+    ws.push({ op: 0, s: 2, t: 'MESSAGE_CREATE', d: { id: '2', channel_id: 'c1', guild_id: 'g', content: `<@${OWNER}> we got hacked`, author: { id: '123', username: 'noah', global_name: 'Noah K' }, mentions: [{ id: OWNER }] } })
+    ws.push({ op: 0, s: 3, t: 'MESSAGE_CREATE', d: { id: '3', channel_id: 'c1', guild_id: 'g', content: 'any news?', author: { id: '123', username: 'noah' }, mentions: [], referenced_message: { author: { id: OWNER } } } })
+    ws.push({ op: 0, s: 4, t: 'MESSAGE_CREATE', d: { id: '4', channel_id: 'dm9', content: 'hi there', author: { id: '456', username: 'mia' } } })
+    // a bot, and the owner in the channel
+    ws.push({ op: 0, s: 5, t: 'MESSAGE_CREATE', d: { id: '5', channel_id: 'c1', guild_id: 'g', content: `<@${OWNER}> bot ping`, author: { id: '789', bot: true }, mentions: [{ id: OWNER }] } })
+    ws.push({ op: 0, s: 6, t: 'MESSAGE_CREATE', d: { id: '6', channel_id: 'c1', guild_id: 'g', content: 'on it', author: { id: OWNER } } })
+    ws.push({ op: 0, s: 7, t: 'MESSAGE_CREATE', d: { id: '7', channel_id: 'dm1', content: '상황 어때', author: { id: OWNER } } })
+    expect(got).toEqual([
+      ['mention', { id: '2', channelId: 'c1', guildId: 'g', author: 'Noah K', text: `<@${OWNER}> we got hacked`, kind: 'mention' }],
+      ['mention', { id: '3', channelId: 'c1', guildId: 'g', author: 'noah', text: 'any news?', kind: 'reply' }],
+      ['mention', { id: '4', channelId: 'dm9', guildId: undefined, author: 'mia', text: 'hi there', kind: 'dm' }],
+      ['ownerSpoke', { channelId: 'c1' }],
+      ['message', { id: '7', channelId: 'dm1', text: '상황 어때' }]
+    ])
+  })
+  it('identifies with the guild, DM and content intents', () => {
+    const h = harness()
+    h.bot.start()
+    const ws = h.ws()
+    ws.push({ op: 10, d: { heartbeat_interval: 45_000 } })
+    const identify = ws.sent.find((m) => m.op === 2) as { d: { intents: number } }
+    expect(identify.d.intents).toBe((1 << 9) | (1 << 12) | (1 << 15))
+  })
+  it('looks a channel name up once and lives without one', async () => {
+    const h = harness()
+    const fetchCalls = h.calls
+    expect(await h.bot.channelName('555')).toBe('')
+    expect(fetchCalls).toHaveLength(1)
+    expect(await h.bot.channelName('555')).toBe('')
+    expect(fetchCalls).toHaveLength(1)
   })
 })

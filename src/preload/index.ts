@@ -149,6 +149,13 @@ const api: OuroborosApi = {
     setToken: (token) => ipcRenderer.invoke(IPC.ouroSetToken, token),
     test: () => ipcRenderer.invoke(IPC.ouroTest)
   },
+  ouroCall: {
+    status: () => ipcRenderer.invoke(IPC.ouroCallStatus),
+    configure: (patch) => ipcRenderer.invoke(IPC.ouroCallConfigure, patch),
+    setSecret: (kind, value) => ipcRenderer.invoke(IPC.ouroCallSetSecret, kind, value),
+    provision: () => ipcRenderer.invoke(IPC.ouroCallProvision),
+    test: () => ipcRenderer.invoke(IPC.ouroCallTest)
+  },
   phone: {
     status: () => ipcRenderer.invoke(IPC.phoneStatus),
     interfaces: () => ipcRenderer.invoke(IPC.phoneInterfaces),

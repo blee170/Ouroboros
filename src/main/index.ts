@@ -10,6 +10,7 @@ import { BrowserManager } from './browser-manager'
 import { HookServer, PREFERRED_HOOK_PORT } from './hook-server'
 import type { PhoneServer } from './phone-server'
 import type { Ouro } from './ouro'
+import type { VoiceCaller } from './voice-call'
 import { globalExternalHooksInstalled, loadExternalToken, setGlobalExternalHooks } from './external'
 
 /** The external-hook token; an unwritable data folder must not stop the app (outside sessions just go unseen). */
@@ -21,7 +22,7 @@ function externalTokenOrNull(): string | undefined {
     return undefined
   }
 }
-import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveCompatScriptPath, resolveMcpScriptPath, createPhone, createGrokReply, createOuro, applyOuro, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
+import { registerVoiceHotkey, publishReleaseNotes, createSession, initialProjectArg, projectFromArgv, registerIpc, resolveCompatScriptPath, resolveMcpScriptPath, createPhone, createGrokReply, createOuro, createOuroCall, applyOuro, replyServerWanted, warmCallBase, routeExternalHook, routeGate, routeHook, type MainContext, type WindowSession } from './ipc'
 import { RoleLibrary } from './roles'
 import { BoardTrust } from './board-trust'
 import { onBoardWritten } from './workspace-store'
@@ -177,6 +178,7 @@ async function main(): Promise<void> {
     phone: null as unknown as PhoneServer,
     grokReply: null as unknown as MainContext['grokReply'],
     ouro: null as unknown as Ouro,
+    ouroCall: null as unknown as VoiceCaller,
     boardTrust: new BoardTrust(join(app.getPath('userData'), 'board-trust.json'), log),
     usage: new UsageMonitor({ home: homedir(), env: process.env, now: Date.now, fetch: (url, init) => fetch(url, init), detect: detectEngines }),
     cliWatch: new CliWatch({
@@ -230,6 +232,7 @@ async function main(): Promise<void> {
   ctx.phone = createPhone(ctx)
   ctx.grokReply = createGrokReply(ctx)
   ctx.ouro = createOuro(ctx)
+  ctx.ouroCall = createOuroCall(ctx)
   registerIpc(ctx)
   // the microphone is for the app's own window (the voice composer), audio only: a page in a browser card (its own
   // persist:ouroboros-browser session) gets neither mic nor camera. Everything else keeps Electron's default (allowed).
@@ -267,13 +270,16 @@ async function main(): Promise<void> {
   }
 
   applyOuro(ctx)
+  // Ouro's calls need the Funnel address: asked of Tailscale once when nothing in the settings names it
+  if (store.getSettings().ouroCall?.enabled) void warmCallBase(ctx).catch((err) => log(`[ouro-call] funnel address: ${(err as Error).message}`))
   const replyView = store.getSettings().grokReply
-  if (replyView?.enabled)
-    void ctx.grokReply.server.apply(true, replyView.port).then((err) => {
+  const replyWant = replyServerWanted(store.getSettings())
+  if (replyWant.on)
+    void ctx.grokReply.server.apply(true, replyWant.port).then((err) => {
       if (!err) return
       log(`[grok-reply] not started: ${err}`)
-      // Grok Bot's replies would be refused at Funnel until this is fixed: said once, not left in a log
-      if (Notification.isSupported()) new Notification({ title: 'Grok Bot replies are off', body: `The reply server did not start: ${err}. Settings → Grok Bot.` }).show()
+      // Grok Bot's replies (and Ouro's call webhooks) would be refused at Funnel until this is fixed: said once, not left in a log
+      if (Notification.isSupported()) new Notification({ title: 'The reply server is off', body: `It did not start: ${err}. Settings → Grok Bot or Ouro.` }).show()
     })
 
   const replyIssue = replyView?.githubIssue ? issueRef(replyView.githubIssue) : undefined

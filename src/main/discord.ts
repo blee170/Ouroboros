@@ -8,8 +8,9 @@ import type { OuroBotState } from '@shared/ouro'
 
 const GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json'
 const API = 'https://discord.com/api/v10'
-// DIRECT_MESSAGES (1<<12) and MESSAGE_CONTENT (1<<15): the content intent must be switched on in the developer portal
-const INTENTS = (1 << 12) | (1 << 15)
+// GUILD_MESSAGES (1<<9), DIRECT_MESSAGES (1<<12) and MESSAGE_CONTENT (1<<15): the content intent must be switched on in
+// the developer portal. Server messages are read only to notice someone asking for the owner; the rest are dropped here.
+const INTENTS = (1 << 9) | (1 << 12) | (1 << 15)
 const CHUNK = 1900
 const FATAL: Record<number, string> = {
   4004: 'Discord refused the bot token (4004): copy it again from the developer portal (Bot → Reset Token)',
@@ -21,6 +22,17 @@ export interface DiscordMessage {
   id: string
   channelId: string
   text: string
+}
+
+/** Someone other than the owner asked for the owner: an @mention or a reply to them in a server, or a DM to the bot. */
+export interface DiscordMention {
+  id: string
+  channelId: string
+  guildId?: string
+  /** the writer's display name */
+  author: string
+  text: string
+  kind: 'mention' | 'reply' | 'dm'
 }
 
 interface WsLike {
@@ -42,7 +54,8 @@ export interface DiscordDeps {
 export type DiscordState = OuroBotState
 
 /**
- * Events: 'ready' (bot username), 'message' (DiscordMessage from the owner's DM), 'state' (DiscordState, detail).
+ * Events: 'ready' (bot username), 'message' (DiscordMessage from the owner's DM), 'mention' (DiscordMention: someone
+ * asked for the owner), 'ownerSpoke' ({ channelId }: the owner wrote in a server channel), 'state' (DiscordState, detail).
  * A fatal close (bad token, intent off) stops it for good; anything else reconnects, waiting 2 s up to 60 s.
  */
 export class DiscordBot extends EventEmitter {
@@ -57,6 +70,8 @@ export class DiscordBot extends EventEmitter {
   private backoff = 2000
   private dmChannel?: string
   private stopped = true
+  /** server channel names, looked up once each (a mention says where it was written) */
+  private channelNames = new Map<string, string>()
   private readonly d: Required<DiscordDeps>
 
   constructor(
@@ -128,6 +143,23 @@ export class DiscordBot extends EventEmitter {
         throw new Error(k ? `${m}; ${k} of ${parts.length} parts were posted` : m)
       }
     }
+  }
+
+  /** A server channel's name ("#general"), fetched once; '' when Discord will not say. */
+  async channelName(channelId: string): Promise<string> {
+    const known = this.channelNames.get(channelId)
+    if (known !== undefined) return known
+    let name = ''
+    try {
+      const ch = (await this.api('GET', `/channels/${channelId}`)) as { name?: string } | undefined
+      name = typeof ch?.name === 'string' && ch.name ? `#${ch.name.slice(0, 60)}` : ''
+    } catch {
+      /* not known: the mention is still told, without the channel's name */
+    }
+    // a bot in a busy server is asked about many channels; the oldest names go first
+    if (this.channelNames.size >= 200) this.channelNames.delete(this.channelNames.keys().next().value!)
+    this.channelNames.set(channelId, name)
+    return name
   }
 
   private async api(method: string, path: string, body?: unknown, again = true): Promise<unknown> {
@@ -255,12 +287,24 @@ export class DiscordBot extends EventEmitter {
           this.emit('ready', this.username)
         } else if (msg.t === 'MESSAGE_CREATE') {
           const d = msg.d ?? {}
-          const author = (d.author ?? {}) as { id?: string; bot?: boolean }
-          // the owner's direct messages only: a server channel has a guild_id, and bots (Ouro itself) are skipped
-          if (d.guild_id || author.bot || author.id !== this.ownerId) return
+          const author = (d.author ?? {}) as { id?: string; bot?: boolean; username?: string; global_name?: string | null }
+          // bots (Ouro itself) are skipped
+          if (author.bot) return
           const channelId = String(d.channel_id ?? '')
-          if (channelId) this.dmChannel = channelId
-          this.emit('message', { id: String(d.id ?? ''), channelId, text: String(d.content ?? '') } satisfies DiscordMessage)
+          const id = String(d.id ?? '')
+          if (author.id === this.ownerId) {
+            // the owner in a server channel: not a command, but it answers whoever asked for them there
+            if (d.guild_id) return void this.emit('ownerSpoke', { channelId })
+            if (channelId) this.dmChannel = channelId
+            return void this.emit('message', { id, channelId, text: String(d.content ?? '') } satisfies DiscordMessage)
+          }
+          // someone else: told only when they ask for the owner (an @mention, a reply to the owner's message, a DM to the bot)
+          const mentions = Array.isArray(d.mentions) ? (d.mentions as { id?: string }[]) : []
+          const repliedTo = (d.referenced_message as { author?: { id?: string } } | undefined)?.author?.id
+          const kind: DiscordMention['kind'] | undefined = !d.guild_id ? 'dm' : mentions.some((u) => u?.id === this.ownerId) ? 'mention' : repliedTo === this.ownerId ? 'reply' : undefined
+          if (!kind || !channelId) return
+          const author_name = String(author.global_name || author.username || '').slice(0, 40) || 'someone'
+          this.emit('mention', { id, channelId, guildId: d.guild_id ? String(d.guild_id) : undefined, author: author_name, text: String(d.content ?? ''), kind } satisfies DiscordMention)
         }
     }
   }

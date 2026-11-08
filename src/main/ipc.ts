@@ -1,4 +1,5 @@
-import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, globalShortcut, ipcMain, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, ClipboardItem, Notification, app, clipboard, dialog, globalShortcut, ipcMain, powerMonitor, powerSaveBlocker, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { transcribe } from './stt'
 import { voiceSettings, type VoiceSettings } from '@shared/voice'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -76,7 +77,9 @@ import type { UsageMonitor } from './usage'
 import { OWNER, cleanLine, cleanText, formatTasks, toApiResult, type Task, type TaskInput, type TaskPatch } from '@shared/ledger'
 import { OWNER_ACTION_LIMITS, approvalMessage, didMessage, holdMessage, ownerNeed } from '@shared/owner-action'
 import { Ouro } from './ouro'
+import { CallLog, VoiceCaller } from './voice-call'
 import { conductorPrompt, ouroSettings, type OuroNeed, type OuroSettingsView, type OuroStatus, type OuroStatusView } from '@shared/ouro'
+import { ouroCallSettings, publicBaseOf, type OuroCallSettingsView, type OuroCallStatusView } from '@shared/ouro-call'
 
 /** Cards that can still work: a claim by one of them holds, a claim by an ended card can be taken over. */
 const samePath = (x: string, y: string): boolean => x.replace(/[\\/]+$/, '').toLowerCase() === y.replace(/[\\/]+$/, '').toLowerCase()
@@ -150,6 +153,8 @@ export interface MainContext {
   grokReply: { store: ReplyStore; server: GrokReplyServer; mailbox: GitHubMailbox }
   /** Ouro, the owner on Discord (off unless the owner turns it on in Settings → Ouro). */
   ouro: Ouro
+  /** Ouro's phone calls (off unless the owner turns them on in Settings → Ouro → Phone calls); its webhooks ride on grokReply.server. */
+  ouroCall: VoiceCaller
   /** Account usage per engine (plan windows from the cards' status lines, Codex rollouts, Gemini sessions). */
   usage: UsageMonitor
   /** The CLI compatibility check, re-run when an installed CLI's version changes (Settings → Engines, the CLI-watch routine). */
@@ -1231,11 +1236,87 @@ export function createOuro(ctx: MainContext): Ouro {
   })
 }
 
-/** Settings → Ouro onto the bot: started, restarted on a new token or owner, stopped when off. */
+/** Settings → Ouro onto the bot: started, restarted on a new token or owner, stopped when off. The phone goes with it. */
 export function applyOuro(ctx: MainContext): void {
   const st = ctx.store.getSettings()
   const v = ouroSettings(st.ouro)
-  ctx.ouro.configure({ enabled: v.enabled, token: decryptToken(st.ouroTokenEnc) || undefined, ownerId: v.ownerId, notify: v.notify, approvals: v.approvals, channels: v.channels })
+  const call = ouroCallSettings(st.ouroCall)
+  ctx.ouro.configure({ enabled: v.enabled, token: decryptToken(st.ouroTokenEnc) || undefined, ownerId: v.ownerId, notify: v.notify, approvals: v.approvals, channels: v.channels, mentions: v.mentions, replyText: call.replyText })
+  ctx.ouroCall.configure(call, { twilioToken: decryptToken(st.ouroCallTwilioTokenEnc), elevenKey: ttsKeyFor(st, 'elevenlabs'), toolKey: decryptToken(st.ouroCallToolKeyEnc), webhookSecret: decryptToken(st.ouroCallWebhookSecretEnc) }, callBase(st))
+  ctx.ouro.setCaller(
+    call.enabled
+      ? async (needs, lang) => {
+          // the Settings panel is what usually asks Tailscale for the Funnel address; a call with none known asks itself
+          if (!callBase(ctx.store.getSettings())) await warmCallBase(ctx)
+          return ctx.ouroCall.call(needs, lang)
+        }
+      : undefined,
+    call.waitMinutes
+  )
+}
+
+/** The Funnel origin Tailscale suggested (filled in once asked; the Grok reply address or the setting win over it). */
+let suggestedBase = ''
+let suggestedAskedAt = 0
+
+/** The https origin Twilio and ElevenLabs reach this PC at: the call setting, else the Grok reply address, else Tailscale's suggestion. */
+function callBase(st: AppSettings): string {
+  return ouroCallSettings(st.ouroCall).publicBase || publicBaseOf(st.grokReply?.publicUrl) || suggestedBase
+}
+
+/** Asks Tailscale once for this PC's Funnel address when nothing else names it, and applies it. */
+export async function warmCallBase(ctx: MainContext): Promise<void> {
+  // the Settings panel polls every few seconds: `tailscale status` is run at most once a minute
+  if (suggestedBase || Date.now() - suggestedAskedAt < 60_000) return
+  suggestedAskedAt = Date.now()
+  const url = await suggestedReplyUrl()
+  if (!url) return
+  suggestedBase = publicBaseOf(url)
+  applyOuro(ctx)
+}
+
+/** Whether the loopback reply server should run (Grok replies or Ouro's calls), and on which port. */
+export function replyServerWanted(st: AppSettings): { on: boolean; port: number } {
+  return { on: st.grokReply?.enabled === true || ouroCallSettings(st.ouroCall).enabled, port: st.grokReply?.port ?? DEFAULT_REPLY_PORT }
+}
+
+/** The phone: Twilio places the call, ElevenLabs holds it, the board and Ouro's rules are reached through this bridge. */
+export function createOuroCall(ctx: MainContext): VoiceCaller {
+  const store = new CallLog(join(app.getPath('userData'), 'ouro-calls.json'), log)
+  const caller = new VoiceCaller(
+    store,
+    {
+      needs: () => ctx.ouro.voiceNeeds(),
+      status: (lang) => ctx.ouro.voiceStatus(lang),
+      act: (ref, action, answer, lang) => ctx.ouro.voiceAct(ref, action, answer, lang),
+      reached: () => ctx.ouro.ownerReached(),
+      tell: (text) => ctx.ouro.dm(text),
+      note: (line) => {
+        log(`[ouro-call] ${line}`)
+        for (const w of ctx.windows.all()) w.autonomy.notePhone(`Ouro (phone): ${line}`)
+      },
+      log
+    },
+    { idleSeconds: () => powerMonitor.getSystemIdleTime() }
+  )
+  // the call webhooks share the Grok reply server (127.0.0.1 behind Tailscale Funnel)
+  ctx.grokReply.server.extra = caller.handle
+  return caller
+}
+
+function ouroCallStatus(ctx: MainContext): OuroCallStatusView {
+  const st = ctx.store.getSettings()
+  return {
+    ...ouroCallSettings(st.ouroCall),
+    hasTwilioToken: Boolean(decryptToken(st.ouroCallTwilioTokenEnc)),
+    hasElevenKey: Boolean(ttsKeyFor(st, 'elevenlabs')),
+    hasWebhookSecret: Boolean(decryptToken(st.ouroCallWebhookSecretEnc)),
+    hasToolKey: Boolean(decryptToken(st.ouroCallToolKeyEnc)),
+    baseUrl: callBase(st),
+    serverListening: ctx.grokReply.server.listening,
+    serverError: ctx.grokReply.server.error,
+    ...ctx.ouroCall.status()
+  }
 }
 
 function ouroStatus(ctx: MainContext): OuroStatusView {
@@ -2781,6 +2862,49 @@ export function registerIpc(ctx: MainContext): void {
     return ouroStatus(ctx)
   })
   ipcMain.handle(IPC.ouroTest, () => ctx.ouro.test())
+  ipcMain.handle(IPC.ouroCallStatus, async () => {
+    await warmCallBase(ctx)
+    return ouroCallStatus(ctx)
+  })
+  ipcMain.handle(IPC.ouroCallConfigure, async (_e, patch: Partial<OuroCallSettingsView>) => {
+    const prev = ctx.store.getSettings().ouroCall ?? {}
+    const v = ouroCallSettings({ ...prev, ...(patch && typeof patch === 'object' ? patch : {}) })
+    ctx.store.setSettings({ ouroCall: v })
+    applyOuro(ctx)
+    const st = ctx.store.getSettings()
+    const want = replyServerWanted(st)
+    const err = await ctx.grokReply.server.apply(want.on, want.port)
+    if (err) log(`[ouro-call] reply server not started: ${err}`)
+    log(`[ouro-call] settings: ${v.enabled ? 'on' : 'off'}, after ${v.waitMinutes} min, quiet ${v.quietFrom}–${v.quietTo}, ${v.maxPerDay} a day, ${v.maxMinutes} min each`)
+    return ouroCallStatus(ctx)
+  })
+  ipcMain.handle(IPC.ouroCallSetSecret, (_e, kind: string, value: string) => {
+    const clean = String(value ?? '').replace(/\s+/g, '')
+    const enc = encryptToken(clean) || undefined
+    if (kind === 'twilio') ctx.store.setSettings({ ouroCallTwilioTokenEnc: enc })
+    else if (kind === 'webhook') ctx.store.setSettings({ ouroCallWebhookSecretEnc: enc })
+    else if (kind === 'elevenlabs') ctx.store.setSettings(ttsKeyPatch(ctx.store.getSettings(), 'elevenlabs', clean))
+    else return ouroCallStatus(ctx)
+    applyOuro(ctx)
+    log(`[ouro-call] ${kind} secret ${clean ? 'saved' : 'cleared'}`)
+    return ouroCallStatus(ctx)
+  })
+  ipcMain.handle(IPC.ouroCallProvision, async () => {
+    // the key the agent's tool will send: made once, kept encrypted, never shown
+    if (!decryptToken(ctx.store.getSettings().ouroCallToolKeyEnc)) {
+      ctx.store.setSettings({ ouroCallToolKeyEnc: encryptToken(randomBytes(24).toString('hex')) })
+      applyOuro(ctx)
+    }
+    const r = await ctx.ouroCall.provision()
+    if (!r.ok) {
+      log(`[ouro-call] provision failed: ${r.error}`)
+      return r
+    }
+    ctx.store.setSettings({ ouroCall: ouroCallSettings({ ...ctx.store.getSettings().ouroCall, agentId: r.agentId, toolId: r.toolId }) })
+    applyOuro(ctx)
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.ouroCallTest, () => ctx.ouroCall.test())
   ipcMain.handle(IPC.phoneStatus, () => phoneStatus(ctx))
   ipcMain.handle(IPC.phoneInterfaces, () => phoneInterfaces())
   ipcMain.handle(IPC.phoneConfigure, async (_e, view: PhoneSettingsView) => {
@@ -2893,7 +3017,8 @@ export function registerIpc(ctx: MainContext): void {
     }
     // only the issue changed: the reply server keeps running as it is
     if (input?.enabled === undefined && input?.publicUrl === undefined) return { ok: true }
-    const err = await ctx.grokReply.server.apply(next.enabled, next.port)
+    // Ouro's call webhooks ride on the same server: it stays up for them when Grok replies go off
+    const err = await ctx.grokReply.server.apply(replyServerWanted({ ...store.getSettings(), grokReply: next }).on, next.port)
     log(`[grok-reply] ${next.enabled ? (err ? `not started: ${err}` : 'on') : 'off'}`)
     return err ? { ok: false, error: err } : { ok: true }
   })

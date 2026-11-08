@@ -140,3 +140,29 @@ describe('GrokReplyServer', () => {
     await expect(fetch(s.url + '/grok/reply', { method: 'POST' })).rejects.toThrow()
   })
 })
+
+describe('GrokReplyServer extra routes', () => {
+  let server: GrokReplyServer | undefined
+  afterEach(() => server?.stop())
+  it('hands other paths to the extra handler before the 404, and leaves the reply route alone', async () => {
+    const store = new ReplyStore(join(dir, `x-${Math.random().toString(36).slice(2)}.json`))
+    const key = store.makeKey()
+    server = new GrokReplyServer(store, () => ({ status: 200, body: { ok: true } }))
+    const seen: string[] = []
+    server.extra = async (req, res, path) => {
+      seen.push(`${req.method} ${path}`)
+      if (path !== '/ouro/call/answer') return false
+      res.writeHead(200, { 'content-type': 'application/xml' }).end('<Response/>')
+      return true
+    }
+    expect(await server.apply(true, 0)).toBeUndefined()
+    const url = `http://127.0.0.1:${server.port}`
+    const a = await fetch(`${url}/ouro/call/answer?c=1`, { method: 'POST', body: 'a=b' })
+    expect(a.status).toBe(200)
+    expect(await a.text()).toBe('<Response/>')
+    expect((await fetch(`${url}/elsewhere`)).status).toBe(404)
+    const r = await fetch(`${url}/grok/reply`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ kind: 'test' }) })
+    expect(r.status).toBe(200)
+    expect(seen).toEqual(['POST /ouro/call/answer', 'GET /elsewhere'])
+  })
+})

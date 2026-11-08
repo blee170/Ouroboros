@@ -9,10 +9,11 @@ export type Lang = 'ko' | 'en'
 
 /** Something on the board waiting on the owner, as Ouro reads it out. */
 export interface OuroNeed {
-  /** window-scoped id: `<window>-D3` (question), `<window>-A2` (gate approval), `<window>-T46` (task) or `<window>-P:<card>` */
+  /** window-scoped id: `<window>-D3` (question), `<window>-A2` (gate approval), `<window>-T46` (task) or `<window>-P:<card>`; a mention is `M:<channel>:<message>` */
   ref: string
-  kind: 'question' | 'approval' | 'task-approve' | 'task-do' | 'task-either' | 'permission'
-  /** the card (or task) it belongs to */
+  /** mention: someone asked for the owner on Discord (an @mention, a reply to the owner, a DM to the bot); Ouro keeps it itself, the board never sees it */
+  kind: 'question' | 'approval' | 'task-approve' | 'task-do' | 'task-either' | 'permission' | 'mention'
+  /** the card (or task) it belongs to; for a mention, the channel and who wrote */
   title: string
   text: string
   /** question: the answers to pick from */
@@ -37,6 +38,8 @@ export type Intent =
   | { type: 'no' }
   | { type: 'approve' }
   | { type: 'hold' }
+  /** to a mention: post the canned "I will look soon" line in that channel for the owner */
+  | { type: 'reply' }
   | { type: 'pick'; index: number }
   | { type: 'tell'; text: string }
 
@@ -84,6 +87,7 @@ const NEXT = /^(?:다음|다음\s*(?:거|건|것)|next|next one)[\s.!?~]*$/i
 const HELP = /^(도움|도움말|명령|help|\?)$/i
 const APPROVE = word('허가|허가해|허가해줘|승인|승인해|해도\s*돼|진행해|approve|go ahead')
 const HOLD = word('보류|나중에|기다려|하지\s*마|hold|not now|wait')
+const REPLY = word('답장|답장해|답장해줘|대신\s*답해|대신\s*답장|reply')
 const ORDINAL: Record<string, number> = { 첫: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4, one: 1, first: 1, two: 2, second: 2, three: 3, third: 3, four: 4, fourth: 4 }
 
 /** Pure: what a message from the owner asks for. */
@@ -100,6 +104,7 @@ export function intentOf(raw: string): Intent {
   if (NEXT.test(t)) return { type: 'next' }
   if (APPROVE.test(t)) return { type: 'approve' }
   if (HOLD.test(t)) return { type: 'hold' }
+  if (REPLY.test(t)) return { type: 'reply' }
   return { type: 'tell', text: t.slice(0, OURO_LIMITS.inChars) }
 }
 
@@ -168,7 +173,8 @@ const KIND_KO: Record<OuroNeed['kind'], string> = {
   'task-approve': '허가 요청',
   'task-do': '직접 하셔야 하는 일',
   'task-either': '결정 요청',
-  permission: '권한 확인'
+  permission: '권한 확인',
+  mention: '사장님을 찾는 메시지'
 }
 const KIND_EN: Record<OuroNeed['kind'], string> = {
   question: 'a question',
@@ -176,7 +182,8 @@ const KIND_EN: Record<OuroNeed['kind'], string> = {
   'task-approve': 'an approval',
   'task-do': 'something only you can do',
   'task-either': 'a decision',
-  permission: 'a permission prompt'
+  permission: 'a permission prompt',
+  mention: 'a message asking for you'
 }
 
 /** Pure: how to answer a need, said after it. */
@@ -194,6 +201,8 @@ export function howTo(n: OuroNeed, lang: Lang): string {
       return ko ? '이건 PC에서 직접 하셔야 해요.' : 'You have to do this one at the PC.'
     case 'permission':
       return ko ? '카드가 터미널 권한 확인을 기다려요. PC나 폰 페이지에서 답하세요.' : 'The card waits on a terminal prompt; answer it at the PC or on the phone page.'
+    case 'mention':
+      return ko ? '"답장"이라고 하면 곧 확인한다고 대신 남기고, "보류"라고 하면 넘어가요.' : 'Say reply to leave a "will look soon" for you, or hold to skip it.'
   }
 }
 
@@ -227,6 +236,7 @@ export function confirmLine(n: OuroNeed, action: 'approve' | 'hold' | string, la
   const text = n.text.replace(/\s+/g, ' ').trim()
   if (action === 'approve') return ko ? `${title}: "${text}" 허가할까요? 응이라고만 답하세요.` : `${title}: "${text}". Approve it? Say just yes.`
   if (action === 'hold') return ko ? `${title} 건을 보류할까요? 응이라고만 답하세요.` : `Put ${title} on hold? Say just yes.`
+  if (action === 'reply') return ko ? `${title}에게 곧 확인한다고 대신 답장할까요? 응이라고만 답하세요.` : `Tell ${title} you will look soon? Say just yes.`
   return ko ? `${title}의 질문에 "${spoken(action, 120)}"(으)로 답할까요? 응이라고만 답하세요.` : `Answer ${title}'s question with "${spoken(action, 120)}"? Say just yes.`
 }
 
@@ -297,6 +307,8 @@ export interface OuroSettingsView {
   ownerId: string
   notify: boolean
   approvals: boolean
+  /** a DM (and, with calls on, a call) when someone @mentions the owner or replies to them in a server the bot is in (default on) */
+  mentions: boolean
   /** server channels any agent card with board tools may post to without asking */
   channels: OuroChannel[]
 }
@@ -315,6 +327,7 @@ export function ouroSettings(raw: Partial<OuroSettingsView> | undefined): OuroSe
     ownerId: typeof raw?.ownerId === 'string' ? raw.ownerId.trim().slice(0, 22) : '',
     notify: raw?.notify !== false,
     approvals: raw?.approvals !== false,
+    mentions: raw?.mentions !== false,
     channels: ouroChannels(raw?.channels)
   }
 }

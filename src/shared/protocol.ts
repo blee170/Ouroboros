@@ -36,6 +36,7 @@ export interface GrokReplyStatus {
 }
 import type { PhoneSettingsView, PhoneStatus } from './phone'
 import type { OuroSettingsView, OuroStatusView } from './ouro'
+import type { OuroCallSettingsView, OuroCallStatusView } from './ouro-call'
 import type { ProtectionView } from './rulesets'
 import type { WslCheck } from './wsl'
 
@@ -105,6 +106,11 @@ export const IPC = {
   ouroConfigure: 'ouro:configure',
   ouroSetToken: 'ouro:setToken',
   ouroTest: 'ouro:test',
+  ouroCallStatus: 'ouroCall:status',
+  ouroCallConfigure: 'ouroCall:configure',
+  ouroCallSetSecret: 'ouroCall:setSecret',
+  ouroCallProvision: 'ouroCall:provision',
+  ouroCallTest: 'ouroCall:test',
   phoneStatus: 'phone:status',
   phoneInterfaces: 'phone:interfaces',
   phoneConfigure: 'phone:configure',
@@ -592,6 +598,17 @@ export interface OuroborosApi {
     setToken(token: string): Promise<OuroStatusView>
     /** A direct message to the owner: whether it was sent. */
     test(): Promise<{ ok: boolean; error?: string }>
+  }
+  ouroCall: {
+    status(): Promise<OuroCallStatusView>
+    /** Saves Settings → Ouro → Phone calls (any subset of the fields) and applies it; the reply server starts or stops with it. */
+    configure(patch: Partial<OuroCallSettingsView>): Promise<OuroCallStatusView>
+    /** Stores (encrypted) the Twilio auth token, the ElevenLabs API key (the one Voice uses) or ElevenLabs' webhook secret; '' clears it. */
+    setSecret(kind: 'twilio' | 'elevenlabs' | 'webhook', value: string): Promise<OuroCallStatusView>
+    /** Makes or updates the ElevenLabs agent and its tool from the app's definitions; the ids are kept in the settings. */
+    provision(): Promise<{ ok: boolean; error?: string }>
+    /** Rings the owner with a test line (counts against the day's calls). */
+    test(): Promise<{ ok: boolean; error?: string; warning?: string }>
   }
   phone: {
     status(): Promise<PhoneStatus>

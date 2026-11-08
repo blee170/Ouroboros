@@ -129,7 +129,8 @@ export class ReplyStore {
 
 export type ReplyHandler = (reply: Extract<ParsedReply, { ok: true }>) => { status: number; body: Record<string, unknown> }
 
-function readBody(req: http.IncomingMessage, limit: number): Promise<{ ok: true; value: unknown } | { ok: false; status: number }> {
+/** The request body as text, at most `limit` bytes (413 past it, read and dropped so the sender gets the answer). */
+export function readRawBody(req: http.IncomingMessage, limit: number): Promise<{ ok: true; raw: string } | { ok: false; status: number }> {
   return new Promise((resolve) => {
     let size = 0
     let over = false
@@ -144,21 +145,30 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<{ ok: true;
       } else if (!over) chunks.push(c)
     })
     req.on('end', () => {
-      if (over) return
-      try {
-        resolve({ ok: true, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) })
-      } catch {
-        resolve({ ok: false, status: 400 })
-      }
+      if (!over) resolve({ ok: true, raw: Buffer.concat(chunks).toString('utf8') })
     })
     req.on('error', () => resolve({ ok: false, status: 400 }))
   })
 }
 
-function json(res: http.ServerResponse, status: number, body: unknown): void {
+async function readBody(req: http.IncomingMessage, limit: number): Promise<{ ok: true; value: unknown } | { ok: false; status: number }> {
+  const r = await readRawBody(req, limit)
+  if (!r.ok) return r
+  try {
+    return { ok: true, value: JSON.parse(r.raw) }
+  } catch {
+    return { ok: false, status: 400 }
+  }
+}
+
+export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   if (res.headersSent || res.destroyed) return
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...(status === 413 ? { connection: 'close' } : {}) }).end(JSON.stringify(body))
 }
+const json = sendJson
+
+/** Other routes on the same server (Ouro's call webhooks): true when the path was theirs and answered. */
+export type ExtraRoutes = (req: http.IncomingMessage, res: http.ServerResponse, path: string) => Promise<boolean>
 
 /**
  * Off unless the owner turns it on. Behind Funnel every request comes from 127.0.0.1, so failures on the reply route
@@ -172,6 +182,8 @@ export class GrokReplyServer {
   private generation = 0
   port = 0
   error: string | undefined
+  /** routes other than the reply route (Ouro's call webhooks), checked before the 404 */
+  extra?: ExtraRoutes
 
   constructor(
     private store: ReplyStore,
@@ -241,7 +253,10 @@ export class GrokReplyServer {
     const path = (req.url ?? '').split('?')[0]
     // the public name is in certificate logs, so scanners will knock: other paths are answered but not counted,
     // or any scanner could lock the routine out
-    if (path !== REPLY_PATH) return json(res, 404, { ok: false, error: 'not found' })
+    if (path !== REPLY_PATH) {
+      if (this.extra && (await this.extra(req, res, path))) return
+      return json(res, 404, { ok: false, error: 'not found' })
+    }
     if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'POST only' })
     const auth = req.headers.authorization ?? ''
     const key = /^Bearer\s+(\S+)$/i.exec(auth)?.[1] ?? ''

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import { Ouro, type OuroHandlers, type OuroResult } from '../src/main/ouro'
 import type { OuroNeed, OuroStatus } from '../src/shared/ouro'
+import { DEFAULT_REPLY_TEXT } from '../src/shared/ouro-call'
 
 const OWNER = '281821501458743298'
 
@@ -37,6 +38,7 @@ const q: OuroNeed = { ref: '1-D1', kind: 'question', title: 'Conductor', text: '
 const task: OuroNeed = { ref: '1-T4', kind: 'task-approve', title: 'Deposit', text: 'Merge PR 12 into main?', shownAt: 100 }
 const doTask: OuroNeed = { ref: '1-T5', kind: 'task-do', title: 'Migration', text: 'Apply the SQL on production', shownAt: 101 }
 const gate: OuroNeed = { ref: '1-A1', kind: 'approval', title: 'Worker', text: 'gh pr merge 3 --squash' }
+const long: OuroNeed = { ref: '1-A9', kind: 'approval', title: 'Worker', text: `gh pr merge 3 --squash ${'x'.repeat(200)}` }
 
 function harness(needs: OuroNeed[] = []) {
   const st: OuroStatus = { project: 'p', working: 1, idle: 2, autonomous: false, needs: [...needs] }
@@ -389,5 +391,195 @@ describe('posting to a channel', () => {
     const [a, b] = await Promise.all([h.ouro.post('공지', 'A', 'c1'), h.ouro.post('공지', 'B', 'c2')])
     expect([a.ok, b.ok]).toEqual([true, true])
     expect(h.bot.posts.slice(-2).map(([, t]) => t)).toEqual(['A', 'B'])
+  })
+})
+
+describe('Ouro phone ladder', () => {
+  const ring = (h: ReturnType<typeof harness>, result: OuroResult = { ok: true }): OuroNeed[][] => {
+    const rings: OuroNeed[][] = []
+    h.ouro.setCaller(async (needs) => {
+      rings.push(needs)
+      return result
+    }, 5)
+    return rings
+  }
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+  }
+  it('calls about a need told on Discord that got no reaction within the wait, once', async () => {
+    const h = harness()
+    const rings = ring(h)
+    h.st.needs.push(task)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    expect(h.bot.sent.at(-1)).toContain('Deposit')
+    h.advance(4 * 60_000)
+    expect(rings).toEqual([])
+    h.advance(60_000)
+    expect(rings).toEqual([[task]])
+    // a second need rings on its own; the first is not called about again
+    h.st.needs.push(gate)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.advance(5 * 60_000)
+    expect(rings).toEqual([[task], [gate]])
+    h.advance(10 * 60_000)
+    expect(rings).toHaveLength(2)
+  })
+  it('does not call when the owner wrote in between, or the need was dealt with at the PC, or there is no caller', async () => {
+    const h = harness()
+    const rings = ring(h)
+    h.st.needs.push(task)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    await h.say('상황 어때')
+    h.advance(6 * 60_000)
+    expect(rings).toEqual([])
+    h.st.needs.push(gate)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.st.needs.length = 0
+    h.advance(6 * 60_000)
+    expect(rings).toEqual([])
+    h.ouro.setCaller(undefined)
+    h.st.needs.push(q)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.advance(6 * 60_000)
+    expect(rings).toEqual([])
+  })
+  it('tells the owner when the call could not be placed, and stays quiet on a deliberate skip', async () => {
+    const h = harness()
+    ring(h, { ok: false, error: 'Twilio refused the call' })
+    h.st.needs.push(task)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.advance(5 * 60_000)
+    await flush()
+    expect(h.bot.sent.at(-1)).toBe('전화를 걸지 못했어요: Twilio refused the call')
+    const n = h.bot.sent.length
+    ring(h, { ok: true, warning: 'quiet hours' })
+    h.st.needs.push(gate)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.advance(5 * 60_000)
+    await flush()
+    expect(h.bot.sent.length).toBe(n + 1) // the notice only
+  })
+  it('a skipped call is tried again after the wait while the need still waits', async () => {
+    const h = harness()
+    const rings: OuroNeed[][] = []
+    let result: OuroResult = { ok: true, warning: 'quiet hours' }
+    h.ouro.setCaller(async (needs) => {
+      rings.push(needs)
+      return result
+    }, 5)
+    h.st.needs.push(task)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.advance(5 * 60_000)
+    await flush()
+    expect(rings).toEqual([[task]])
+    h.advance(5 * 60_000)
+    await flush()
+    expect(rings).toEqual([[task], [task]])
+    result = { ok: true }
+    h.advance(5 * 60_000)
+    await flush()
+    expect(rings).toHaveLength(3)
+    h.advance(30 * 60_000)
+    await flush()
+    expect(rings).toHaveLength(3)
+  })
+  it('what already waits when Ouro connects is called about after the wait too', async () => {
+    const h = harness([task])
+    const rings: OuroNeed[][] = []
+    h.ouro.setCaller(async (needs) => {
+      rings.push(needs)
+      return { ok: true }
+    }, 5)
+    // the token changed: a new bot, whose greeting lists the task
+    h.ouro.configure({ enabled: true, token: 'tok2', ownerId: OWNER, notify: true, approvals: true })
+    h.bots[1].ready()
+    h.advance(5 * 60_000 - 1)
+    expect(rings).toEqual([])
+    h.advance(2)
+    expect(rings).toEqual([[task]])
+  })
+  it('calls that only mentions set off are few a day; a board need still rings', async () => {
+    const h = harness()
+    const rings: OuroNeed[][] = []
+    h.ouro.setCaller(async (needs) => {
+      rings.push(needs)
+      return { ok: true }
+    }, 5)
+    for (const i of [1, 2, 3]) {
+      h.bot.emit('mention', { id: `m${i}`, channelId: 'ch1', guildId: 'g', author: 'Noah', text: `<@${OWNER}> 도와주세요 ${i}`, kind: 'mention' })
+      await flush()
+      h.advance(61_000)
+      h.advance(5 * 60_000)
+      await flush()
+    }
+    expect(rings).toHaveLength(2)
+    expect(rings.flat().every((n) => n.kind === 'mention')).toBe(true)
+    h.st.needs.push(task)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.advance(5 * 60_000)
+    await flush()
+    expect(rings).toHaveLength(3)
+    expect(rings[2].map((n) => n.ref)).toEqual(['1-T4'])
+  })
+  it('a mention is a need: told, replied to for the owner on a yes, cleared when the owner answers there', async () => {
+    const h = harness()
+    h.bot.emit('mention', { id: 'm1', channelId: 'ch1', guildId: 'g', author: 'Noah', text: `<@${OWNER}> 서버 해킹당했어요, 지금 도와주세요`, kind: 'mention' })
+    await flush()
+    h.advance(61_000)
+    expect(h.bot.sent.at(-1)).toContain('채널 · Noah: 사장님을 찾는 메시지. @ 서버 해킹당했어요, 지금 도와주세요')
+    expect(h.bot.sent.at(-1)).toContain('"답장"이라고 하면')
+    expect(h.notes[0]).toBe('Noah asked for the owner in 채널: @ 서버 해킹당했어요, 지금 도와주세요')
+    expect(await h.say('허가')).toContain('"답장"이라고 하면')
+    expect(await h.say('답장')).toBe('채널 · Noah에게 곧 확인한다고 대신 답장할까요? 응이라고만 답하세요.')
+    expect(await h.say('응')).toBe('채널 · Noah에게 곧 확인한다고 남겼어요.')
+    expect(h.bot.posts).toEqual([['ch1', DEFAULT_REPLY_TEXT]])
+    expect(h.calls).toEqual([])
+    expect(h.ouro.voiceNeeds()).toEqual([])
+    h.bot.emit('mention', { id: 'm2', channelId: 'ch2', author: 'Mia', text: 'hey, are you around?', kind: 'dm' })
+    await flush()
+    expect(h.ouro.voiceNeeds().map((n) => n.title)).toEqual(['DM · Mia'])
+    h.bot.emit('ownerSpoke', { channelId: 'ch2' })
+    expect(h.ouro.voiceNeeds()).toEqual([])
+    // a stale mention is forgotten; mentions can be switched off
+    h.bot.emit('mention', { id: 'm3', channelId: 'ch3', guildId: 'g', author: 'Kim', text: 'ping', kind: 'reply' })
+    await flush()
+    expect(h.ouro.voiceNeeds()).toHaveLength(1)
+    h.advance(2 * 3600_000 + 1)
+    expect(h.ouro.voiceNeeds()).toEqual([])
+    h.ouro.configure({ enabled: true, token: 'tok', ownerId: OWNER, notify: true, approvals: true, mentions: false })
+    h.bot.emit('mention', { id: 'm4', channelId: 'ch3', guildId: 'g', author: 'Kim', text: 'ping', kind: 'reply' })
+    await flush()
+    expect(h.ouro.voiceNeeds()).toEqual([])
+  })
+  it('acts by voice under the Discord rules and echoes the decision as a DM', async () => {
+    const h = harness([task, doTask, q, long])
+    expect(await h.ouro.voiceAct('1-T4', 'approve', undefined, 'ko')).toBe('허가했어요. 카드에 전했어요.')
+    expect(h.calls).toEqual(['approve 1-T4 100'])
+    expect(h.bot.sent.at(-1)).toBe('허가했어요. 카드에 전했어요.')
+    expect(await h.ouro.voiceAct('1-T5', 'approve', undefined, 'ko')).toContain('PC에서 직접')
+    expect(await h.ouro.voiceAct('1-D1', 'answer', 'Postgres', 'ko')).toBe('그 답은 보기에 없어요.')
+    expect(await h.ouro.voiceAct('1-D1', 'answer', 'SQLite', 'ko')).toBe('"SQLite"(으)로 답했어요.')
+    expect(await h.ouro.voiceAct('1-A9', 'approve', undefined, 'ko')).toContain('음성으로는 허가할 수 없어요')
+    expect(await h.ouro.voiceAct('1-A9', 'later', undefined, 'ko')).toBe('알겠어요, 디스코드에 남겨 둘게요.')
+    expect(await h.ouro.voiceAct('1-T4', 'approve', undefined, 'ko')).toBe('그 건은 이미 처리됐거나 사라졌어요.')
+    expect(h.calls).toEqual(['approve 1-T4 100', 'answer 1-D1 SQLite'])
+    expect(h.ouro.voiceStatus('ko')).toContain('일하는 중')
+    // the owner picking up counts as a reaction: a pending ladder is dropped
+    const rings = ring(h)
+    h.st.needs.push(gate)
+    h.ouro.boardChanged()
+    h.advance(61_000)
+    h.ouro.ownerReached()
+    h.advance(6 * 60_000)
+    expect(rings).toEqual([])
   })
 })

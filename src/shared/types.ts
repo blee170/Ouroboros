@@ -1,6 +1,7 @@
 import type { VoiceSettings } from './voice'
 import type { Task } from './ledger'
 import type { OuroSettingsView } from './ouro'
+import type { OuroCallSettingsView } from './ouro-call'
 import type { GrokBot } from './grokbot'
 
 /** Which CLI a Claude/Conductor card runs. Codex, Gemini and Grok get the same hooks, lines and board tools. */
@@ -301,6 +302,12 @@ export interface AppSettings {
   ouro?: Partial<OuroSettingsView>
   /** Ouro's Discord bot token, stored encrypted (same scheme as notionTokenEnc). */
   ouroTokenEnc?: string
+  /** Ouro calls the owner (see shared/ouro-call.ts; read through ouroCallSettings()). The ElevenLabs key is ttsKeysEnc.elevenlabs. */
+  ouroCall?: Partial<OuroCallSettingsView>
+  /** The Twilio auth token, the key the ElevenLabs agent's tool sends, and ElevenLabs' post-call webhook secret, each stored encrypted. */
+  ouroCallTwilioTokenEnc?: string
+  ouroCallToolKeyEnc?: string
+  ouroCallWebhookSecretEnc?: string
   /** Voice input for the left composer (see shared/voice.ts; read through voiceSettings()). */
   voice?: Partial<VoiceSettings>
 }

@@ -6,8 +6,9 @@
  * Nothing is decided without a spoken yes: an approval, a hold or an answer is read back first and done only on
  * "응" within three minutes. Anything that is not a command goes to the Conductor, and its next replies come back.
  */
-import { DiscordBot, type DiscordMessage, type DiscordState } from './discord'
+import { DiscordBot, type DiscordMention, type DiscordMessage, type DiscordState } from './discord'
 import { OURO_LIMITS, carReadyLine, channelsLine, confirmLine, conductorPrompt, helpLine, howTo, intentOf, isOnlyYes, langOf, matchAnswer, needLine, ouroChannel, readableAloud, soundsLikeNo, spoken, statusLine, titleOf, type Lang, type OuroChannel, type OuroNeed, type OuroStatus } from '@shared/ouro'
+import { CALL_LIMITS, DEFAULT_REPLY_TEXT, dayOf, type CallAction } from '@shared/ouro-call'
 
 export type OuroResult = { ok: boolean; error?: string; warning?: string }
 
@@ -34,6 +35,10 @@ export interface OuroConfig {
   approvals: boolean
   /** server channels cards may post to without asking (Settings → Ouro → Channels) */
   channels?: OuroChannel[]
+  /** someone asking for the owner in a server (an @mention, a reply) or in a DM to the bot is a need too (default on) */
+  mentions?: boolean
+  /** what Ouro posts when the owner says "reply" to a mention */
+  replyText?: string
 }
 
 interface Bot {
@@ -44,9 +49,16 @@ interface Bot {
   stop(): void
   send(text: string): Promise<void>
   post(channelId: string, text: string, quiet?: boolean): Promise<void>
+  channelName?(channelId: string): Promise<string>
   on(event: string, fn: (...args: any[]) => void): unknown
 }
-type Action = { kind: 'approve' } | { kind: 'hold' } | { kind: 'answer'; answer: string }
+type Action = { kind: 'approve' } | { kind: 'hold' } | { kind: 'reply' } | { kind: 'answer'; answer: string }
+
+/**
+ * Places the phone call about these needs (main/voice-call.ts). ok with a warning means it was deliberately not
+ * placed (quiet hours, the daily cap, the owner is at the PC); not ok is a failure the owner is told about.
+ */
+export type Caller = (needs: OuroNeed[], lang: Lang) => Promise<OuroResult>
 
 export interface OuroDeps {
   makeBot?: (token: string, ownerId: string) => Bot
@@ -56,6 +68,10 @@ export interface OuroDeps {
 }
 
 const NOTICE_DEBOUNCE_MS = 3000
+/** mention needs kept at once; the oldest goes when more arrive */
+const MENTIONS_KEPT = 10
+/** a Discord user mention (<@id>, <@!id>), a role (<@&id>) or a channel (<#id>) as it reads aloud */
+const unmention = (s: string): string => s.replace(/<@[!&]?\d+>/g, '@').replace(/<#\d+>/g, '#채널')
 // told once per request: a progress note on a task that is still blocked is not news, a new request is
 const keyOf = (n: OuroNeed): string => `${n.ref}:${n.text}`
 const ACTIONABLE = new Set<OuroNeed['kind']>(['question', 'approval', 'task-approve', 'task-either', 'task-do'])
@@ -86,6 +102,19 @@ export class Ouro {
   /** channel posts: when each channel was posted to (tries included), and the post under way */
   private posted = new Map<string, number[]>()
   private posting: Promise<void> = Promise.resolve()
+  /** people asking for the owner on Discord, kept here (the board never sees them) until dealt with or stale */
+  private mentions: (OuroNeed & { at: number; channelId: string })[] = []
+  /** the phone: needs told on Discord that got no reaction wait here for the call */
+  private caller?: Caller
+  private waitMs = CALL_LIMITS.waitMinutes.default * 60_000
+  private ladder = new Map<string, { need: OuroNeed; at: number }>()
+  private ladderTimer?: unknown
+  /** needs already called about: one call per need */
+  private called = new Set<string>()
+  /** when calls that only mentions set off were placed: a stranger's messages get a few a day, not the whole cap */
+  private mentionCalls: number[] = []
+  /** the last time the owner was heard from (a DM, an answered call): a notice older than this got its reaction */
+  private lastOwnerAt = 0
   private readonly d: Required<OuroDeps>
 
   constructor(
@@ -112,6 +141,8 @@ export class Ouro {
     this.greeted = false
     if (this.carTimer !== undefined) this.d.clearTimeout(this.carTimer)
     this.carTimer = undefined
+    this.mentions = []
+    this.disarm()
     if (!want) return
     const bot = this.d.makeBot(cfg.token!, cfg.ownerId!)
     this.bot = bot
@@ -119,11 +150,12 @@ export class Ouro {
       // a reconnect (Discord asks for one now and then) is not news: the greeting is said once per start
       if (this.bot !== bot || this.greeted) return
       this.greeted = true
-      // what already waits is said once in the greeting, then only what is new
-      const st = this.h.status()
+      // what already waits is said once in the greeting, then only what is new; it waits for a reaction like news does
+      const st = this.board()
       for (const n of st.needs) this.known.add(keyOf(n))
       this.focus = st.needs[0]
       this.lastNotice = this.d.now()
+      this.arm(st.needs)
       this.say(this.lang === 'ko' ? `우로 연결됐어요. ${statusLine(st, 'ko')}` : `Ouro is connected. ${statusLine(st, 'en')}`)
     })
     bot.on('message', (m: DiscordMessage) => {
@@ -136,6 +168,14 @@ export class Ouro {
           this.say(this.lang === 'ko' ? '문제가 생겨서 처리하지 못했어요. PC에서 확인해 주세요.' : 'Something went wrong; check it at the PC.')
         })
     })
+    bot.on('mention', (m: DiscordMention) => {
+      if (this.bot !== bot || !(this.cfg.mentions ?? true)) return
+      this.queue = this.queue.then(() => this.onMention(m, bot)).catch((err) => this.h.log(`[ouro] mention: ${err instanceof Error ? err.message : String(err)}`))
+    })
+    bot.on('ownerSpoke', ({ channelId }: { channelId: string }) => {
+      // the owner answered in that channel: whoever asked for them there has their answer
+      if (this.bot === bot) this.mentions = this.mentions.filter((m) => m.channelId !== channelId)
+    })
     bot.on('state', (s: DiscordState, detail: string) => {
       if (this.bot === bot) this.h.log(`[ouro] discord ${s}${detail && s !== 'ready' ? `: ${detail}` : ''}`)
     })
@@ -144,6 +184,137 @@ export class Ouro {
 
   stop(): void {
     this.configure({ ...this.cfg, enabled: false })
+  }
+
+  /**
+   * The phone (Settings → Ouro → Phone calls): a need told on Discord that gets no reaction within waitMs is called
+   * about, once. No caller: nothing waits for a call.
+   */
+  setCaller(caller: Caller | undefined, waitMinutes: number = CALL_LIMITS.waitMinutes.default): void {
+    this.caller = caller
+    this.waitMs = waitMinutes * 60_000
+    if (!caller) this.disarm()
+  }
+
+  /** The board as Ouro reads it: what the app says waits, plus the people asking for the owner on Discord. */
+  private board(): OuroStatus {
+    const st = this.h.status()
+    const now = this.d.now()
+    this.mentions = this.mentions.filter((m) => now - m.at < CALL_LIMITS.mentionKeepMs)
+    return { ...st, needs: [...st.needs, ...this.mentions.map(({ at: _a, channelId: _c, ...n }) => n)] }
+  }
+
+  private async onMention(m: DiscordMention, bot: Bot): Promise<void> {
+    const text = unmention(m.text).replace(/\s+/g, ' ').trim().slice(0, CALL_LIMITS.mentionChars)
+    if (!text) return
+    const where = m.kind === 'dm' ? 'DM' : (await bot.channelName?.(m.channelId)) || '채널'
+    const need = { ref: `M:${m.channelId}:${m.id}`, kind: 'mention' as const, title: `${where} · ${m.author}`, text, at: this.d.now(), channelId: m.channelId }
+    this.mentions = [...this.mentions, need].slice(-MENTIONS_KEPT)
+    this.h.note(`${m.author} asked for the owner in ${where}: ${excerpt(text)}`)
+    this.boardChanged()
+  }
+
+  /** The phone: the needs as the call should read them (the board, and whoever asks for the owner). */
+  voiceNeeds(): OuroNeed[] {
+    return this.board().needs
+  }
+
+  voiceStatus(lang: Lang): string {
+    return statusLine(this.board(), lang)
+  }
+
+  /** The owner picked up: whatever was waiting for a reaction has it. */
+  ownerReached(): void {
+    this.lastOwnerAt = this.d.now()
+    this.disarm()
+  }
+
+  /** The phone's way to the owner's Discord (a missed call, a call summary): a plain DM. */
+  dm(text: string): void {
+    this.say(text)
+  }
+
+  /**
+   * The phone acts for the owner, under the Discord dialogue's rules (what Ouro may not decide by voice it refuses
+   * here too; the agent already read the choice back and heard a yes). Returns the line the agent says.
+   */
+  async voiceAct(ref: string, action: Exclude<CallAction, 'status'>, answer: string | undefined, lang: Lang): Promise<string> {
+    const ko = lang === 'ko'
+    const need = this.board().needs.find((n) => n.ref === ref)
+    if (!need) return ko ? '그 건은 이미 처리됐거나 사라졌어요.' : 'That one is already done or gone.'
+    if (action === 'later') {
+      this.known.add(keyOf(need))
+      return ko ? '알겠어요, 디스코드에 남겨 둘게요.' : 'OK, it stays in Discord.'
+    }
+    const a: Action = action === 'answer' ? { kind: 'answer', answer: answer ?? '' } : { kind: action }
+    if (a.kind === 'answer' && !(need.kind === 'question' && (need.answers ?? []).includes(a.answer))) return ko ? '그 답은 보기에 없어요.' : 'That answer is not one of the choices.'
+    const refused = this.refusal(need, a, lang)
+    if (refused) return refused
+    return this.act(need, a, lang)
+  }
+
+  /** A notice without a reaction: these needs wait for the call. */
+  private arm(fresh: OuroNeed[]): void {
+    if (!this.caller) return
+    const now = this.d.now()
+    for (const n of fresh) {
+      const k = keyOf(n)
+      if (!this.called.has(k) && !this.ladder.has(k)) this.ladder.set(k, { need: n, at: now })
+    }
+    this.schedule()
+  }
+
+  private schedule(): void {
+    if (this.ladderTimer !== undefined || !this.ladder.size) return
+    const due = Math.min(...[...this.ladder.values()].map((e) => e.at + this.waitMs))
+    this.ladderTimer = this.d.setTimeout(() => {
+      this.ladderTimer = undefined
+      this.fire()
+    }, Math.max(0, due - this.d.now()))
+  }
+
+  private fire(): void {
+    const now = this.d.now()
+    const open = new Set(this.board().needs.map(keyOf))
+    const ring: OuroNeed[] = []
+    for (const [k, e] of this.ladder) {
+      if (e.at + this.waitMs > now) continue
+      this.ladder.delete(k)
+      // gone (answered at the PC), already called about, or the owner wrote since the notice: no call for it
+      if (!open.has(k) || this.called.has(k) || this.lastOwnerAt >= e.at) continue
+      ring.push(e.need)
+    }
+    this.schedule()
+    if (!ring.length || !this.caller) return
+    for (const n of ring) this.called.add(keyOf(n))
+    // a call that only people on Discord set off (no board need in it) comes out of a small budget of its own
+    const mentionsOnly = ring.every((n) => n.kind === 'mention')
+    if (mentionsOnly) {
+      const today = dayOf(now)
+      this.mentionCalls = this.mentionCalls.filter((t) => dayOf(t) === today)
+      if (this.mentionCalls.length >= CALL_LIMITS.mentionCallsPerDay) return this.h.log(`[ouro] not calling about ${ring.length} mention(s): today's ${CALL_LIMITS.mentionCallsPerDay} mention calls are used`)
+    }
+    void this.caller(ring, this.lang).then(
+      (r) => {
+        if (!r.ok) {
+          this.h.log(`[ouro] call not placed: ${r.error}`)
+          // the owner must not take silence for "nothing urgent"
+          this.say(this.lang === 'ko' ? `전화를 걸지 못했어요: ${r.error}` : `I could not call you: ${r.error}`)
+        } else if (r.warning) {
+          // quiet hours, someone at the PC, a call under way: the need still waits, so the wait starts over
+          this.h.log(`[ouro] call skipped: ${r.warning}; again in ${this.waitMs / 60_000} min if it still waits`)
+          for (const n of ring) this.called.delete(keyOf(n))
+          this.arm(ring)
+        } else if (mentionsOnly) this.mentionCalls.push(this.d.now())
+      },
+      (err) => this.h.log(`[ouro] call failed: ${err instanceof Error ? err.message : String(err)}`)
+    )
+  }
+
+  private disarm(): void {
+    this.ladder.clear()
+    if (this.ladderTimer !== undefined) this.d.clearTimeout(this.ladderTimer)
+    this.ladderTimer = undefined
   }
 
   /**
@@ -164,7 +335,7 @@ export class Ouro {
       this.lastCar = this.d.now()
       // the first thing that waits is in this message: it is not announced again as new, and an answer goes to it,
       // unless the owner is in the middle of a read-back (that yes stays with what they heard)
-      const st = this.h.status()
+      const st = this.board()
       if (st.needs[0]) this.known.add(keyOf(st.needs[0]))
       if (!this.pending) this.focus = st.needs[0] ?? this.focus
       this.lastNotice = this.d.now()
@@ -242,10 +413,11 @@ export class Ouro {
 
   private notice(): void {
     if (!this.bot || this.bot.state !== 'ready' || !this.cfg.notify) return
-    const needs = this.h.status().needs
+    const needs = this.board().needs
     const fresh = needs.filter((n) => !this.known.has(keyOf(n)))
-    // what was answered elsewhere is forgotten, so a task blocked again later is told again
+    // what was answered elsewhere is forgotten, so a task blocked again later is told again (and called about again)
     this.known = new Set(needs.map(keyOf).filter((k) => this.known.has(k)))
+    this.called = new Set(needs.map(keyOf).filter((k) => this.called.has(k)))
     if (!fresh.length) return
     for (const n of fresh) this.known.add(keyOf(n))
     this.lastNotice = this.d.now()
@@ -253,6 +425,7 @@ export class Ouro {
     const ko = this.lang === 'ko'
     const head = fresh.length > 1 ? (ko ? `새로 기다리는 게 ${fresh.length}개예요. 첫 번째, ` : `${fresh.length} new things wait on you. First, `) : ko ? '새로 기다리는 게 있어요. ' : 'Something new waits on you. '
     this.say(head + needLine(fresh[0], this.lang))
+    this.arm(fresh)
   }
 
   /** Anything Ouro says other than a read-back drops the read-back: a yes is for what the owner heard last. */
@@ -269,11 +442,14 @@ export class Ouro {
     this.lang = lang
     const ko = lang === 'ko'
     const i = intentOf(text)
+    // the owner wrote: what was told waits for no call
+    this.lastOwnerAt = this.d.now()
+    this.disarm()
     const p = this.pending
     this.pending = undefined
     if (p && this.d.now() - p.at <= OURO_LIMITS.confirmMs) {
       // only a reply that is nothing but a yes acts: "응 아니 잠깐" or "ok wait, hold it" cancels
-      if (isOnlyYes(text)) return this.act(p.need, p.action, lang)
+      if (isOnlyYes(text)) return void (await this.act(p.need, p.action, lang))
       if (i.type === 'yes' || i.type === 'no' || i.type === 'hold' || soundsLikeNo(text)) return this.say(ko ? '알겠어요, 안 할게요.' : 'OK, I will not.')
     } else if (p && i.type === 'yes') {
       return this.say(ko ? '시간이 지나서 취소했어요. 다시 말해 주세요.' : 'That timed out; say it again.')
@@ -282,12 +458,12 @@ export class Ouro {
       case 'help':
         return this.say(helpLine(lang))
       case 'status': {
-        const st = this.h.status()
+        const st = this.board()
         this.focus = st.needs[0]
         return this.say(statusLine(st, lang))
       }
       case 'next': {
-        const needs = this.h.status().needs
+        const needs = this.board().needs
         const at = this.focus ? needs.findIndex((n) => n.ref === this.focus!.ref) + 1 : 0
         if (!needs.length || at >= needs.length) {
           this.focus = undefined
@@ -298,6 +474,7 @@ export class Ouro {
       }
       case 'approve':
       case 'hold':
+      case 'reply':
         return this.ask(this.target(), i.type, lang)
     }
     // a choice to the question the owner just heard
@@ -317,11 +494,23 @@ export class Ouro {
   /** what "approve" or "hold" is about: the need the owner last heard, else the first one that can be decided */
   private target(): OuroNeed | undefined {
     if (this.focus) return this.focus
-    return this.h.status().needs.find((n) => ACTIONABLE.has(n.kind))
+    return this.board().needs.find((n) => ACTIONABLE.has(n.kind))
+  }
+
+  /** Why Ouro may not do this by voice, as said to the owner; undefined when it may. Shared by Discord and the phone. */
+  private refusal(need: OuroNeed, a: Action, lang: Lang): string | undefined {
+    const ko = lang === 'ko'
+    if (a.kind === 'reply' && need.kind !== 'mention') return ko ? '답장은 사장님을 찾는 메시지에만 할 수 있어요.' : 'Reply is only for a message asking for you.'
+    if (need.kind === 'mention' && a.kind !== 'reply' && a.kind !== 'hold') return `${titleOf(need)}: ${howTo(need, lang)}`
+    if (need.kind === 'permission' || (need.kind === 'task-do' && a.kind === 'approve')) return `${titleOf(need)}: ${howTo(need, lang)}`
+    // what is approved is read back word for word: a long command or one with a link is approved at the PC or phone
+    if (a.kind === 'approve' && !readableAloud(need.text)) return `${titleOf(need)}: ${howTo(need, lang)}`
+    if (!this.cfg.approvals) return ko ? '설정에서 우로의 허가와 답이 꺼져 있어요. PC에서 해 주세요.' : 'Approvals by Ouro are off in Settings; answer it at the PC.'
+    return undefined
   }
 
   /** Reads the decision back and waits for a yes; refuses what Ouro may not decide. */
-  private ask(need: OuroNeed | undefined, action: Action | 'approve' | 'hold', lang: Lang): void {
+  private ask(need: OuroNeed | undefined, action: Action | 'approve' | 'hold' | 'reply', lang: Lang): void {
     const ko = lang === 'ko'
     if (!need) return this.say(ko ? '지금 결정할 건 없어요.' : 'Nothing waits on a decision.')
     let a: Action = typeof action === 'string' ? { kind: action } : action
@@ -331,26 +520,54 @@ export class Ouro {
       if (!pick) return this.say(`${titleOf(need)}: ${howTo(need, lang)}`)
       a = { kind: 'answer', answer: pick }
     }
-    if (need.kind === 'permission' || (need.kind === 'task-do' && a.kind === 'approve')) return this.say(`${titleOf(need)}: ${howTo(need, lang)}`)
-    // what is approved is read back word for word: a long command or one with a link is approved at the PC or phone
-    if (a.kind === 'approve' && !readableAloud(need.text)) return this.say(`${titleOf(need)}: ${howTo(need, lang)}`)
-    if (!this.cfg.approvals) return this.say(ko ? '설정에서 우로의 허가와 답이 꺼져 있어요. PC에서 해 주세요.' : 'Approvals by Ouro are off in Settings; answer it at the PC.')
+    const refused = this.refusal(need, a, lang)
+    if (refused) return this.say(refused)
     this.focus = need
     this.pending = { need, action: a, at: this.d.now() }
     this.say(confirmLine(need, a.kind === 'answer' ? a.answer : a.kind, lang), true)
   }
 
-  private act(need: OuroNeed, a: Action, lang: Lang): void {
+  /** Does it, tells the owner (a DM, which is also the echo of a phone decision) and returns what was said. */
+  private async act(need: OuroNeed, a: Action, lang: Lang): Promise<string> {
     const ko = lang === 'ko'
+    const out = (line: string): string => {
+      this.say(line)
+      return line
+    }
     // switched off at the PC while the read-back waited
-    if (!this.cfg.approvals) return this.say(ko ? '설정에서 우로의 허가와 답이 꺼져 있어요. PC에서 해 주세요.' : 'Approvals by Ouro are off in Settings; answer it at the PC.')
-    const r = a.kind === 'approve' ? this.h.approve(need) : a.kind === 'hold' ? this.h.hold(need) : this.h.answer(need, a.answer)
-    const what = a.kind === 'approve' ? 'approved' : a.kind === 'hold' ? (need.kind === 'approval' ? 'denied' : 'put on hold') : `answered "${a.answer}" to`
+    if (!this.cfg.approvals) return out(ko ? '설정에서 우로의 허가와 답이 꺼져 있어요. PC에서 해 주세요.' : 'Approvals by Ouro are off in Settings; answer it at the PC.')
+    if (need.kind === 'mention') return this.actOnMention(need, a, lang, out)
+    const r = a.kind === 'approve' ? this.h.approve(need) : a.kind === 'hold' ? this.h.hold(need) : a.kind === 'answer' ? this.h.answer(need, a.answer) : { ok: false, error: 'not a message' }
+    const what = a.kind === 'approve' ? 'approved' : a.kind === 'hold' ? (need.kind === 'approval' ? 'denied' : 'put on hold') : a.kind === 'answer' ? `answered "${a.answer}" to` : 'replied to'
     this.h.note(`${r.ok ? what : `could not ${what.replace(/ to$/, '')}`} ${need.ref.replace(/^\d+-/, '')} (${need.title})${r.ok ? '' : `: ${r.error}`}`)
-    if (!r.ok) return this.say(ko ? `못 했어요: ${r.error}` : `Not done: ${r.error}`)
+    if (!r.ok) return out(ko ? `못 했어요: ${r.error}` : `Not done: ${r.error}`)
     if (this.focus?.ref === need.ref) this.focus = undefined
     this.known.add(keyOf(need))
-    const done = a.kind === 'approve' ? (ko ? '허가했어요. 카드에 전했어요.' : 'Approved; the card was told.') : a.kind === 'hold' ? (ko ? '보류했어요.' : 'Put on hold.') : ko ? `"${a.answer}"(으)로 답했어요.` : `Answered "${a.answer}".`
-    this.say(r.warning ? `${done} ${r.warning}` : done)
+    const done = a.kind === 'approve' ? (ko ? '허가했어요. 카드에 전했어요.' : 'Approved; the card was told.') : a.kind === 'hold' ? (ko ? '보류했어요.' : 'Put on hold.') : ko ? `"${a.kind === 'answer' ? a.answer : ''}"(으)로 답했어요.` : `Answered "${a.kind === 'answer' ? a.answer : ''}".`
+    return out(r.warning ? `${done} ${r.warning}` : done)
+  }
+
+  /** A mention is Ouro's own: "reply" posts the canned line in that channel for the owner, "hold" drops it. */
+  private async actOnMention(need: OuroNeed, a: Action, lang: Lang, out: (line: string) => string): Promise<string> {
+    const ko = lang === 'ko'
+    const m = this.mentions.find((x) => x.ref === need.ref)
+    this.mentions = this.mentions.filter((x) => x.ref !== need.ref)
+    if (this.focus?.ref === need.ref) this.focus = undefined
+    this.known.add(keyOf(need))
+    if (a.kind !== 'reply') {
+      this.h.note(`skipped ${need.title}'s message`)
+      return out(ko ? '넘겼어요.' : 'Skipped.')
+    }
+    const bot = this.bot
+    if (!m || !bot) return out(ko ? '그 메시지를 못 찾아서 답장하지 못했어요.' : 'I could not find that message to reply to.')
+    try {
+      await bot.post(m.channelId, (this.cfg.replyText ?? DEFAULT_REPLY_TEXT).slice(0, CALL_LIMITS.replyChars))
+    } catch (err) {
+      const e = err instanceof Error ? err.message : String(err)
+      this.h.log(`[ouro] reply in ${need.title} failed: ${e}`)
+      return out(ko ? `답장을 못 남겼어요: ${e}` : `The reply was not posted: ${e}`)
+    }
+    this.h.note(`replied for the owner to ${need.title}`)
+    return out(ko ? `${titleOf(need)}에게 곧 확인한다고 남겼어요.` : `Told ${titleOf(need)} you will look soon.`)
   }
 }

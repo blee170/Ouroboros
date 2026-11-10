@@ -199,8 +199,9 @@ export function contextWindowFor(model?: string): number {
   if (!model) return 200_000
   if (/\[1m\]/i.test(model)) return 1_000_000
   if (/fable/i.test(model)) return 1_000_000
-  // claude-<family>-5[-minor]: the Claude 5 generation
-  if (/^claude-(opus|sonnet|haiku)-5(?:-\d+)?(?:-\d{8})?$/i.test(model)) return 1_000_000
+  // claude-<family>-5[-minor]: the Claude 5 generation, whatever the family is called (a list of names here went
+  // stale with each new one: claude-mythos-5-2 was sized at 200k, and its card relayed five times too early)
+  if (/^claude-[a-z]+-5(?:-\d+)?(?:-\d{8})?$/i.test(model)) return 1_000_000
   return 200_000
 }
 

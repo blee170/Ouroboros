@@ -21,6 +21,10 @@ describe('session usage from transcripts', () => {
 
   it('assumes 1M for Claude 5 / [1m] models and 200k otherwise', () => {
     expect(contextWindowFor('claude-sonnet-5-5')).toBe(1_000_000)
+    expect(contextWindowFor('claude-fable-5-2')).toBe(1_000_000)
+    // any family of the Claude 5 generation, not a list of names
+    expect(contextWindowFor('claude-mythos-5-2')).toBe(1_000_000)
+    expect(contextWindowFor('claude-opus-4-8')).toBe(200_000)
     expect(contextWindowFor('claude-sonnet-4-5-20250929[1m]')).toBe(1_000_000)
     expect(contextWindowFor('claude-sonnet-4-5-20250929')).toBe(200_000)
     expect(contextWindowFor(undefined)).toBe(200_000)

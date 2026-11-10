@@ -5,9 +5,16 @@ describe('model presets', () => {
   it('maps a stored model to the select: default, a preset, or custom', () => {
     expect(modelChoice('claude', undefined)).toBe('')
     expect(modelChoice('claude', 'sonnet')).toBe('sonnet')
-    expect(modelChoice('claude', 'claude-fable-5-1')).toBe('claude-fable-5-1')
+    expect(modelChoice('claude', 'fable')).toBe('fable')
+    expect(modelChoice('claude', 'claude-fable-5-2')).toBe('claude-fable-5-2')
     expect(modelChoice('claude', 'claude-opus-4-1')).toBe('custom')
     expect(modelChoice('codex', 'opus')).toBe('custom')
+  })
+  it('offers every Claude family by its alias, and keeps a model that left the list as custom', () => {
+    const v = MODEL_PRESETS.claude.map((p) => p.value)
+    expect(v).toEqual(expect.arrayContaining(['opus', 'sonnet', 'haiku', 'fable']))
+    // a card saved with a superseded pinned id still launches with it: the select shows Custom… with the id
+    expect(modelChoice('claude', 'claude-fable-5-1')).toBe('custom')
   })
   it('has unique values and no presets that guess at Codex or Gemini names', () => {
     const v = MODEL_PRESETS.claude.map((p) => p.value)

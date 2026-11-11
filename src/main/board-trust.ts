@@ -42,6 +42,8 @@ function parseBoard(text: string): { nodes: TrustNode[]; edges: TrustEdge[] } | 
 export class BoardTrust {
   private entries: Record<string, Entry> = {}
   private held = new Map<string, Map<string, PrivilegeView>>()
+  /** What the last check told the owner per folder, for a window that reloads before they decided (heldNow). */
+  private heldCards = new Map<string, HeldCard[]>()
 
   constructor(private file: string, private log: (line: string) => void = () => {}) {
     if (!existsSync(file)) return
@@ -102,6 +104,7 @@ export class BoardTrust {
       this.log(`board trust check failed for ${projectRoot} (${(err as Error).message}): holding every card`)
       held = (board?.nodes ?? []).filter((n) => n && typeof n.id === 'string').map((n) => ({ nodeId: n.id, title: String(n.data?.title ?? n.id).slice(0, 120), added: !entry?.views[n.id], changes: [] }))
     }
+    this.heldCards.set(key, held)
     if (held.length) {
       this.held.set(key, new Map(held.map((h) => [h.nodeId, entry?.views[h.nodeId] ?? {}])))
       this.log(`board file ${projectRoot} changed outside Ouroboros: holding ${held.map((h) => h.nodeId).join(', ')}`)
@@ -112,6 +115,13 @@ export class BoardTrust {
 
   isHeld(projectRoot: string | undefined, nodeId: string): boolean {
     return Boolean(projectRoot && this.held.get(keyOf(projectRoot))?.has(nodeId))
+  }
+
+  /** The cards still held in a folder, as the open that held them listed them: a reloaded window shows them again (no new check). */
+  heldNow(projectRoot: string): HeldCard[] {
+    const key = keyOf(projectRoot)
+    const ids = this.held.get(key)
+    return (this.heldCards.get(key) ?? []).filter((h) => ids?.has(h.nodeId))
   }
 
   /**

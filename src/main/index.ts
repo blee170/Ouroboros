@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { remoteFileUrl } from '@shared/visuals'
+import { RELOAD_LIMIT, RELOAD_WINDOW_MS, ReloadGuard } from '@shared/reattach'
 import { Board } from './board'
 import { BrowserManager } from './browser-manager'
 import { HookServer, PREFERRED_HOOK_PORT } from './hook-server'
@@ -86,6 +87,22 @@ function createWindow(ctx: MainContext, projectRoot?: string): WindowSession {
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (e) => e.preventDefault())
+  // A renderer that dies (out of memory, taken down with the GPU process) leaves the window blank for good while every
+  // card runs on in main: the page is loaded again and reattaches to the running cards (workspaceLoad, pty.attach).
+  // Only this window; a page that keeps dying is left down after RELOAD_LIMIT reloads (the tray's Reload window still works).
+  const reloads = new ReloadGuard()
+  win.webContents.on('render-process-gone', (_e, d) => {
+    if (d.reason === 'clean-exit' || quitting || win.isDestroyed()) return
+    if (!reloads.allow(Date.now())) {
+      log(`window ${session.id}: renderer gone (${d.reason}); not reloaded again (${RELOAD_LIMIT} automatic reloads in ${RELOAD_WINDOW_MS / 60_000} min). Tray → Reload window`)
+      return
+    }
+    log(`window ${session.id}: renderer gone (${d.reason}, exit ${d.exitCode}); reloading it, the cards keep running`)
+    // a moment's pause: reloading inside the crash notification would race the dying process
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.webContents.reload()
+    }, 1000)
+  })
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -104,6 +121,20 @@ function showAll(ctx: MainContext): void {
   if (cur && !cur.win.isDestroyed()) cur.win.focus()
 }
 
+/**
+ * The tray's way out of a blank window whose renderer did not die (a GPU crash can leave it so): the shown windows
+ * (else the last used one) load their page again, which reattaches to the running cards.
+ */
+function reloadWindows(ctx: MainContext): void {
+  const shown = ctx.windows.all().filter((s) => !s.win.isDestroyed() && s.win.isVisible())
+  const cur = ctx.windows.current()
+  for (const s of shown.length ? shown : cur && !cur.win.isDestroyed() ? [cur] : []) {
+    log(`window ${s.id}: reloaded from the tray, the cards keep running`)
+    s.win.show()
+    s.win.webContents.reload()
+  }
+}
+
 function createTray(ctx: MainContext): void {
   const img = nativeImage.createFromPath(iconPath())
   if (img.isEmpty()) return
@@ -114,6 +145,7 @@ function createTray(ctx: MainContext): void {
     Menu.buildFromTemplate([
       { label: 'Show Ouroboros', click: show },
       { label: 'New window', click: () => void createWindow(ctx) },
+      { label: 'Reload window (cards keep running)', click: () => reloadWindows(ctx) },
       { type: 'separator' },
       {
         label: 'Quit',
@@ -134,7 +166,7 @@ async function main(): Promise<void> {
   }
   // Separate ids: toasts left in Action Center by a dev run must not COM-activate node_modules\electron.exe later.
   app.setAppUserModelId(isDev ? 'dev.blee170.ouroboros.dev' : 'dev.blee170.ouroboros')
-  // Electron's default menu keeps Ctrl+R (reloads the board and relaunches every card) and Ctrl+W live even
+  // Electron's default menu keeps Ctrl+R (reloads the page; it reattaches to the running cards) and Ctrl+W live even
   // with the bar hidden; the packaged app has no menu at all (dev keeps it for DevTools)
   if (!isDev) Menu.setApplicationMenu(null)
   // Local-only crash dumps (userData/Crashpad/reports) and a main.log trail: no upload anywhere.

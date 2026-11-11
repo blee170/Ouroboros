@@ -101,6 +101,7 @@ import { openMode, resolveOpenPath } from './open-path'
 import { Autonomy, type AutonomyHost } from './autonomy'
 import { Relay } from './relay'
 import { relaySettings } from '@shared/relay'
+import { reattachWorkspace } from '@shared/reattach'
 import { cardSettingsExtra, engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
@@ -177,7 +178,9 @@ const EDGE_MAX_PER_WINDOW = 6
 const EDGE_WINDOW_MS = 5 * 60_000
 
 function sendToRenderer(s: WindowSession | undefined, channel: string, payload: unknown): void {
-  if (s && !s.win.isDestroyed()) s.win.webContents.send(channel, payload)
+  // a window whose renderer died has no frame to send to until it is reloaded: what it misses is in main's state
+  // (the board, each card's output buffer), and the reloaded page takes it from there (workspaceLoad, pty.attach)
+  if (s && !s.win.isDestroyed() && !s.win.webContents.isCrashed()) s.win.webContents.send(channel, payload)
 }
 
 function broadcast(ctx: MainContext, channel: string, payload: unknown): void {
@@ -202,6 +205,22 @@ function throttledSpawn<T>(fn: () => T): Promise<T> {
     () => new Promise((r) => setTimeout(r, SPAWN_GAP_MS))
   )
   return turn
+}
+/**
+ * Cards whose pty.spawn or claude.launch call is still under way (queued behind the gap above, or in its WSL check).
+ * A page that dies leaves its queued calls running in main: the reloaded page counts these cards as running and
+ * waits for the call (pty.attach), so a card is not started twice.
+ */
+const spawning = new Map<string, Promise<void>>()
+/** A spawn or launch for this card begins; the function returned ends it (an earlier call's end leaves a later one's entry). */
+function startSpawn(nodeId: string): () => void {
+  let end!: () => void
+  const p = new Promise<void>((r) => (end = r))
+  spawning.set(nodeId, p)
+  return () => {
+    end()
+    if (spawning.get(nodeId) === p) spawning.delete(nodeId)
+  }
 }
 const readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** length of the launch command typed into each card's shell (its echo is not TUI output) */
@@ -326,6 +345,14 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
 /** Cards being woken (an entry per wake, empty when woken without a prompt): their prompts, sent once the card is up again (installWakeDelivery). */
 const wakePrompts = new Map<string, string[]>()
 
+/**
+ * Cards main asked the page to restart (new launch options in data.claude) that have not been launched since. The
+ * request is a message to the page: one sent while the page is dead or still loading is lost, and the reloaded page
+ * would attach to the old process. Such a card is launched instead (workspaceLoad leaves it out of `live`, pty.attach
+ * says launch). Cleared by its next spawn or launch.
+ */
+const restartsOwed = new Set<string>()
+
 /** A woken card that will not come up: what it was woken with is dropped, not typed in at some later start. */
 export function dropWake(id: string, why: string): void {
   if (wakePrompts.delete(id)) log(`sleep: ${id} ${why}; the prompt it was woken with is dropped`)
@@ -426,6 +453,7 @@ export function wakeCard(ctx: MainContext, s: WindowSession, id: string, prompt?
   const claude = { ...n.data.claude, resume: n.data.sessionId, continue: undefined }
   n.data.claude = claude
   s.board.setStatus(id, { status: 'starting', statusDetail: 'waking' })
+  restartsOwed.add(id)
   sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: { asleep: false, claude }, restart: true })
   log(`sleep: ${id} woken${prompt ? ' (a prompt waits until it is up)' : ''}`)
   return true
@@ -531,6 +559,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   ctx.windows.unbindNode(id)
   running.delete(id)
   wakePrompts.delete(id)
+  restartsOwed.delete(id)
   lastInputAt.delete(id)
   ctx.usage.forgetCard(id)
   forgetMail(id)
@@ -746,6 +775,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         }
         ctx.windows.bindNode(id, s.id)
         sendToRenderer(s, IPC.boardAddNode, node)
+        // in main right away, as createAgent does: a page that is dead or reloading misses the add, and reattaches from main's board
+        board.nodes.set(id, { id, data: { ...node.data } })
         // wait (bounded) for the webview to register so the caller can act right away
         for (let i = 0; i < 40 && !ctx.browsers.has(id); i++) await new Promise((r) => setTimeout(r, 250))
         return { id }
@@ -909,6 +940,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       // A relaunch must keep the conversation: resume the session we know, never start fresh.
       if (restart && n.data.sessionId) data.claude = { ...data.claude, resume: n.data.sessionId, continue: undefined }
       Object.assign(n.data, data)
+      if (restart) restartsOwed.add(id)
       sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data, restart })
       return true
     },
@@ -1750,9 +1782,15 @@ function autonomyHost(ctx: MainContext, s: WindowSession): AutonomyHost {
     relaunch: (id, claude) => {
       const n = board.nodes.get(id)
       if (n) n.data.claude = claude
+      restartsOwed.add(id)
       sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: { claude }, restart: true })
     },
-    addNote: (title, note) => sendToRenderer(s, IPC.boardAddNode, { id: nanoid(10), width: 600, height: 640, data: { kind: 'note', title, cwd: board.projectRoot, note } } satisfies AddNodePayload),
+    addNote: (title, note) => {
+      const node = { id: nanoid(10), width: 600, height: 640, data: { kind: 'note', title, cwd: board.projectRoot, note } } satisfies AddNodePayload
+      sendToRenderer(s, IPC.boardAddNode, node)
+      // in main right away, as createAgent does: a page that is dead or reloading misses the add (the morning report may be the only copy)
+      board.nodes.set(node.id, { id: node.id, data: { ...node.data } })
+    },
     changed: (state) => sendToRenderer(s, IPC.autonomyChanged, state),
     toast: (title, body) => {
       if (Notification.isSupported()) {
@@ -2704,7 +2742,9 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.ptySpawn, async (e, opts: PtySpawnOptions) => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
+    restartsOwed.delete(opts.nodeId)
     if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
+    const done = startSpawn(opts.nodeId)
     try {
       ctx.windows.bindNode(opts.nodeId, s.id)
       // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
@@ -2715,6 +2755,8 @@ export function registerIpc(ctx: MainContext): void {
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
+    } finally {
+      done()
     }
   })
   ipcMain.on(IPC.boardSelected, (e, nodeId: string | null) => {
@@ -2736,6 +2778,21 @@ export function registerIpc(ctx: MainContext): void {
     // an explicit kill reports no exit: the ledger hears about it here (a restart spawns again before the grace period ends)
     if (s.board.nodes.has(nodeId)) s.ledger.cardStopped(s.board, nodeId)
   })
+  // A reloaded window takes back a card main still runs: its output so far repaints the new terminal. The card's
+  // batched output is sent first, so every chunk that reached the page before this reply is inside the buffer (the
+  // page resets its terminal before writing it) and every later chunk follows it.
+  ipcMain.handle(IPC.ptyAttach, async (e, nodeId: unknown): Promise<{ ok: boolean; output?: string; launch?: boolean }> => {
+    if (typeof nodeId !== 'string') return { ok: false }
+    // a spawn the page that died asked for may still be queued: it is the card's process, so wait for it
+    await spawning.get(nodeId)
+    const s = sessionOf(e)
+    const n = s?.board.nodes.get(nodeId)
+    if (!s || !n || n.data.asleep) return { ok: false } // removed or put to sleep meanwhile: nothing to launch
+    // its process ended (or its queued spawn failed), or main asked for a restart this page never got: the page launches it
+    if (restartsOwed.has(n.id) || !ptys.isAlive(n.id)) return { ok: false, launch: true }
+    ptyOut.flush(n.id)
+    return { ok: true, output: s.board.getReplay(n.id) }
+  })
 
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
     const r = await claudeLaunch(e, opts)
@@ -2746,7 +2803,10 @@ export function registerIpc(ctx: MainContext): void {
   const claudeLaunch = async (e: IpcMainInvokeEvent, opts: ClaudeLaunchOptions): Promise<{ ok: boolean; error?: string }> => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
+    restartsOwed.delete(opts.nodeId)
     if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
+    // from here, before the WSL check: a reload during either wait finds the card starting
+    const done = startSpawn(opts.nodeId)
     try {
       const shell = opts.shell || store.getSettings().defaultShell || defaultShell()
       const engine = opts.engine ?? 'claude'
@@ -2824,6 +2884,11 @@ export function registerIpc(ctx: MainContext): void {
         const own = existing && !existing.startsWith(ROLE_PROMPT_PREFIX) ? existing : undefined
         const initialPrompt = [prepared.initialPrompt, own].filter(Boolean).join('\n\n')
         s.board.markRoleTurn(opts.nodeId)
+        // main keeps it too: a page that is dead or reloading misses the update, and the reattached card types it from
+        // main's data (else the role turn never ends and the task waiting on it is never sent). The page's sync after
+        // it is typed clears it here.
+        const node = s.board.nodes.get(opts.nodeId)
+        if (node) node.data.initialPrompt = initialPrompt
         sendToRenderer(s, IPC.boardUpdateNode, { nodeId: opts.nodeId, data: { initialPrompt }, restart: false })
       }
       launchLineLength.set(opts.nodeId, prepared.command.length)
@@ -2831,10 +2896,18 @@ export function registerIpc(ctx: MainContext): void {
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
+    } finally {
+      done()
     }
   }
 
-  ipcMain.on(IPC.boardSync, (e, payload: BoardSyncPayload) => sessionOf(e)?.board.sync(payload))
+  ipcMain.on(IPC.boardSync, (e, payload: BoardSyncPayload) => {
+    const s = sessionOf(e)
+    // a page that has not opened its project yet (one that just reloaded, sent a card or a line by main meanwhile)
+    // syncs an empty board: that must not drop the cards of the project the window still has
+    if (!s || (!payload.projectRoot && s.board.projectRoot)) return
+    s.board.sync(payload)
+  })
   ipcMain.handle(IPC.agentsList, (e) => sessionOf(e)?.board.snapshot() ?? [])
   ipcMain.handle(IPC.handoffFire, (e, edgeId: string) => sessionOf(e)?.fireHandoff(edgeId, true) ?? { ok: false, error: 'no window' })
 
@@ -2846,6 +2919,18 @@ export function registerIpc(ctx: MainContext): void {
       other.win.show()
       other.win.focus()
       return { workspace: null, projectRoot, alreadyOpen: true }
+    }
+    // The window's page loaded again on the project main still holds (its renderer died, or Reload window): the board
+    // is main's (cards the file does not have yet, runtime state), its running cards are reattached, and nothing is
+    // loaded again (a load withdraws the open questions and re-reads the ledger, mailbox, routines, audit and trust).
+    if (s && s.board.projectRoot && samePath(s.board.projectRoot, projectRoot) && s.board.nodes.size > 0) {
+      s.selectedNodeId = null // the new page has nothing selected yet
+      // running: a live process or one still being spawned (pty.attach waits for it); a card owed a restart is launched
+      const runs = (id: string): boolean => (ptys.isAlive(id) || spawning.has(id)) && !restartsOwed.has(id)
+      const { workspace, live } = reattachWorkspace(projectRoot, s.board.nodes.values(), s.board.edges, runs,readWorkspace(projectRoot)?.workspace ?? null)
+      const held = ctx.boardTrust.heldNow(projectRoot)
+      log(`window ${s.id}: page reloaded on ${projectRoot}; ${live.length} running card(s) reattached, ${workspace.nodes.length} on the board`)
+      return { workspace, projectRoot, live, ...(held.length ? { held } : {}) }
     }
     s?.ledger.flush() // the previous project's pending ledger write goes to its own file first
     if (s) s.board.projectRoot = projectRoot
@@ -3259,7 +3344,8 @@ export function registerIpc(ctx: MainContext): void {
     version: app.getVersion(),
     hookPort: hookServer.port,
     userData: app.getPath('userData'),
-    initialProject: sessionOf(e)?.initialProject,
+    // a page that loads again (crash recovery, Reload window) reopens the project the window has, however it was opened
+    initialProject: sessionOf(e)?.board.projectRoot || sessionOf(e)?.initialProject,
     mcpRunner: findNodeBinary() ?? `${process.execPath} (ELECTRON_RUN_AS_NODE)`,
     mcpScript: ctx.mcpScriptPath,
     hasUpdateToken: Boolean(decryptToken(store.getSettings().githubTokenEnc)),

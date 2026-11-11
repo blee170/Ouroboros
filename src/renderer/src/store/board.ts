@@ -170,19 +170,35 @@ interface BoardState {
   persist(): void
 }
 
+/** Cards main still ran when this page opened its project (a reloaded window): their first launch attaches instead. */
+const liveOnLoad = new Set<string>()
+
+/** Is this card's first launch an attach to the process main runs? Asked once per card. */
+export function takeLive(id: string): boolean {
+  return liveOnLoad.delete(id)
+}
+
 let syncTimer: ReturnType<typeof setTimeout> | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
+function sendSync(s: BoardState): void {
+  api().board.sync({
+    projectRoot: s.projectRoot,
+    nodes: s.nodes.filter((n) => n.data.kind !== 'external').map((n) => ({ id: n.id, data: n.data, pos: { x: Math.round(n.position.x + (n.width ?? n.measured?.width ?? 0) / 2), y: Math.round(n.position.y + (n.height ?? n.measured?.height ?? 0) / 2) } })),
+    edges: s.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { mode: e.data?.mode ?? 'auto', template: e.data?.template ?? DEFAULT_HANDOFF_TEMPLATE, condition: e.data?.condition, lastFiredAt: e.data?.lastFiredAt } }))
+  })
+}
+
+/** The board to main now, not after the debounce (which a drag keeps putting off): a pending sync goes with it. */
+export function syncNow(): void {
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = null
+  sendSync(useBoard.getState())
+}
+
 function scheduleSync(get: () => BoardState): void {
   if (syncTimer) clearTimeout(syncTimer)
-  syncTimer = setTimeout(() => {
-    const s = get()
-    api().board.sync({
-      projectRoot: s.projectRoot,
-      nodes: s.nodes.filter((n) => n.data.kind !== 'external').map((n) => ({ id: n.id, data: n.data, pos: { x: Math.round(n.position.x + (n.width ?? n.measured?.width ?? 0) / 2), y: Math.round(n.position.y + (n.height ?? n.measured?.height ?? 0) / 2) } })),
-      edges: s.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, data: { mode: e.data?.mode ?? 'auto', template: e.data?.template ?? DEFAULT_HANDOFF_TEMPLATE, condition: e.data?.condition, lastFiredAt: e.data?.lastFiredAt } }))
-    })
-  }, 150)
+  syncTimer = setTimeout(() => sendSync(get()), 150)
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => get().persist(), 1000)
 }
@@ -297,8 +313,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   async openProject(root) {
-    const { workspace, alreadyOpen, held } = await api().workspace.load(root)
+    const { workspace, alreadyOpen, held, live } = await api().workspace.load(root)
     if (alreadyOpen) return // another window has it and was focused
+    // filled before the cards mount: a card main still runs is reattached, not launched again
+    liveOnLoad.clear()
+    for (const id of live ?? []) liveOnLoad.add(id)
     const nodes = (workspace?.nodes ?? []).map(toBoardNode)
     const edges: BoardEdge[] = (workspace?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'handoff', data: { ...e.data } }))
     set({ projectRoot: root, nodes, edges, viewport: workspace?.viewport, selectedNodeId: null, selectedEdgeId: null, workingSince: {}, attention: EMPTY_ATTENTION, usage: {}, activity: {}, tasks: [], routines: [], held: held ?? [] })

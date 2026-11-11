@@ -7,7 +7,8 @@ import { elapsedText } from '@shared/activity'
 import type { BoardNode } from '@/store/board'
 import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
-import { useBoard } from '@/store/board'
+import { syncNow, takeLive, useBoard } from '@/store/board'
+import { launchMode } from '@shared/reattach'
 import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
 import { FAR_ZOOM, isAtBottom, tailText, wantsWebgl } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
@@ -84,26 +85,51 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   useEffect(() => {
     if (!handle) return
     if (launchedSeq.current === seq) return
-    // an asleep card has no process until it is woken (main wakes it, which bumps launchSeq)
-    if (data.asleep) return
+    // a reloaded window's first launch of a card main still runs takes that process back (a Restart bumps launchSeq
+    // and spawns as before); an asleep card has no process until it is woken (main wakes it, which bumps launchSeq)
+    const first = launchedSeq.current === -1
+    const mode = launchMode({ first, live: first && takeLive(id), asleep: data.asleep === true })
+    if (mode === 'wait') return
     launchedSeq.current = seq
     const { term } = handle
     const api = window.ouroboros
-    const cwd = data.worktree?.path || data.cwd
-    // a launch that fails (shell typo, missing node for Codex) must not leave the card blank on "Starting"
-    const report = (r: { ok: boolean; error?: string }): void => {
-      // spawns are throttled: a resize sent while this one waited was dropped, so send the current size once more
-      if (r.ok) {
-        api.pty.resize(id, term.cols, term.rows)
-        return
-      }
-      term.write(`\r\n\x1b[31m[launch failed]\x1b[0m ${r.error ?? 'unknown error'}\r\n`)
-      useBoard.getState().applyStatus({ nodeId: id, status: 'ended', statusDetail: 'launch failed', at: Date.now() })
+    if (mode === 'attach') {
+      void api.pty.attach(id).then((r) => {
+        if (launchedSeq.current !== seq) return // restarted while this was asked: the restart's process is the card's
+        if (!r.ok) {
+          // it exited meanwhile, or main owes it a restart: launched as on a plain open. Removed or put to sleep meanwhile:
+          // nothing to launch (main says which; the store may still hold a removed card until its pty.kill returns)
+          if (r.launch) launch()
+          return
+        }
+        // every chunk this terminal got before the reply is in the buffer: start clean and repaint from it. The reset is
+        // RIS (ESC c) in the write queue, not term.reset(): a chunk still queued is parsed before it, not after it
+        handle.replay('\x1bc' + (r.output ?? ''), () => {
+          // the same size is no change to the PTY: a column less and back makes a full-screen CLI draw itself again
+          api.pty.resize(id, term.cols - 1, term.rows)
+          setTimeout(() => api.pty.resize(id, term.cols, term.rows), 120)
+        })
+      })
+      return
     }
-    if (kind === 'terminal' || kind === 'command') {
-      void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined }).then(report)
-    } else if (kind === 'claude' || kind === 'conductor') {
-      void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title, chatView: view === 'chat' }).then(report)
+    launch()
+    function launch(): void {
+      const cwd = data.worktree?.path || data.cwd
+      // a launch that fails (shell typo, missing node for Codex) must not leave the card blank on "Starting"
+      const report = (r: { ok: boolean; error?: string }): void => {
+        // spawns are throttled: a resize sent while this one waited was dropped, so send the current size once more
+        if (r.ok) {
+          api.pty.resize(id, term.cols, term.rows)
+          return
+        }
+        term.write(`\r\n\x1b[31m[launch failed]\x1b[0m ${r.error ?? 'unknown error'}\r\n`)
+        useBoard.getState().applyStatus({ nodeId: id, status: 'ended', statusDetail: 'launch failed', at: Date.now() })
+      }
+      if (kind === 'terminal' || kind === 'command') {
+        void api.pty.spawn({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, initialCommand: kind === 'terminal' ? data.initialCommand : undefined }).then(report)
+      } else if (kind === 'claude' || kind === 'conductor') {
+        void api.claude.launch({ nodeId: id, cwd, shell: data.shell, cols: term.cols, rows: term.rows, kind, engine: data.engine, claude: data.claude ?? {}, title: data.title, chatView: view === 'chat' }).then(report)
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, seq, id, kind])
@@ -113,6 +139,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
     if (!data.initialPrompt || status !== 'idle') return
     const prompt = data.initialPrompt
     updateNodeData(id, { initialPrompt: undefined })
+    // main forgets it now, before it is typed: a sync held back by a drag would let a reattached page type it again
+    syncNow()
     setTimeout(() => typePrompt(id, prompt, 200), 1200)
   }, [data.initialPrompt, status, id, updateNodeData])
 

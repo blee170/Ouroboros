@@ -8,6 +8,15 @@ const OUTPUT_CAP = 200_000
 /** A card made this recently with no process yet is starting (the renderer spawns it), not exited. */
 const STARTING_GRACE_MS = 60_000
 
+/** Record the DEC private modes (`ESC [ ? n ; n h|l`) `text` sets, in order, into the card's map. */
+function trackModes(all: Map<string, Map<string, boolean>>, nodeId: string, text: string): void {
+  for (const m of text.matchAll(/\x1b\[\?([\d;]+)([hl])/g)) {
+    let modes = all.get(nodeId)
+    if (!modes) all.set(nodeId, (modes = new Map()))
+    for (const n of m[1].split(';')) if (n) modes.set(n, m[2] === 'h')
+  }
+}
+
 export interface NodeMeta {
   id: string
   data: NodeData
@@ -33,6 +42,8 @@ export class Board extends EventEmitter {
   nodes = new Map<string, NodeMeta>()
   edges: WorkspaceEdge[] = []
   private output = new Map<string, string>()
+  /** DEC private modes (on/off) set in the part of each card's output trimmed off the front of `output` (getReplay). */
+  private headModes = new Map<string, Map<string, boolean>>()
   private sessionToNode = new Map<string, string>()
   externalSessions = new Map<string, ExternalSession>()
   ptyAlive = new Set<string>()
@@ -110,6 +121,7 @@ export class Board extends EventEmitter {
     for (const id of this.nodes.keys()) {
       if (!next.has(id)) {
         this.output.delete(id)
+        this.headModes.delete(id)
         this.roleTurn.delete(id)
         this.noteTurn.delete(id)
         this.clearWatch.delete(id)
@@ -122,12 +134,25 @@ export class Board extends EventEmitter {
   appendOutput(nodeId: string, chunk: string): void {
     const prev = this.output.get(nodeId) ?? ''
     let buf = prev + chunk
-    if (buf.length > OUTPUT_CAP) buf = buf.slice(buf.length - OUTPUT_CAP)
+    if (buf.length > OUTPUT_CAP) {
+      const cut = buf.length - OUTPUT_CAP
+      trackModes(this.headModes, nodeId, buf.slice(0, cut))
+      buf = buf.slice(cut)
+    }
     this.output.set(nodeId, buf)
   }
 
   getOutput(nodeId: string): string {
     return this.output.get(nodeId) ?? ''
+  }
+
+  /**
+   * What repaints a new terminal for a running card (a reloaded window): the terminal modes its output set before
+   * the part kept (a CLI turns bracketed paste, cursor keys or the alternate screen on once, at its start), then that part.
+   */
+  getReplay(nodeId: string): string {
+    const modes = [...(this.headModes.get(nodeId) ?? [])].map(([m, on]) => `\x1b[?${m}${on ? 'h' : 'l'}`).join('')
+    return modes + this.getOutput(nodeId)
   }
 
   setPtyAlive(nodeId: string, alive: boolean): void {

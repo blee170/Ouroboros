@@ -26,7 +26,7 @@ function setup(data: Record<string, unknown> = {}, others: Array<{ id: string; d
   const s = {
     board,
     autonomy: { on: false, promptRefusal: () => undefined },
-    win: { isDestroyed: () => false, webContents: { send: (channel: string, payload: unknown) => sent.push([channel, payload]) } }
+    win: { isDestroyed: () => false, webContents: { isCrashed: () => false, send: (channel: string, payload: unknown) => sent.push([channel, payload]) } }
   }
   return { board: board as BoardT, alive, sent, ctx: ctx as never, raw: ctx, s: s as never }
 }

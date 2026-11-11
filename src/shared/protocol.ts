@@ -47,6 +47,7 @@ export const IPC = {
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   ptyKill: 'pty:kill',
+  ptyAttach: 'pty:attach',
   ptyPasteImage: 'pty:pasteImage',
   claudeLaunch: 'claude:launch',
   boardSync: 'board:sync',
@@ -407,6 +408,11 @@ export interface WorkspaceLoadResult {
   alreadyOpen?: boolean
   /** Cards whose launch fields were changed outside Ouroboros since the app last wrote the file: not launched until the owner decides. */
   held?: HeldCard[]
+  /**
+   * The window reloaded on the project main still holds (its renderer died, or Reload window): `workspace` is main's
+   * board, and these cards' processes are running, so they are reattached (pty.attach), not launched.
+   */
+  live?: string[]
 }
 
 /** The API exposed to the renderer through contextBridge. */
@@ -418,6 +424,12 @@ export interface OuroborosApi {
     write(nodeId: string, data: string): void
     resize(nodeId: string, cols: number, rows: number): void
     kill(nodeId: string): Promise<void>
+    /**
+     * Take back a card main still runs (a reloaded window): its output so far, to repaint the terminal. Not ok with
+     * `launch` when its process is gone or main owes it a restart (the page launches it); not ok without `launch` when
+     * the card was removed or put to sleep meanwhile (nothing to launch).
+     */
+    attach(nodeId: string): Promise<{ ok: boolean; output?: string; launch?: boolean }>
     /**
      * Attach an image file to a Claude Code card's prompt as an [Image #N] chip: the image is put on the
      * clipboard and the card gets Claude Code's own paste key (Alt+V). Resolves once the chip shows.

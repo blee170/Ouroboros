@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
+import { replayInput } from '@shared/reattach'
 import { BASE_FONT_SIZE, applyScale, isAtBottom, renderScale, styleHost } from './terminalScale'
 
 export interface TerminalHandle {
@@ -14,6 +15,8 @@ export interface TerminalHandle {
   setZoom(zoom: number): void
   /** Draw with WebGL (true) or give the card's WebGL context back and use the DOM renderer (false); see wantsWebgl. */
   setWebgl(on: boolean): void
+  /** Write a running card's replayed output; what xterm answers while parsing it is not sent to the PTY (replayInput). `done` once parsed. */
+  replay(data: string, done: () => void): void
 }
 
 export { BASE_FONT_SIZE }
@@ -88,7 +91,8 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     loadWebgl()
     const api = window.ouroboros
     const offData = api.pty.onData(nodeId, (data) => term.write(data))
-    const inputSub = term.onData((d) => api.pty.write(nodeId, d))
+    const keys = replayInput((d) => api.pty.write(nodeId, d))
+    const inputSub = term.onData(keys.input)
     // Screenshots pasted or files dropped onto the card are saved/resolved and their path typed into
     // the prompt (Claude Code reads image paths), so feedback screenshots can be handed to an agent.
     const quote = (p: string): string => (/[\s"']/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p)
@@ -172,7 +176,8 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       applyScale(term, fit, el, scale)
     }
     const setWebgl = (on: boolean): void => (on ? loadWebgl() : releaseWebgl())
-    const h: TerminalHandle = { term, fit, search, setZoom, setWebgl }
+    const replay = (data: string, done: () => void): void => keys.replay(term, data, done)
+    const h: TerminalHandle = { term, fit, search, setZoom, setWebgl, replay }
     handleRef.current = h
     setHandle(h)
     return () => {

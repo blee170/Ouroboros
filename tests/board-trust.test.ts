@@ -214,6 +214,22 @@ describe('BoardTrust with the board file', () => {
     // quit before the renderer saved the revert: b is held again, a is trusted
     expect(open(true, new BoardTrust(recFile()))).toEqual(['b'])
   })
+
+  it('a reloaded window gets the cards still held, as the open listed them, without a new check', () => {
+    saveWorkspace(ws([node('a', {}), node('b', {})]))
+    open()
+    expect(trust.heldNow(dir)).toEqual([])
+    forge((w) => {
+      w.nodes[0].data.initialCommand = 'echo a'
+      w.nodes[1].data.claude = { boardTools: true }
+    })
+    const listed = trust.check(dir, readWorkspace(dir)!.text, true)
+    expect(trust.heldNow(dir)).toEqual(listed)
+    trust.release(dir, ['a'], false, readFileSync(file(), 'utf8'))
+    expect(trust.heldNow(dir).map((h) => h.nodeId)).toEqual(['b'])
+    expect(trust.heldNow(dir)[0].changes.map((c) => c.field)).toEqual(['claude.boardTools'])
+    expect(trust.isHeld(dir, 'b')).toBe(true) // asking changes nothing
+  })
 })
 
 describe('the WSL switch', () => {

@@ -32,6 +32,7 @@ const input: EngineLaunchInput = {
 function variants(): ClaudeOptions[] {
   const out: ClaudeOptions[] = []
   for (const permissionMode of MODES) for (const r of RESUMES) out.push({ ...r, permissionMode, model: 'm', effort: 'high' })
+  out.push({ lightMcp: true })
   return out
 }
 

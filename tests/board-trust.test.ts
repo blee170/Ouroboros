@@ -221,6 +221,13 @@ describe('the WSL switch', () => {
     expect(privilegeView({ kind: 'claude', claude: { wsl: true } })['claude.wsl']).toBe('true')
     expect(privilegeView({ kind: 'claude', claude: {} })['claude.wsl'] ?? null).toBeNull()
   })
+  it('counts the light MCP switch: turning it off outside the app holds a known card, a new light card is not held for it', () => {
+    expect(privilegeView({ kind: 'claude', claude: { lightMcp: true } })['claude.lightMcp']).toBe('true')
+    expect(privilegeView({ kind: 'claude', claude: {} })['claude.lightMcp'] ?? null).toBeNull()
+    const held = diffPrivileges(views(node('a', { claude: { lightMcp: true } })), [node('a', {}), node('fresh', { claude: { lightMcp: true } })])
+    expect(held.map((h) => h.nodeId)).toEqual(['a'])
+    expect(held[0].changes.map((c) => c.field)).toEqual(['claude.lightMcp'])
+  })
   it('counts the effort level too, like the model', () => {
     expect(privilegeView({ kind: 'claude', claude: { effort: 'max' } })['claude.effort']).toBe('"max"')
     expect(privilegeView({ kind: 'claude', claude: {} })['claude.effort'] ?? null).toBeNull()

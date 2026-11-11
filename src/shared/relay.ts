@@ -55,8 +55,8 @@ export function recentRelays(history: number[] | undefined, now: number): number
   return (history ?? []).filter((t) => now - t < RELAY_CHAIN_MS)
 }
 
-/** What to do with a card now: relay it, ask the owner first, or nothing. */
-export function relayDecision(c: RelayCard, settings: RelaySettings, history: number[] | undefined, now: number): 'auto' | 'ask' | null {
+/** Every check of relayDecision that needs no context size: a card that fails it never has its transcript read. */
+export function relayPrecheck(c: RelayCard, settings: RelaySettings, history: number[] | undefined, now: number): 'auto' | 'ask' | null {
   if ((c.engine ?? 'claude') !== 'claude') return null
   if (c.kind !== 'claude' && c.kind !== 'conductor') return null
   const mode = c.kind === 'conductor' ? settings.conductor : settings.workers
@@ -64,8 +64,15 @@ export function relayDecision(c: RelayCard, settings: RelaySettings, history: nu
   if (c.status !== 'idle' && c.status !== 'done') return null
   if (c.pending) return null
   if (!c.lastStopAt || now - c.lastStopAt < RELAY_IDLE_MS) return null
-  if (typeof c.contextTokens !== 'number' || c.contextTokens < relayThreshold(settings.tokens, c.contextWindow)) return null
   if (recentRelays(history, now).length >= RELAY_CHAIN_MAX) return null
+  return mode
+}
+
+/** What to do with a card now: relay it, ask the owner first, or nothing. */
+export function relayDecision(c: RelayCard, settings: RelaySettings, history: number[] | undefined, now: number): 'auto' | 'ask' | null {
+  const mode = relayPrecheck(c, settings, history, now)
+  if (!mode) return null
+  if (typeof c.contextTokens !== 'number' || c.contextTokens < relayThreshold(settings.tokens, c.contextWindow)) return null
   return mode
 }
 

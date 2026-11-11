@@ -138,7 +138,7 @@ server.registerTool(
   {
     title: 'List agents on the board',
     description:
-      'Every agent card on the Ouroboros board with id, title, cwd, status (starting|idle|working|needs-you|done|ended), statusDetail and lastAssistantMessage. Your own id is marked self=true.',
+      'Every agent card on the Ouroboros board with id, title, cwd, status (starting|idle|working|needs-you|done|ended), statusDetail and lastAssistantMessage. Your own id is marked self=true. asleep=true (status ended, detail asleep): a finished card whose process was stopped; send_prompt or send_message wakes it on the same conversation.',
     inputSchema: {}
   },
   async () => {
@@ -164,7 +164,7 @@ server.registerTool(
   'send_prompt',
   {
     title: 'Send a prompt to an agent',
-    description: 'Type a prompt into the agent terminal and press Enter. Use for delegation; keep prompts self-contained. It is a message, not keystrokes: it cannot answer a permission prompt (refused; the owner answers those).',
+    description: 'Type a prompt into the agent terminal and press Enter. Use for delegation; keep prompts self-contained. It is a message, not keystrokes: it cannot answer a permission prompt (refused; the owner answers those). An asleep card is woken on its conversation and gets the prompt once it is up.',
     inputSchema: { agent_id: z.string(), text: z.string().min(1) }
   },
   async ({ agent_id, text: prompt }) => {
@@ -200,7 +200,7 @@ server.registerTool(
   {
     title: 'Create a new Claude Code agent card',
     description:
-      'Add a card to the board. kind=claude (default) runs an interactive coding agent: engine=claude (Claude Code), codex (OpenAI Codex CLI), gemini (Gemini CLI) or grok (xAI Grok Build); omitted = the owner\'s default engine from Settings. All get the same hooks, lines and board tools. effort=low|medium|high|xhigh|max sets the reasoning effort the card is launched with (Claude Code --effort, Codex model_reasoning_effort; Gemini and Grok ignore it; omitted = the CLI\'s default). kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). role=<id from list_roles> gives the card a specialist persona (its agent file) as that prompt, with role_prompt appended after it; an unknown id fails with the reason. worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt). A title that already exists in the same folder reuses that card when it is idle or done (the prompt goes to it; a changed role_prompt is given to it first; the result says reused=true) and replaces it when its process has ended (replaced=<old id>), so keep one stable title per role instead of inventing new names each round; a card that is still working is left alone and a second one is created. Cards you create are dispatched by you: they are retired automatically 5 minutes after their report reaches you (send them more work before then to keep them), you may have at most 6 live ones at once (maxWorkersPerLead in settings.json), and the chain goes no deeper than Conductor → team → worker — the call fails with the reason.',
+      'Add a card to the board. kind=claude (default) runs an interactive coding agent: engine=claude (Claude Code), codex (OpenAI Codex CLI), gemini (Gemini CLI) or grok (xAI Grok Build); omitted = the owner\'s default engine from Settings. All get the same hooks, lines and board tools. effort=low|medium|high|xhigh|max sets the reasoning effort the card is launched with (Claude Code --effort, Codex model_reasoning_effort; Gemini and Grok ignore it; omitted = the CLI\'s default). kind=command runs any CLI: command_template is a shell line with {{prompt}} (quoted single line) or {{prompt_file}} (temp file with the full text), e.g. Aside browser agent: `aside exec {{prompt}}`, Codex: `codex exec {{prompt}}`. The command output until it exits is the card\'s reply, so lines and reports work the same. By default a report line is drawn from the new card back to you, so its finished replies arrive in your input automatically (report_to_me=false to skip). role_prompt becomes its extra system prompt (define the role, the markers it must end replies with, what it must never do). role=<id from list_roles> gives the card a specialist persona (its agent file) as that prompt, with role_prompt appended after it; an unknown id fails with the reason. worktree=true gives it its own git worktree branch of cwd. board_tools=true gives the card this same MCP server (a team lead that creates and wires its own sub-cards); default false. light_mcp=true (Claude cards) starts the card with only its own MCP servers (this board server), not the owner\'s global ones: lighter and faster for a focused worker, but the owner\'s other MCP tools are missing there; default false. prompt is typed in as soon as the session is ready. Returns the new id (use it for lines and send_prompt). A title that already exists in the same folder reuses that card when it is idle or done (the prompt goes to it; a changed role_prompt is given to it first; the result says reused=true) and replaces it when its process has ended (replaced=<old id>), so keep one stable title per role instead of inventing new names each round; a card that is still working is left alone and a second one is created. Cards you create are dispatched by you: they are retired automatically 5 minutes after their report reaches you (send them more work before then to keep them), you may have at most 6 live ones at once (maxWorkersPerLead in settings.json), and the chain goes no deeper than Conductor → team → worker — the call fails with the reason.',
     inputSchema: {
       cwd: z.string().optional(),
       title: z.string().optional(),
@@ -217,7 +217,8 @@ server.registerTool(
       kind: z.enum(['claude', 'command']).optional(),
       engine: z.enum(['claude', 'codex', 'gemini', 'grok']).optional(),
       command_template: z.string().optional(),
-      board_tools: z.boolean().optional()
+      board_tools: z.boolean().optional(),
+      light_mcp: z.boolean().optional()
     }
   },
   async ({ report_to_me, kind, ...input }) => text(await api('POST', '/api/agents', { ...input, kind: kind ?? 'claude', report_to: report_to_me === false ? undefined : SELF || undefined }))

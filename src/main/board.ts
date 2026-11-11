@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { AgentSnapshot, AgentStatus, HookEvent, NodeData, WorkspaceEdge } from '@shared/types'
 import type { AgentStatusPayload, BoardSyncPayload, ExternalSessionPayload } from '@shared/protocol'
 import { reduceHook } from '@shared/status'
+import { ASLEEP_DETAIL } from '@shared/sleep'
 
 const OUTPUT_CAP = 200_000
 /** A card made this recently with no process yet is starting (the renderer spawns it), not exited. */
@@ -99,6 +100,8 @@ export class Board extends EventEmitter {
         data.doing = prev.data.doing
         data.topic = prev.data.topic
         data.sessionId = data.sessionId ?? prev.data.sessionId
+        // main puts cards to sleep and wakes them: a sync sent before the renderer heard of it must not undo that
+        data.asleep = prev.data.asleep
       }
       const pos = n.pos && Number.isFinite(n.pos.x) && Number.isFinite(n.pos.y) ? { x: n.pos.x, y: n.pos.y } : prev?.pos
       next.set(n.id, { id: n.id, data, pos })
@@ -180,6 +183,8 @@ export class Board extends EventEmitter {
   /** Apply a hook event addressed to a known node. Returns the status update if any. */
   applyHook(nodeId: string, event: HookEvent): void {
     const n = this.nodes.get(nodeId)
+    // an asleep card has no process: a late hook of the one that was stopped changes nothing
+    if (n?.data.asleep) return
     const update = reduceHook(n?.data.status, event, n?.data.statusDetail)
     this.emit('hook', { nodeId, event })
     if (n && typeof event.session_id === 'string' && !n.data.sessionId) {
@@ -259,8 +264,8 @@ export class Board extends EventEmitter {
         title: n.data.title,
         cwd: n.data.cwd,
         // a card whose process has not spawned yet is starting, not exited: the renderer mounts it a moment after main makes it
-        status: n.data.status ?? (this.ptyAlive.has(n.id) ? 'idle' : n.data.createdAt && Date.now() - n.data.createdAt < STARTING_GRACE_MS ? 'starting' : 'ended'),
-        statusDetail: n.data.statusDetail,
+        status: n.data.asleep ? 'ended' : (n.data.status ?? (this.ptyAlive.has(n.id) ? 'idle' : n.data.createdAt && Date.now() - n.data.createdAt < STARTING_GRACE_MS ? 'starting' : 'ended')),
+        statusDetail: n.data.asleep ? ASLEEP_DETAIL : n.data.statusDetail,
         sessionId: n.data.sessionId,
         lastAssistantMessage: n.data.lastAssistantMessage,
         lastEventAt: n.data.lastEventAt,
@@ -268,7 +273,8 @@ export class Board extends EventEmitter {
         parentId: n.data.parentId,
         keep: n.data.keep,
         lastStopAt: n.data.lastStopAt,
-        endedAt: n.data.endedAt
+        endedAt: n.data.endedAt,
+        ...(n.data.asleep ? { asleep: true } : {})
       })
     }
     return out

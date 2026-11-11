@@ -44,6 +44,8 @@ export interface ClaudeOptions {
   mcpServers?: Record<string, McpServerSpec>
   /** Attach the board's own MCP server (agents + browser cards) to a plain Claude card. Conductors always have it. */
   boardTools?: boolean
+  /** Light card: `--strict-mcp-config`, so it starts only the MCP servers in its own config (the board server and mcpServers), not the owner's global ones. Plugins are not affected. */
+  lightMcp?: boolean
   /** Run this Claude card inside WSL2 with Claude Code's sandbox on (experimental; needs the distro set up, see Settings). */
   wsl?: boolean
 }
@@ -122,6 +124,8 @@ export interface NodeData {
   createdAt?: number
   /** Claude cards: shown as a chat or as the terminal (shared/chat.ts); unset = the Settings default. The session is the same either way. */
   view?: 'chat' | 'terminal'
+  /** Claude cards: put to sleep (shared/sleep.ts): no process, the session id kept; it wakes on the same conversation. Main owns it. */
+  asleep?: boolean
   // --- runtime-only fields (not persisted) ---
   status?: AgentStatus
   statusDetail?: string
@@ -215,6 +219,8 @@ export interface AgentSnapshot {
   keep?: boolean
   lastStopAt?: number
   endedAt?: number
+  /** Put to sleep: no process, wakes on the same conversation when it gets a prompt or a message. */
+  asleep?: boolean
 }
 
 export interface AppSettings {
@@ -230,6 +236,8 @@ export interface AppSettings {
   autoTidyMinutes?: number
   /** Dispatched cards are retired this many minutes after their report reached the card that made them (default 5; 0 = never automatically). */
   retireMinutes?: number
+  /** Cards the owner made that are done/idle this many minutes are put to sleep (shared/sleep.ts; unset or 0 = off, the default). */
+  sleepMinutes?: number
   /** Stall watchdog: a card Working with no activity, or waiting on a person, this long is reported to its Conductor (default 15; 0 = off). */
   stallMinutes?: number
   /** Fresh start (context relay): an idle Claude card past this many tokens (never past 60% of its window) starts a new conversation from a handoff note. Default 250k. */

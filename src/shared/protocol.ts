@@ -163,6 +163,9 @@ export const IPC = {
   tidyCandidates: 'tidy:candidates',
   bookmarksList: 'bookmarks:list',
   tidyApply: 'tidy:apply',
+  cardSleep: 'card:sleep',
+  cardSleepFinished: 'card:sleep-finished',
+  cardWake: 'card:wake',
   browserUnregister: 'browser:unregister',
   autonomyStart: 'autonomy:start',
   autonomyStop: 'autonomy:stop',
@@ -420,7 +423,8 @@ export interface OuroborosApi {
      * clipboard and the card gets Claude Code's own paste key (Alt+V). Resolves once the chip shows.
      */
     pasteImage(nodeId: string, path: string): Promise<{ ok: boolean; error?: string }>
-    onData(cb: (nodeId: string, data: string) => void): () => void
+    /** one card's terminal output (batched per card by main) */
+    onData(nodeId: string, cb: (data: string) => void): () => void
     onExit(cb: (nodeId: string, code: number) => void): () => void
   }
   claude: {
@@ -446,6 +450,12 @@ export interface OuroborosApi {
     onAnnounce(cb: (p: AnnouncePayload) => void): () => void
     fireHandoff(edgeId: string): Promise<{ ok: boolean; error?: string }>
     listAgents(): Promise<AgentSnapshot[]>
+    /** Put a finished Claude card to sleep: its process stops, the card and its session id stay (shared/sleep.ts). */
+    sleep(nodeId: string): Promise<{ ok: boolean; error?: string }>
+    /** "Sleep finished cards": every eligible done/idle card; how many went to sleep. */
+    sleepFinished(): Promise<{ slept: number }>
+    /** Wake an asleep card on its conversation; a prompt is sent once it is up. False when it was not asleep. */
+    wake(nodeId: string, prompt?: string): Promise<boolean>
   }
   workspace: {
     load(projectRoot: string): Promise<WorkspaceLoadResult>

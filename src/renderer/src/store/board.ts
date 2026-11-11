@@ -21,6 +21,7 @@ import { arrangeBoard, defaultSize, placeBeside, placeNew, type Rect } from '@sh
 import { EMPTY_ATTENTION, onStatus as attentionOnStatus, onViewed, type Attention } from '@shared/attention'
 import { SETTLE_ROWS_MS, rosterSnapshot, sameIds, sameRoster, type RosterRow } from '@shared/roster'
 import { DONE_ECHO_DETAIL } from '@shared/status'
+import { ASLEEP_DETAIL } from '@shared/sleep'
 
 export type BoardNode = Node<NodeData, 'agent' | 'note' | 'external' | 'browser'>
 export type BoardEdge = Edge<HandoffEdgeData & { firing?: boolean }, 'handoff'>
@@ -53,7 +54,8 @@ function toBoardNode(n: WorkspaceNode): BoardNode {
     width: n.width,
     height: n.height,
     dragHandle: '.node-header',
-    data: { ...n.data, launchSeq: 0 }
+    // an asleep card is not launched when the board opens: it shows as asleep until it is woken
+    data: { ...n.data, launchSeq: 0, ...(n.data.asleep ? { status: 'ended' as const, statusDetail: ASLEEP_DETAIL } : {}) }
   }
 }
 
@@ -237,6 +239,7 @@ export const useBoard = create<BoardState>((set, get) => ({
         .map((n) => {
           if (!done.has(n.id)) return n
           const data = revert && views[n.id] ? revertPrivileges(n.data, views[n.id]) : n.data
+          if (n.data.asleep) return { ...n, data } // trusted now; it launches when it is woken
           return { ...n, data: { ...data, launchSeq: (Number(n.data.launchSeq) || 0) + 1, status: 'starting', statusDetail: 'starting' } }
         })
     })
@@ -445,6 +448,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   async restartNode(id) {
+    // an asleep card restarts by waking: main resumes its session (and sends this back with asleep cleared)
+    if (get().nodes.find((n) => n.id === id)?.data.asleep) return void (await api().board.wake(id))
     await api().pty.kill(id)
     set({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, launchSeq: (Number(n.data.launchSeq) || 0) + 1, status: 'starting', statusDetail: 'restarting' } } : n)) })
   },

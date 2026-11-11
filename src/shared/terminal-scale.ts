@@ -22,6 +22,14 @@ export function fontFor(scale: number): number {
   return Math.floor(BASE_FONT_SIZE * scale * 10) / 10
 }
 
+/**
+ * Whether a card's terminal keeps a WebGL context (Chromium allows only a handful per page). An ended card, and an
+ * asleep one, draws with xterm's DOM renderer and gives its context back.
+ */
+export function wantsWebgl(status: string | undefined, asleep = false): boolean {
+  return status !== 'ended' && !asleep
+}
+
 /** The part of an xterm buffer `tailText` reads. */
 export interface BufferLike {
   buffer: { active: { length: number; getLine(y: number): { translateToString(trimRight?: boolean): string } | undefined } }

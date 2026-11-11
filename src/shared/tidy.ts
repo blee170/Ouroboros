@@ -134,7 +134,8 @@ export function selectTidyCandidates(agents: AgentSnapshot[], opts: TidyOptions)
     if (!dispatched && !opts.includeOwn) continue
     // a starting card has no process yet; that is not an exit
     if (a.status === 'starting') continue
-    if (a.status === 'ended' || !a.ptyAlive) {
+    // an asleep card stopped on purpose and wakes on its conversation: it is a finished card, not an exited one
+    if (!a.asleep && (a.status === 'ended' || !a.ptyAlive)) {
       if (opts.auto && !(a.endedAt && now - a.endedAt >= retire)) continue
       out.push({ id: a.id, title: a.title, reason: 'process exited' })
       continue
@@ -143,11 +144,12 @@ export function selectTidyCandidates(agents: AgentSnapshot[], opts: TidyOptions)
     const since = a.lastStopAt ?? a.lastEventAt ?? 0
     if (!since) continue
     const idleMin = Math.round((now - since) / 60_000)
+    const state = a.asleep ? 'asleep' : a.status
     if (dispatched && opts.reported?.has(a.id)) {
-      if (now - since >= retire) out.push({ id: a.id, title: a.title, reason: `reported, ${a.status} for ${idleMin} min` })
+      if (now - since >= retire) out.push({ id: a.id, title: a.title, reason: `reported, ${state} for ${idleMin} min` })
       continue
     }
-    if (now - since > stale) out.push({ id: a.id, title: a.title, reason: `${a.status} for ${idleMin} min${dispatched ? ', no report line' : ''}` })
+    if (now - since > stale) out.push({ id: a.id, title: a.title, reason: `${state} for ${idleMin} min${dispatched ? ', no report line' : ''}` })
   }
   return out
 }

@@ -60,6 +60,8 @@ export class Ledger extends EventEmitter {
         this.releaseTimers.delete(nodeId)
         const n = board.nodes.get(nodeId)
         if (n && board.ptyAlive.has(nodeId) && n.data.status !== 'ended') return
+        // an asleep card keeps its tasks: it wakes on the same conversation
+        if (n?.data.asleep) return
         this.release(nodeId, title)
       }, RELEASE_GRACE_MS)
     )

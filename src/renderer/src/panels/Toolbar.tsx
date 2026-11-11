@@ -141,7 +141,7 @@ export function Toolbar() {
         <button className="ghost" disabled={!projectRoot} onClick={() => setBuilderOpen(true)} title="Build a board from your folders and Claude Code history" aria-label="Build board">
           <Icon name="sparkles" />
         </button>
-        <button className="ghost" disabled={!projectRoot} title="Tidy: close cards whose job is over" aria-label="Tidy" onClick={() => setTidyOpen(true)}>
+        <button className="ghost" disabled={!projectRoot} title="Tidy: close cards whose job is over, or put finished cards to sleep" aria-label="Tidy" onClick={() => setTidyOpen(true)}>
           <Icon name="broom" />
         </button>
         {canUndoArrange ? (

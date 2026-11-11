@@ -1,4 +1,4 @@
-import { NOTE_MARKER, NOTE_PROMPT, noteUsable, relayDecision, relayQuestion, resumePrompt, RELAY_ASK_AGAIN_MS, RELAY_NO, RELAY_YES, type RelaySettings } from '@shared/relay'
+import { NOTE_MARKER, NOTE_PROMPT, noteUsable, relayDecision, relayPrecheck, relayQuestion, resumePrompt, RELAY_ASK_AGAIN_MS, RELAY_NO, RELAY_YES, type RelaySettings } from '@shared/relay'
 
 export interface RelayCardView {
   id: string
@@ -81,15 +81,23 @@ export class Relay {
     this.host.log(`[relay] ${card}: ${answer ? `owner said ${answer}` : 'the question expired'} (${decisionId})`)
   }
 
+  /** A fresh start is under way for this card (it must not be put to sleep meanwhile). */
+  isRunning(id: string): boolean {
+    return this.running.has(id)
+  }
+
   tick(): void {
     const settings = this.host.settings()
     const now = this.now()
     for (const c of this.host.cards()) {
       if (this.running.has(c.id) || !c.sessionId) continue
       if (now - (this.failedAt.get(c.id) ?? 0) < RETRY_MS) continue
+      // the transcript is read only for a card that could relay now (relay on, Claude, idle long enough, nothing open)
+      const view = { ...c, pending: this.host.pending(c.id) }
+      if (!relayPrecheck(view, settings, this.history.get(c.id), now)) continue
       const usage = this.host.usage(c.sessionId)
       if (!usage) continue
-      const want = relayDecision({ ...c, ...usage, pending: this.host.pending(c.id) }, settings, this.history.get(c.id), now)
+      const want = relayDecision({ ...view, ...usage }, settings, this.history.get(c.id), now)
       if (!want) continue
       if (want === 'auto' || (this.approved.get(c.id) ?? 0) > now) {
         this.approved.delete(c.id)

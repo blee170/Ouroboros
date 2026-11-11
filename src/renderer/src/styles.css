@@ -359,6 +359,8 @@ body.ouro-resizing { cursor: col-resize; user-select: none; }
 .card-summary .summary-text { font-size: 22px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; flex: 1; min-height: 0; -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); mask-image: linear-gradient(to bottom, #000 80%, transparent); }
 .jump-bottom { position: absolute; right: 14px; bottom: 10px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text); cursor: pointer; opacity: 0.85; box-shadow: var(--shadow); transition: border-color var(--t), opacity var(--t); }
 .jump-bottom:hover { opacity: 1; border-color: var(--ring); }
+/* an asleep card: no process, the conversation kept; Wake resumes it */
+.card-asleep { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px; text-align: center; background: var(--bg); color: var(--text); cursor: auto; }
 /* chat view: a Claude card's conversation over its terminal (the terminal stays mounted underneath, same size) */
 .chat-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); cursor: auto; user-select: text; font-size: 13px; }
 .agent-node.far .chat-view { visibility: hidden; }

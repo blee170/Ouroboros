@@ -12,6 +12,8 @@ export interface TerminalHandle {
   search: SearchAddon
   /** Redraw at the canvas zoom (font and host scale only: the grid and the PTY size stay as they are). */
   setZoom(zoom: number): void
+  /** Draw with WebGL (true) or give the card's WebGL context back and use the DOM renderer (false); see wantsWebgl. */
+  setWebgl(on: boolean): void
 }
 
 export { BASE_FONT_SIZE }
@@ -58,17 +60,34 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     term.loadAddon(new Unicode11Addon())
     term.unicode.activeVersion = '11'
     term.open(el)
-    try {
-      const webgl = new WebglAddon()
-      webgl.onContextLoss(() => webgl.dispose())
-      term.loadAddon(webgl)
-    } catch {
-      /* DOM renderer fallback */
+    // one WebGL context per card, and Chromium caps them per page: an ended card gives its context back
+    let webgl: WebglAddon | null = null
+    const releaseWebgl = (): void => {
+      const w = webgl
+      webgl = null
+      try {
+        w?.dispose() // xterm goes back to its DOM renderer
+      } catch {
+        /* already gone */
+      }
     }
+    const loadWebgl = (): void => {
+      if (webgl) return
+      try {
+        const w = new WebglAddon()
+        // a lost context is dropped, not kept: the card draws with the DOM renderer until it is asked for WebGL again
+        w.onContextLoss(() => {
+          if (webgl === w) releaseWebgl()
+        })
+        term.loadAddon(w)
+        webgl = w
+      } catch {
+        /* DOM renderer fallback */
+      }
+    }
+    loadWebgl()
     const api = window.ouroboros
-    const offData = api.pty.onData((id, data) => {
-      if (id === nodeId) term.write(data)
-    })
+    const offData = api.pty.onData(nodeId, (data) => term.write(data))
     const inputSub = term.onData((d) => api.pty.write(nodeId, d))
     // Screenshots pasted or files dropped onto the card are saved/resolved and their path typed into
     // the prompt (Claude Code reads image paths), so feedback screenshots can be handed to an agent.
@@ -152,7 +171,8 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
       scale = next
       applyScale(term, fit, el, scale)
     }
-    const h: TerminalHandle = { term, fit, search, setZoom }
+    const setWebgl = (on: boolean): void => (on ? loadWebgl() : releaseWebgl())
+    const h: TerminalHandle = { term, fit, search, setZoom, setWebgl }
     handleRef.current = h
     setHandle(h)
     return () => {

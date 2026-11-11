@@ -9,7 +9,7 @@ import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
 import { useBoard } from '@/store/board'
 import { useTerminal, type TerminalHandle } from '@/lib/useTerminal'
-import { FAR_ZOOM, isAtBottom, tailText } from '@/lib/terminalScale'
+import { FAR_ZOOM, isAtBottom, tailText, wantsWebgl } from '@/lib/terminalScale'
 import { typePrompt } from '@/lib/typePrompt'
 import { useCardChanges } from '@/lib/useCardInfo'
 import { Icon } from '@/lib/icons'
@@ -68,6 +68,11 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   const kind = data.kind
   const seq = Number(data.launchSeq) || 0
   const changes = useCardChanges(data.worktree?.path || data.cwd, status)
+  const asleep = data.asleep === true
+  // an ended or asleep card gives its WebGL context back; a restart (or a wake) takes one again
+  useEffect(() => {
+    handle?.setWebgl(wantsWebgl(status, asleep))
+  }, [handle, status, asleep])
   const usage = useBoard((s) => s.usage[id])
   // subagents the card runs right now (from its hooks)
   const subagents = useBoard((s) => s.activity[id]?.running)
@@ -79,6 +84,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
   useEffect(() => {
     if (!handle) return
     if (launchedSeq.current === seq) return
+    // an asleep card has no process until it is woken (main wakes it, which bumps launchSeq)
+    if (data.asleep) return
     launchedSeq.current = seq
     const { term } = handle
     const api = window.ouroboros
@@ -137,9 +144,9 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <span>{data.title}</span>
           </span>
         )}
-        <span className="status-text" title={[data.topic, detail].filter(Boolean).join('\n') || undefined}>
-          {STATUS_LABEL[status]}
-          {detail ? ` · ${detail}` : ''}
+        <span className="status-text" title={asleep ? 'Asleep: its process is stopped; the conversation is kept and resumes on Wake or the next prompt' : [data.topic, detail].filter(Boolean).join('\n') || undefined}>
+          {asleep ? 'Asleep' : STATUS_LABEL[status]}
+          {!asleep && detail ? ` · ${detail}` : ''}
         </span>
         <span className="spacer" />
         {unreadMail > 0 && (
@@ -190,9 +197,15 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <Icon name={chat ? 'terminal' : 'chat'} size={14} />
           </button>
         )}
-        <button className="icon-btn nodrag" title="Restart" aria-label="Restart" onClick={() => void restartNode(id)}>
-          <Icon name="refresh" size={14} />
-        </button>
+        {asleep ? (
+          <button className="btn small nodrag" title="Wake: start it again on the same conversation" onClick={() => void window.ouroboros.board.wake(id)}>
+            <Icon name="play" size={12} /> Wake
+          </button>
+        ) : (
+          <button className="icon-btn nodrag" title="Restart" aria-label="Restart" onClick={() => void restartNode(id)}>
+            <Icon name="refresh" size={14} />
+          </button>
+        )}
         <button className="icon-btn nodrag" title="Close" aria-label="Close card" onClick={() => void removeNode(id)}>
           <Icon name="close" size={14} />
         </button>
@@ -212,6 +225,16 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             }}
           />
         )}
+        {asleep && !far && (
+          <div className="card-asleep nodrag">
+            <Icon name="moon" size={22} aria-hidden="true" />
+            <div>Asleep: its process is stopped to save memory. The conversation is kept.</div>
+            <div className="muted small">Wake it, or send it a prompt or a message: it resumes the same conversation.</div>
+            <button className="btn" onClick={() => void window.ouroboros.board.wake(id)}>
+              <Icon name="play" size={12} /> Wake
+            </button>
+          </div>
+        )}
         {far && (
           <div className="card-summary">
             <div className="summary-title">{data.title}</div>
@@ -219,8 +242,8 @@ function AgentNodeImpl({ id, data, selected }: NodeProps<BoardNode>) {
             <div className="summary-status">
               <StateGlyph status={status} size={22} />
               <span>
-                {STATUS_LABEL[status]}
-                {detail ? ` · ${detail}` : ''}
+                {asleep ? 'Asleep' : STATUS_LABEL[status]}
+                {!asleep && detail ? ` · ${detail}` : ''}
               </span>
             </div>
             {summary && <div className="summary-text">{summary}</div>}

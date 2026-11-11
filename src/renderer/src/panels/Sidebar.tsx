@@ -186,13 +186,16 @@ export function Sidebar() {
     try {
       for (const n of targets) {
         const claude = (n.data.kind === 'claude' || n.data.kind === 'conductor') && (n.data.engine ?? 'claude') === 'claude'
+        // an asleep card has no terminal to type into: main wakes it and sends the prompt once it is up (files as paths)
+        const asleep = n.data.asleep === true
         const typed: string[] = []
         for (const p of files) {
-          if (claude && isImage(p) && (await window.ouroboros.pty.pasteImage(n.id, p)).ok) continue
+          if (claude && !asleep && isImage(p) && (await window.ouroboros.pty.pasteImage(n.id, p)).ok) continue
           typed.push(quote(p))
         }
         const prompt = [body.trim(), ...typed].filter(Boolean).join(' ')
-        if (prompt) typePrompt(n.id, prompt)
+        if (prompt && asleep) void window.ouroboros.board.wake(n.id, prompt)
+        else if (prompt) typePrompt(n.id, prompt)
       }
       setText('')
       setFiles([])

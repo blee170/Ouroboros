@@ -206,6 +206,28 @@ export function Inspector() {
             <span className="muted small">{d.parentId ? `dispatched by ${parentTitle ?? 'a card that is gone'}` : 'made by you'}</span>
           </label>
         )}
+        {d.kind === 'claude' && (d.engine ?? 'claude') === 'claude' && (
+          <div className="row">
+            <span className="muted small">{d.asleep ? 'Asleep: no process; the conversation is kept.' : "Sleep stops a finished card's process; it wakes on the same conversation."}</span>
+            <span className="spacer" />
+            {d.asleep ? (
+              <button className="btn small" onClick={() => void window.ouroboros.board.wake(nodeId)}>
+                <Icon name="play" size={12} /> Wake
+              </button>
+            ) : (
+              <button
+                className="btn small"
+                onClick={() =>
+                  void window.ouroboros.board.sleep(nodeId).then((r) => {
+                    if (!r.ok) alert(r.error)
+                  })
+                }
+              >
+                <Icon name="moon" size={12} /> Sleep
+              </button>
+            )}
+          </div>
+        )}
       </Section>
 
       {isAgent && (
@@ -386,6 +408,11 @@ export function Inspector() {
           </label>
           <div className="block">
             <div className="muted small">MCP servers on this card {d.kind === 'conductor' ? '(the board server "ouroboros" is always added)' : ''}</div>
+            {(d.engine ?? 'claude') === 'claude' && (
+              <label className="check" title="Passes --strict-mcp-config. Applies on the next launch.">
+                <input type="checkbox" checked={Boolean(claude.lightMcp)} onChange={(e) => setClaude({ lightMcp: e.target.checked || undefined })} /> Light: only these servers (lighter, but your other MCP tools are not in this card; plugins are not affected)
+              </label>
+            )}
             {Object.entries(claude.mcpServers ?? {}).map(([name, spec]) => (
               <div key={name} className="row small">
                 <span className="mono">{name}</span>

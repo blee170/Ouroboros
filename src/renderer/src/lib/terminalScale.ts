@@ -2,7 +2,7 @@ import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import { fontFor } from '@shared/terminal-scale'
 
-export { BASE_FONT_SIZE, FAR_ZOOM, MAX_RENDER_SCALE, fontFor, renderScale, tailText } from '@shared/terminal-scale'
+export { BASE_FONT_SIZE, FAR_ZOOM, MAX_RENDER_SCALE, fontFor, renderScale, tailText, wantsWebgl } from '@shared/terminal-scale'
 
 /** Size the host for `scale`: laid out `scale` times the card, shown at 1/`scale`. */
 export function styleHost(el: HTMLElement, scale: number): void {

@@ -1,11 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC, type OuroborosApi } from '@shared/protocol'
+import { createDataRouter } from '@shared/pty-routing'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: Electron.IpcRendererEvent, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
   return () => ipcRenderer.removeListener(channel, listener)
 }
+
+const ptyData = createDataRouter()
+ipcRenderer.on(IPC.ptyData, (_e, p: { nodeId: string; data: string }) => ptyData.dispatch(p.nodeId, p.data))
 
 const api: OuroborosApi = {
   pty: {
@@ -14,7 +18,7 @@ const api: OuroborosApi = {
     resize: (nodeId, cols, rows) => ipcRenderer.send(IPC.ptyResize, nodeId, cols, rows),
     kill: (nodeId) => ipcRenderer.invoke(IPC.ptyKill, nodeId),
     pasteImage: (nodeId, path) => ipcRenderer.invoke(IPC.ptyPasteImage, nodeId, path),
-    onData: (cb) => on<{ nodeId: string; data: string }>(IPC.ptyData, (p) => cb(p.nodeId, p.data)),
+    onData: (nodeId, cb) => ptyData.on(nodeId, cb),
     onExit: (cb) => on<{ nodeId: string; code: number }>(IPC.ptyExit, (p) => cb(p.nodeId, p.code))
   },
   claude: {
@@ -36,7 +40,10 @@ const api: OuroborosApi = {
     onExternalSession: (cb) => on(IPC.externalSession, cb),
     onAnnounce: (cb) => on(IPC.announce, cb),
     fireHandoff: (edgeId) => ipcRenderer.invoke(IPC.handoffFire, edgeId),
-    listAgents: () => ipcRenderer.invoke(IPC.agentsList)
+    listAgents: () => ipcRenderer.invoke(IPC.agentsList),
+    sleep: (nodeId) => ipcRenderer.invoke(IPC.cardSleep, nodeId),
+    sleepFinished: () => ipcRenderer.invoke(IPC.cardSleepFinished),
+    wake: (nodeId, prompt) => ipcRenderer.invoke(IPC.cardWake, nodeId, prompt)
   },
   workspace: {
     load: (projectRoot) => ipcRenderer.invoke(IPC.workspaceLoad, projectRoot),

@@ -99,6 +99,18 @@ describe('quoteArg / buildClaudeCommand', () => {
     expect(buildClaudeCommand({ model: 'opus', effort: 'xhigh' }, { settingsPath: '/tmp/s.json' }, 'posix')).toBe('claude --settings /tmp/s.json --model opus --effort xhigh')
     expect(buildClaudeCommand({ effort: undefined }, { settingsPath: '/tmp/s.json' }, 'posix')).not.toContain('--effort')
   })
+  it('adds --strict-mcp-config after --mcp-config on a light card, never without a config file and never by default', () => {
+    expect(buildClaudeCommand({ lightMcp: true }, { settingsPath: '/tmp/s.json', mcpConfigPath: '/tmp/m.json' }, 'posix')).toBe('claude --settings /tmp/s.json --mcp-config /tmp/m.json --strict-mcp-config')
+    expect(buildClaudeCommand({ lightMcp: true }, { settingsPath: '/tmp/s.json' }, 'posix')).toBe('claude --settings /tmp/s.json')
+    expect(buildClaudeCommand({}, { settingsPath: '/tmp/s.json', mcpConfigPath: '/tmp/m.json' }, 'posix')).not.toContain('--strict-mcp-config')
+  })
+})
+
+describe('CONDUCTOR_SYSTEM_PROMPT light cards', () => {
+  it('tells the Conductor when to ask for a light card', () => {
+    expect(CONDUCTOR_SYSTEM_PROMPT).toContain('create_agent light_mcp=true')
+    expect(CONDUCTOR_SYSTEM_PROMPT).toContain('default off')
+  })
 })
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -126,6 +138,11 @@ describe('prepareLaunch', () => {
     const withAside = prepareLaunch({ ...base, nodeId: 'p2', kind: 'claude', claude: { mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
     expect(Object.keys((JSON.parse(readFileSync(withAside.mcpConfigPath!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['aside', 'ouroboros'])
     expect(withAside.command).toContain('--mcp-config')
+    expect(withAside.command).not.toContain('--strict-mcp-config')
+    // a light card still gets its own config file (board server + its servers) and only that
+    const light = prepareLaunch({ ...base, nodeId: 'l1', kind: 'claude', claude: { lightMcp: true, mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
+    expect(Object.keys((JSON.parse(readFileSync(light.mcpConfigPath!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['aside', 'ouroboros'])
+    expect(light.command).toMatch(/--mcp-config \S*l1\.mcp\.json'? --strict-mcp-config/)
     const cond = prepareLaunch({ ...base, nodeId: 'c1', kind: 'conductor', claude: { continue: true, mcpServers: { aside: { command: 'aside', args: ['mcp'] } } } })
     expect(cond.command).toContain('--system-prompt-snapshot off')
     expect(readFileSync(cond.systemPromptPath!, 'utf8')).toContain('Conductor')

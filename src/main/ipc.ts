@@ -48,6 +48,7 @@ import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from 
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
 import { emptyActivity, endRunningSubagents, recordActivity, summarize, type CardActivity } from '@shared/activity'
 import { PtyManager, defaultShell } from './pty-manager'
+import { OutputBatcher } from './pty-output'
 import type { BrowserManager } from './browser-manager'
 import { findNodeBinary } from './node-runner'
 import { decryptToken, encryptToken, type Updater } from './updater'
@@ -66,6 +67,7 @@ const DEFAULT_RETIRE_MINUTES = 5
 const DEFAULT_MAX_WORKERS = 6
 import { buildCommandLine, extractCompleted, type RunningCommand } from './command-runner'
 import { dispatchRefusal, protectedCards, reportedCards, selectTidyCandidates } from '@shared/tidy'
+import { ASLEEP_DETAIL, selectSleepCandidates, sleepMinutes, sleepRefusal } from '@shared/sleep'
 import { listBookmarks } from './bookmarks'
 import { log, logPath } from './diagnostics'
 import { cardGitHubEnv, claudeConfigDirOf, claudeEnvKeysToStrip, claudeLoginFromFiles, credentialEnvKeys, detectEngines } from './engines'
@@ -184,6 +186,9 @@ function broadcast(ctx: MainContext, channel: string, payload: unknown): void {
 
 const running = new Map<string, RunningCommand>()
 
+/** each card's terminal output to its window, batched per card (see pty-output.ts) */
+const ptyOut = new OutputBatcher<WindowSession>((s, nodeId, data) => sendToRenderer(s, IPC.ptyData, { nodeId, data }))
+
 /**
  * Terminal creation is serialised with a short gap: a Conductor can ask for six cards in one
  * breath, and creating many ConPTYs in the same instant is where Windows terminals get fragile.
@@ -271,9 +276,23 @@ function pastePrompt(ctx: MainContext, nodeId: string, text: string): void {
  * fails is dropped and the text typed instead. Command cards run their template.
  */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
+  const asleep = s.board.nodes.get(nodeId)
+  if (asleep?.data.asleep) {
+    // an asleep card wakes on its conversation and gets the prompt once it is up (never typed into a shell still starting)
+    if (s.autonomy.on && s.autonomy.promptRefusal(asleep.data)) return false
+    return wakeCard(ctx, s, nodeId, text)
+  }
+  // a card still waking: the prompt waits with the one it was woken with (never typed into a shell still starting)
+  const waking = wakePrompts.get(nodeId)
+  if (waking) {
+    if (s.autonomy.on && asleep && s.autonomy.promptRefusal(asleep.data)) return false
+    waking.push(text)
+    return true
+  }
   if (!ctx.ptys.isAlive(nodeId)) return false
   // the CLI never started: the live process is the shell itself, and a prompt typed there would run as a command
   if (launchFailed.has(nodeId)) return false
+  lastInputAt.set(nodeId, Date.now())
   const n = s.board.nodes.get(nodeId)
   // during an autonomous run a shell is a way around every deny rule: nothing is typed into terminal or command
   // cards (a line into one is refused too), and a parked permission prompt is never answered by a card
@@ -302,6 +321,127 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
   // Codex has no prompt-submitted hook; we know we just gave it work
   if (n && n.data.engine === 'codex' && n.data.status !== 'working') s.board.setStatus(nodeId, { status: 'working', statusDetail: 'prompt sent' })
   return true
+}
+
+/** Cards being woken (an entry per wake, empty when woken without a prompt): their prompts, sent once the card is up again (installWakeDelivery). */
+const wakePrompts = new Map<string, string[]>()
+
+/** A woken card that will not come up: what it was woken with is dropped, not typed in at some later start. */
+export function dropWake(id: string, why: string): void {
+  if (wakePrompts.delete(id)) log(`sleep: ${id} ${why}; the prompt it was woken with is dropped`)
+}
+
+/** When each card was last given a prompt or a keystroke (no hook says so before its turn starts). */
+const lastInputAt = new Map<string, number>()
+/** A card given input this recently is about to start a turn (or the owner is typing in it): never put to sleep. */
+const INPUT_GRACE_MS = 10_000
+
+/** Something of this card is still open: putting it to sleep would cut it off. */
+function cardBusy(s: WindowSession, id: string): boolean {
+  if (s.board.capturing(id) || s.board.hasRoleTurn(id) || s.relay?.isRunning(id) || wakePrompts.has(id) || running.has(id) || mailNudgeTimers.has(id)) return true
+  if (Date.now() - (lastInputAt.get(id) ?? 0) < INPUT_GRACE_MS) return true
+  return activities.get(id)?.record.subagents.some((r) => r.endedAt === undefined) ?? false
+}
+
+/** Waking a dispatched card makes it live again: refused while its lead is at its live-card cap. */
+function wakeRefusal(ctx: MainContext, s: WindowSession, lead: string | undefined): string | undefined {
+  if (!lead) return undefined
+  return dispatchRefusal(s.board.snapshot(), lead, ctx.store.getSettings().maxWorkersPerLead ?? DEFAULT_MAX_WORKERS)
+}
+
+/** Stop the card's process tree and mark it asleep; the card, its place, title and session id stay. */
+function putToSleep(ctx: MainContext, s: WindowSession, id: string): void {
+  const n = s.board.nodes.get(id)
+  if (!n) return
+  ptyOut.flush(id)
+  // marked first: the kill reports no exit, and a late hook of the stopped process changes nothing (Board.applyHook)
+  n.data.asleep = true
+  ctx.ptys.kill(id)
+  lastInputAt.delete(id)
+  ctx.usage.forgetCard(id)
+  inboxes.delete(id)
+  transcripts.delete(id)
+  launchOut.delete(id)
+  launchFailed.delete(id)
+  trustAsked.delete(id)
+  launchCommands.delete(id)
+  clearTimeout(exitChecks.get(id))
+  exitChecks.delete(id)
+  endCardSubagents(s, id)
+  if (n.data.doing) {
+    n.data.doing = undefined
+    sendToRenderer(s, IPC.boardActivity, { nodeId: id, doing: null })
+  }
+  s.board.setPtyAlive(id, false)
+  s.board.setStatus(id, { status: 'ended', statusDetail: ASLEEP_DETAIL })
+  sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: { asleep: true }, restart: false })
+  log(`sleep: ${id} asleep (process stopped; session ${n.data.sessionId} kept)`)
+}
+
+/** Put one card to sleep (the owner's Sleep), or say why it cannot sleep now. */
+export function sleepCard(ctx: MainContext, s: WindowSession, id: string): { ok: boolean; error?: string } {
+  const agents = s.board.snapshot()
+  const a = agents.find((x) => x.id === id)
+  if (!a) return { ok: false, error: 'no such card' }
+  const lines = s.board.edges.map((e) => ({ source: e.source, target: e.target }))
+  const refusal = sleepRefusal(a, { autonomous: s.autonomy.on, protected: protectedCards(agents, lines).has(id), busy: cardBusy(s, id) })
+  if (refusal) return { ok: false, error: `${a.title} cannot sleep: ${refusal}` }
+  putToSleep(ctx, s, id)
+  return { ok: true }
+}
+
+/** "Sleep finished cards" (every eligible card), or the timed sleep (owner-made cards done/idle `minutes`). How many went to sleep. */
+export function sleepFinished(ctx: MainContext, s: WindowSession, minutes?: number): number {
+  const agents = s.board.snapshot()
+  const lines = s.board.edges.map((e) => ({ source: e.source, target: e.target }))
+  const ids = selectSleepCandidates(agents, {
+    now: Date.now(),
+    minutes,
+    autonomous: s.autonomy.on,
+    protect: protectedCards(agents, lines),
+    busy: new Set(agents.filter((a) => cardBusy(s, a.id)).map((a) => a.id)),
+    lastInput: lastInputAt
+  })
+  for (const id of ids) putToSleep(ctx, s, id)
+  return ids.length
+}
+
+/**
+ * Wake an asleep card: relaunched through the restart path with --resume of its session; a prompt waits until the card
+ * is up (installWakeDelivery). False when the card is not asleep, or (`uncapped` unset) it is a dispatched card whose
+ * lead is at its live-card cap. `uncapped`: the owner's Wake, or a caller that checked the cap itself.
+ */
+export function wakeCard(ctx: MainContext, s: WindowSession, id: string, prompt?: string, uncapped = false): boolean {
+  const n = s.board.nodes.get(id)
+  if (!n?.data.asleep) return false
+  const refusal = uncapped ? undefined : wakeRefusal(ctx, s, n.data.parentId)
+  if (refusal) {
+    log(`sleep: ${id} stays asleep (${refusal})`)
+    return false
+  }
+  wakePrompts.set(id, [...(wakePrompts.get(id) ?? []), ...(prompt ? [prompt] : [])])
+  n.data.asleep = false
+  // its idle time starts now: the stop before it went to sleep would put it straight back
+  n.data.lastStopAt = Date.now()
+  const claude = { ...n.data.claude, resume: n.data.sessionId, continue: undefined }
+  n.data.claude = claude
+  s.board.setStatus(id, { status: 'starting', statusDetail: 'waking' })
+  sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: { asleep: false, claude }, restart: true })
+  log(`sleep: ${id} woken${prompt ? ' (a prompt waits until it is up)' : ''}`)
+  return true
+}
+
+/** A woken card's prompts go in once it is up: its first idle (the inbox registration or the ready text), after a role turn. */
+export function installWakeDelivery(ctx: MainContext, s: WindowSession): void {
+  s.board.on('status', (p: AgentStatusPayload) => {
+    const queued = wakePrompts.get(p.nodeId)
+    if (!queued || p.status !== 'idle' || s.board.hasRoleTurn(p.nodeId)) return
+    wakePrompts.delete(p.nodeId)
+    if (!queued.length) return
+    setTimeout(() => {
+      if (!sendPrompt(ctx, s, p.nodeId, queued.join('\n\n'))) log(`sleep: ${p.nodeId} was up but refused the prompt it was woken with; dropped`)
+    }, 800)
+  })
 }
 
 /** A routine's timer runs this often; a routine fires within ROUTINE_GRACE_MS of its time. */
@@ -390,6 +530,8 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   s.board.nodes.delete(id)
   ctx.windows.unbindNode(id)
   running.delete(id)
+  wakePrompts.delete(id)
+  lastInputAt.delete(id)
   ctx.usage.forgetCard(id)
   forgetMail(id)
   inboxes.delete(id)
@@ -639,9 +781,19 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (twin) {
         const alive = board.ptyAlive.has(twin.id)
         const status = twin.data.status ?? (alive ? 'idle' : 'ended')
-        if (alive && (status === 'idle' || status === 'done')) {
-          const role = input.role_prompt?.trim()
-          if (role && role !== twin.data.claude?.appendSystemPrompt) {
+        const role = input.role_prompt?.trim()
+        const newRole = Boolean(role && role !== twin.data.claude?.appendSystemPrompt)
+        // an asleep twin is a finished card too: it wakes on its conversation with the task (a new role replaces it)
+        const asleep = twin.data.asleep === true && !newRole
+        if ((alive && (status === 'idle' || status === 'done')) || asleep) {
+          // waking a dispatched twin makes it live again: it counts against the cap of the lead it will belong to
+          if (asleep && twin.data.parentId) {
+            const lead = parentId ?? twin.data.parentId
+            const refusal = dispatchRefusal(board.snapshot(), lead, ctx.store.getSettings().maxWorkersPerLead ?? DEFAULT_MAX_WORKERS, pendingCreates.get(lead) ?? 0)
+            if (refusal) return { error: refusal }
+          }
+          if (asleep) wakeCard(ctx, s, twin.id, input.prompt, true)
+          if (role && newRole) {
             // a new role for a live session goes in as a role turn; the task waits for its "ready"
             const claudeOpts = { ...twin.data.claude, appendSystemPrompt: role }
             twin.data.claude = claudeOpts
@@ -650,7 +802,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
             board.markRoleTurn(twin.id)
             sendPrompt(ctx, s, twin.id, roleAsMessage(role))
             if (input.prompt) pendingPrompts.set(twin.id, input.prompt)
-          } else if (input.prompt) sendPrompt(ctx, s, twin.id, input.prompt)
+          } else if (input.prompt && !asleep) sendPrompt(ctx, s, twin.id, input.prompt)
           if (input.report_to && board.nodes.has(input.report_to) && !board.edges.some((e) => e.source === twin.id && e.target === input.report_to)) {
             createHandoffEdge(s, { source: twin.id, target: input.report_to, mode: 'auto', template: REPORT_TEMPLATE })
           }
@@ -708,7 +860,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
               effort: normalizeEffort(input.effort),
               continue: wantContinue || undefined,
               resume: input.resume || undefined,
-              boardTools: input.board_tools || undefined
+              boardTools: input.board_tools || undefined,
+              lightMcp: input.light_mcp || undefined
             }
       const node: AddNodePayload = {
         id,
@@ -2028,6 +2181,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
       return board.projectRoot
     },
     dispose() {
+      ptyOut.flushTarget(s)
       s.autonomy.dispose()
       s.taskSync?.dispose()
       s.vaultExport?.dispose()
@@ -2035,8 +2189,9 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
       s.mail.dispose()
       clearInterval(routineTimer)
       s.routines.dispose()
+      // synchronous: closing the last window quits the app, and an async taskkill would die with it
+      ctx.ptys.killAll([...board.nodes.keys()])
       for (const id of board.nodes.keys()) {
-        ctx.ptys.kill(id)
         ctx.browsers.unregister(id)
         running.delete(id)
       }
@@ -2102,7 +2257,9 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     if (s.relay?.owns(d.id)) return s.relay.answered(d.id, undefined)
     s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
   })
-  s.mail.on('mail', (m: { to: string }) => scheduleMailNudge(ctx, s, m.to))
+  installWakeDelivery(ctx, s)
+  // board mail wakes an asleep card; once it is up (idle) the nudge below hands it the mail
+  s.mail.on('mail', (m: { to: string }) => wakeCard(ctx, s, m.to) || scheduleMailNudge(ctx, s, m.to))
   board.on('status', (p: AgentStatusPayload) => {
     if (p.status === 'idle' || p.status === 'done') scheduleMailNudge(ctx, s, p.nodeId)
   })
@@ -2416,6 +2573,8 @@ function checkInterrupt(s: WindowSession, nodeId: string, data: string): void {
   }
   log(`interrupt: ${nodeId} turn interrupted by the owner`)
   s.board.endRoleTurn(nodeId)
+  // the turn ended here, with no Stop hook: its idle time starts now
+  n.data.lastStopAt = Date.now()
   s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'interrupted' })
 }
 
@@ -2433,7 +2592,7 @@ export function registerIpc(ctx: MainContext): void {
     board.appendOutput(nodeId, data)
     if (mailBlockWatch.has(nodeId)) mailBlockActivity.set(nodeId, Date.now())
     checkInterrupt(s, nodeId, data)
-    sendToRenderer(s, IPC.ptyData, { nodeId, data })
+    ptyOut.push(s, nodeId, data)
     watchCommandOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
     // a card still answering its CLI's trust question is watched the same way: the answer makes it ready, or exits
@@ -2449,9 +2608,11 @@ export function registerIpc(ctx: MainContext): void {
       const exited = missing || !command ? null : detectLaunchExit(out, command)
       if (missing) {
         launchFailed.add(nodeId)
+        dropWake(nodeId, 'did not come up')
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} is not installed or not on PATH. Install it (Settings → Engines), then Restart the card.` })
       } else if (exited) {
         launchFailed.add(nodeId)
+        dropWake(nodeId, 'did not come up')
         clearTimeout(readyTimers.get(nodeId))
         log(`launch: ${nodeId} ${engine} exited at launch: ${exited}`)
         board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${engine} exited at launch (${exited.slice(0, 160)}). Check the card's options, then Restart it.` })
@@ -2484,6 +2645,7 @@ export function registerIpc(ctx: MainContext): void {
             if (!cur || (cur.data.status !== 'starting' && !trustAsked.has(nodeId)) || !ctx.ptys.isAlive(nodeId) || launchFailed.has(nodeId)) return
             if (!endsAtShellPrompt(launchOut.get(nodeId) ?? '', command)) return
             launchFailed.add(nodeId)
+            dropWake(nodeId, 'did not come up')
             clearTimeout(readyTimers.get(nodeId))
             log(`launch: ${nodeId} ${cur.data.engine ?? 'claude'} gave the shell back at launch`)
             // "No, exit" at the trust question is the owner's own choice, not a broken launch
@@ -2514,7 +2676,10 @@ export function registerIpc(ctx: MainContext): void {
     }
   })
   ptys.on('exit', (nodeId: string, code: number) => {
+    // the card's last output reaches its terminal before anything about its exit
+    ptyOut.flush(nodeId)
     running.delete(nodeId)
+    if (wakePrompts.delete(nodeId)) log(`sleep: ${nodeId} exited before it was up; the prompt it was woken with is dropped`)
     inboxes.delete(nodeId)
     transcripts.delete(nodeId)
     launchOut.delete(nodeId)
@@ -2558,6 +2723,7 @@ export function registerIpc(ctx: MainContext): void {
   })
   ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => {
     if (typeof data === 'string' && isInterruptKey(data)) watchInterrupt(ctx, nodeId)
+    lastInputAt.set(nodeId, Date.now())
     void ptys.write(nodeId, data)
   })
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
@@ -2572,6 +2738,12 @@ export function registerIpc(ctx: MainContext): void {
   })
 
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
+    const r = await claudeLaunch(e, opts)
+    // a refused launch reports no exit: a card woken for it never comes up
+    if (!r.ok) dropWake(opts.nodeId, `launch refused (${r.error})`)
+    return r
+  })
+  const claudeLaunch = async (e: IpcMainInvokeEvent, opts: ClaudeLaunchOptions): Promise<{ ok: boolean; error?: string }> => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
     if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
@@ -2660,7 +2832,7 @@ export function registerIpc(ctx: MainContext): void {
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
-  })
+  }
 
   ipcMain.on(IPC.boardSync, (e, payload: BoardSyncPayload) => sessionOf(e)?.board.sync(payload))
   ipcMain.handle(IPC.agentsList, (e) => sessionOf(e)?.board.snapshot() ?? [])
@@ -3161,11 +3333,29 @@ export function registerIpc(ctx: MainContext): void {
   })
   ipcMain.handle(IPC.autonomyStop, (e) => sessionOf(e)?.autonomy.stop('stopped by the owner') ?? null)
   ipcMain.handle(IPC.autonomyState, (e) => sessionOf(e)?.autonomy.public() ?? null)
-  // dispatched cards retire on their own once their report is in (every window, once a minute); owner-made cards never
+  // dispatched cards retire on their own once their report is in (every window, once a minute); owner-made cards never.
+  // With "Sleep finished cards after N minutes" on (off by default), the owner's finished cards are put to sleep: never removed
   setInterval(() => {
-    if ((store.getSettings().retireMinutes ?? DEFAULT_RETIRE_MINUTES) <= 0) return
-    for (const s of ctx.windows.all()) void s.api.tidy({ auto: true }, false)
+    const settings = store.getSettings()
+    const retire = (settings.retireMinutes ?? DEFAULT_RETIRE_MINUTES) > 0
+    const sleepAfter = sleepMinutes(settings.sleepMinutes)
+    for (const s of ctx.windows.all()) {
+      if (retire) void s.api.tidy({ auto: true }, false)
+      if (sleepAfter) sleepFinished(ctx, s, sleepAfter)
+    }
   }, 60_000)
+  ipcMain.handle(IPC.cardSleep, (e, nodeId: string) => {
+    const s = sessionOf(e)
+    return s && typeof nodeId === 'string' ? sleepCard(ctx, s, nodeId) : { ok: false, error: 'no window' }
+  })
+  ipcMain.handle(IPC.cardSleepFinished, (e) => {
+    const s = sessionOf(e)
+    return { slept: s ? sleepFinished(ctx, s) : 0 }
+  })
+  ipcMain.handle(IPC.cardWake, (e, nodeId: string, prompt?: string) => {
+    const s = sessionOf(e)
+    return Boolean(s && typeof nodeId === 'string' && wakeCard(ctx, s, nodeId, typeof prompt === 'string' && prompt.trim() ? prompt : undefined, true))
+  })
 
   ctx.updater.on('status', (st) => broadcast(ctx, IPC.updateStatus, st))
   ipcMain.handle(IPC.updateCheck, () => ctx.updater.check())

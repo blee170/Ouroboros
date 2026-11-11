@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { noteUsable, relayDecision, relaySettings, relayThreshold, resumePrompt, RELAY_CHAIN_MS, type RelayCard } from '@shared/relay'
+import { noteUsable, relayDecision, relayPrecheck, relaySettings, relayThreshold, resumePrompt, RELAY_CHAIN_MS, type RelayCard } from '@shared/relay'
 
 const NOW = 10_000_000_000
 const settings = relaySettings({})
@@ -53,6 +53,31 @@ describe('relayDecision', () => {
   it('stops after three fresh starts in 12 h', () => {
     expect(relayDecision(card(), settings, [NOW - 1000, NOW - 2000, NOW - 3000], NOW)).toBeNull()
     expect(relayDecision(card(), settings, [NOW - RELAY_CHAIN_MS - 1, NOW - 2000, NOW - 3000], NOW)).toBe('auto')
+  })
+})
+
+describe('relayPrecheck', () => {
+  it('needs no context size, and agrees with relayDecision on every check but the size', () => {
+    const noSize = { contextTokens: undefined, contextWindow: undefined }
+    expect(relayPrecheck(card(noSize), settings, [], NOW)).toBe('auto')
+    expect(relayPrecheck(card({ ...noSize, kind: 'conductor' }), settings, [], NOW)).toBe('ask')
+    const cases: [Partial<RelayCard>, typeof settings, number[]][] = [
+      [{}, settings, []],
+      [{ kind: 'conductor', status: 'done' }, settings, []],
+      [{ status: 'working' }, settings, []],
+      [{ status: 'needs-you' }, settings, []],
+      [{ pending: true }, settings, []],
+      [{ lastStopAt: NOW - 30_000 }, settings, []],
+      [{ lastStopAt: undefined }, settings, []],
+      [{ engine: 'codex' }, settings, []],
+      [{ kind: 'terminal' }, settings, []],
+      [{}, { ...settings, workers: 'off' }, []],
+      [{ kind: 'conductor' }, { ...settings, conductor: 'off' }, []],
+      [{}, settings, [NOW - 1000, NOW - 2000, NOW - 3000]]
+    ]
+    for (const [over, s, history] of cases) {
+      expect(relayPrecheck(card({ ...over, ...noSize }), s, history, NOW)).toBe(relayDecision(card(over), s, history, NOW))
+    }
   })
 })
 

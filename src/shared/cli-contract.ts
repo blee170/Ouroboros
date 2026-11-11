@@ -73,6 +73,7 @@ export const CLI_CONTRACTS: CliContract[] = [
       { text: '--effort', why: 'card effort level' },
       { text: '--permission-mode', why: 'card permission mode' },
       { text: '--mcp-config', why: 'board MCP server' },
+      { text: '--strict-mcp-config', why: "light cards: only the card's own MCP servers" },
       { text: '--append-system-prompt-file', why: 'role and Conductor prompt' },
       { text: '--system-prompt-snapshot', why: 'role text on resumed sessions' },
       { text: '--name', why: 'session display name' },

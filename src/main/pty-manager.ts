@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { execFile, execFileSync } from 'node:child_process'
 import * as pty from 'node-pty'
 import { existsSync } from 'node:fs'
 import { release } from 'node:os'
@@ -35,6 +36,26 @@ export function shellKind(shell: string): ShellKind {
 function shellArgs(kind: ShellKind): string[] {
   if (kind === 'powershell') return ['-NoLogo']
   return []
+}
+
+const TREE_KILL_MS = 5000
+
+/**
+ * Windows: node-pty's bundled-ConPTY kill only closes the pseudo console, so processes of a card with a console of
+ * their own (MCP servers started through uvx, python, node, cmd) outlived the card. taskkill /T ends the shell's
+ * whole tree first.
+ */
+function treeKillArgs(pids: number[]): string[] {
+  return ['/T', '/F', ...pids.flatMap((p) => ['/PID', String(p)])]
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 interface Entry {
@@ -81,7 +102,10 @@ export class PtyManager extends EventEmitter {
     })
     const entry: Entry = { proc, nodeId: opts.nodeId, cols, rows, exited: false }
     this.entries.set(opts.nodeId, entry)
-    proc.onData((data) => this.emit('data', opts.nodeId, data))
+    proc.onData((data) => {
+      // a killed process can print while its tree is being ended: never into the card (or the restart that replaced it)
+      if (this.entries.get(opts.nodeId) === entry) this.emit('data', opts.nodeId, data)
+    })
     proc.onExit(({ exitCode }) => {
       entry.exited = true
       log(`pty exit ${opts.nodeId} code=${exitCode}`)
@@ -129,10 +153,29 @@ export class PtyManager extends EventEmitter {
     this.entries.delete(nodeId)
     if (e.exited) return // already gone: closing a dead ConPTY twice is what crashes
     log(`pty kill ${nodeId}`)
+    const pid = e.proc.pid
+    if (process.platform === 'win32' && pid > 0) {
+      try {
+        execFile('taskkill', treeKillArgs([pid]), { windowsHide: true, timeout: TREE_KILL_MS }, (err) => {
+          if (err) log(`pty tree kill ${nodeId}: ${String(err.message ?? err).trim()}`)
+          this.closePty(e)
+        })
+        return
+      } catch (err) {
+        log(`pty tree kill failed ${nodeId}: ${String((err as Error).message ?? err)}`)
+      }
+    }
+    this.closePty(e)
+  }
+
+  /** node-pty's own kill, unless the process is gone: never kill a PTY after it exited (native crash). */
+  private closePty(e: Entry): void {
+    // a shell taskkill ended is gone like one that exited by itself: its console closes on its own
+    if (e.exited || (process.platform === 'win32' && !processAlive(e.proc.pid))) return
     try {
       e.proc.kill()
     } catch (err) {
-      log(`pty kill failed ${nodeId}: ${String((err as Error).message ?? err)}`)
+      log(`pty kill failed ${e.nodeId}: ${String((err as Error).message ?? err)}`)
     }
   }
 
@@ -140,7 +183,26 @@ export class PtyManager extends EventEmitter {
     return this.entries.has(nodeId)
   }
 
-  killAll(): void {
-    for (const id of [...this.entries.keys()]) this.kill(id)
+  /**
+   * At quit and when a window closes (neither can wait for an async taskkill: the app may exit first): every live
+   * card's tree, or only these cards', in one synchronous taskkill, then each PTY.
+   */
+  killAll(ids?: Iterable<string>): void {
+    const pick = ids ? [...ids].map((id) => this.entries.get(id)).filter((e): e is Entry => !!e) : [...this.entries.values()]
+    const live = pick.filter((e) => !e.exited && e.proc.pid > 0)
+    if (process.platform === 'win32' && live.length) {
+      log(`pty tree kill all (${live.length})`)
+      try {
+        execFileSync('taskkill', treeKillArgs(live.map((e) => e.proc.pid)), { windowsHide: true, timeout: TREE_KILL_MS, stdio: 'ignore' })
+      } catch (err) {
+        log(`pty tree kill all: ${String((err as Error).message ?? err).trim()}`)
+      }
+    }
+    for (const e of pick) {
+      this.entries.delete(e.nodeId)
+      if (e.exited) continue
+      log(`pty kill ${e.nodeId}`)
+      this.closePty(e)
+    }
   }
 }

@@ -129,6 +129,32 @@ describe('Relay', () => {
     t.relay.tick()
     expect(t.prompts).toHaveLength(0)
   })
+  it('reads no transcript for a card that cannot relay now', () => {
+    const now = Date.now()
+    const cards: RelayCardView[] = [
+      { id: 'busy', title: 'B', kind: 'claude', status: 'working', sessionId: 's-busy', lastStopAt: now - 600_000 },
+      { id: 'fresh', title: 'F', kind: 'claude', status: 'idle', sessionId: 's-fresh', lastStopAt: now - 10_000 },
+      { id: 'codex', title: 'X', kind: 'claude', engine: 'codex', status: 'idle', sessionId: 's-codex', lastStopAt: now - 600_000 },
+      { id: 'term', title: 'T', kind: 'terminal', status: 'idle', sessionId: 's-term', lastStopAt: now - 600_000 },
+      { id: 'asks', title: 'A', kind: 'claude', status: 'idle', sessionId: 's-asks', lastStopAt: now - 600_000 },
+      { id: 'ready', title: 'R', kind: 'claude', status: 'idle', sessionId: 's-ready', lastStopAt: now - 600_000 }
+    ]
+    const reads: string[] = []
+    let workers: 'auto' | 'off' = 'off'
+    const host = {
+      cards: () => cards,
+      usage: (sessionId: string) => (reads.push(sessionId), { contextTokens: 1000, contextWindow: 1_000_000 }),
+      pending: (id: string) => id === 'asks',
+      settings: () => relaySettings({ relayWorkers: workers }),
+      log: () => {}
+    } as unknown as RelayHost
+    const relay = new Relay(host, TIMING)
+    relay.tick()
+    expect(reads).toEqual([]) // relay off: nothing is read
+    workers = 'auto'
+    relay.tick()
+    expect(reads).toEqual(['s-ready']) // below the threshold: read, and left alone
+  })
 })
 
 describe('Board note capture', () => {

@@ -58,6 +58,8 @@ export interface ApiHandlers {
     report_to?: string
     /** Give the card the ouroboros MCP server too (team lead). */
     board_tools?: boolean
+    /** Claude cards: start only the card's own MCP servers (--strict-mcp-config), not the owner's global ones. */
+    light_mcp?: boolean
     /** The caller's card id: the new card is dispatched by it (retired once its report is in; counted against the caller's cap). */
     created_by?: string
   }): Promise<{ id: string; cwd: string; worktree?: string; reused?: boolean; replaced?: string } | { error: string }>

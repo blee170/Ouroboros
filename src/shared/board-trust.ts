@@ -32,6 +32,7 @@ export const PRIVILEGE_FIELDS = [
   'claude.model',
   'claude.effort',
   'claude.wsl',
+  'claude.lightMcp',
   'handoffs'
 ] as const
 export type PrivilegeField = (typeof PRIVILEGE_FIELDS)[number]
@@ -117,8 +118,8 @@ export function privilegeView(data: Partial<NodeData> | null | undefined, nodeId
   return view
 }
 
-/** For a card the owner never saw: fields that are fine on a new card (what kind it is, where it works). */
-export const BENIGN_ON_NEW: ReadonlySet<PrivilegeField> = new Set(['kind', 'engine', 'cwd', 'worktree.path', 'parentId'])
+/** For a card the owner never saw: fields that are fine on a new card (what kind it is, where it works; light MCP only takes servers away). */
+export const BENIGN_ON_NEW: ReadonlySet<PrivilegeField> = new Set(['kind', 'engine', 'cwd', 'worktree.path', 'parentId', 'claude.lightMcp'])
 
 /**
  * Pure: the cards to hold. A known card is held when any privilege field differs from the trusted view; a card the app

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useBoard } from '@/store/board'
 import { Icon } from '@/lib/icons'
 import { useEscape } from '@/lib/useDialog'
+import { SLEEP_MAX_MINUTES, SLEEP_MIN_MINUTES, sleepMinutes } from '@shared/sleep'
 
 export function TidyDialog({ onClose }: { onClose: () => void }) {
   const settings = useBoard((s) => s.settings)
@@ -11,8 +12,15 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
   const [cands, setCands] = useState<Array<{ id: string; title: string; reason: string }>>([])
   const [checked, setChecked] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
+  const [slept, setSlept] = useState<string | null>(null)
   const retire = settings.retireMinutes ?? 5
   useEscape(onClose)
+
+  const sleepFinished = async (): Promise<void> => {
+    const r = await window.ouroboros.board.sleepFinished()
+    setSlept(r.slept ? `${r.slept} card(s) put to sleep.` : 'No card to put to sleep: only finished Claude cards with a conversation sleep (not Conductors, pinned, working, waiting or wired-to-working cards).')
+    void refresh()
+  }
 
   const refresh = async (m = minutes, own = includeOwn): Promise<void> => {
     setBusy(true)
@@ -78,6 +86,31 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
             <span className="small">min</span>
           </div>
           <div className="hint">After a dispatched card's report reached the card that made it (0 = never). Cards you made are never auto-closed.</div>
+        </label>
+        <label className="field">
+          <span>Sleep finished cards</span>
+          <div className="ctl">
+            <input
+              className="text"
+              style={{ width: 80, flex: 'none' }}
+              type="number"
+              min={0}
+              max={SLEEP_MAX_MINUTES}
+              defaultValue={sleepMinutes(settings.sleepMinutes) || ''}
+              placeholder="off"
+              onBlur={(e) => void setSettings({ sleepMinutes: sleepMinutes(e.target.value) })}
+              aria-label="Sleep finished cards after minutes"
+            />
+            <span className="small">min</span>
+            <span className="spacer" />
+            <button className="btn small" onClick={() => void sleepFinished()}>
+              <Icon name="moon" size={13} /> Sleep finished cards now
+            </button>
+          </div>
+          <div className="hint">
+            Your own Claude cards done or idle this long are put to sleep: the process stops, the card and its conversation stay, and it wakes on the same conversation when you press Wake or send it a prompt. Empty or 0 = off; at least {SLEEP_MIN_MINUTES} min. Never removes a card.
+          </div>
+          {slept && <div className="hint">{slept}</div>}
         </label>
         <div className="row right">
           <button className="btn" onClick={onClose}>

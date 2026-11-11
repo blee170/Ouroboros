@@ -153,8 +153,8 @@ export function OuroCallSettings() {
         </>
       )}
       {text('replyText', 'Reply text', '', 'What Ouro posts when you say "reply" to a mention.')}
-      <div className="field">
-        <span>Paste into Twilio and ElevenLabs</span>
+      <div className="field" style={{ alignItems: 'start' }}>
+        <span>Webhook URLs</span>
         <div className="ctl" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
           <div className="small">
             Twilio → your number → Voice → A call comes in (POST): <code>{`${base}${CALL_PATHS.inbound}`}</code>

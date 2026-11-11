@@ -4,6 +4,11 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **Settings → Ouro → Phone calls: the webhook addresses no longer have their label printed over them.** The row label ("Paste into Twilio and ElevenLabs") was wider than the label column and ran across the middle line of the addresses. It is now "Webhook URLs", aligned to the top of the row. Verified in a page rendered with the app stylesheet, not in the built app.
+
 ## [0.20.0] — 2026-11-10
 
 ### Added

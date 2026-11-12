@@ -42,7 +42,13 @@ afterEach(() => {
       /* already gone */
     }
   }
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  for (const d of dirs.splice(0)) {
+    try {
+      rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    } catch {
+      /* the dying shell can still hold its folder (EBUSY, seen in CI): a leftover temp folder is not a test failure */
+    }
+  }
 })
 
 async function cardWithGrandchild(ptys: PtyManager, nodeId: string): Promise<number> {

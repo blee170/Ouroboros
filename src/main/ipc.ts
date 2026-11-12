@@ -22,7 +22,7 @@ import { GrokReplyServer, ReplyStore, type ReplyHandler } from './grok-reply'
 import { GitHubMailbox, checkIssue } from './grok-mailbox'
 import { DEFAULT_REPLY_PORT, REPLY_LIMITS, REPLY_PATH, issueInstructions, issueRef, issueUrl, replyMail, routineInstructions, type ReplyKind, type ReplyRecord } from '@shared/grokreply'
 import { applyProtection, checkCardToken, readProtection, runGh } from './rulesets'
-import { pushInbox, validInbox, type InboxAddress } from './claude-inbox'
+import { deliverInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
 import { autoSendHold, botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, type GrokBot, type GrokHandoff } from '@shared/grokbot'
@@ -259,6 +259,18 @@ function viewing(s: WindowSession, nodeId: string): boolean {
 
 /** Claude cards' inboxes, registered by their board MCP server (in memory only: the token never reaches a file or the log). */
 const inboxes = new Map<string, InboxAddress>()
+/** Counts each card's launches: an answer about the inbox of the process a Restart replaced says nothing about the new one. */
+const launchGen = new Map<string, number>()
+
+/**
+ * A card's process is being replaced (a launch or a Restart, which reports no pty exit): the old process's inbox is
+ * not the new one's. Without this the new Claude Code's inbox was refused ("already has an inbox") and every prompt
+ * went to the dead one first.
+ */
+function forgetInbox(nodeId: string): void {
+  inboxes.delete(nodeId)
+  launchGen.set(nodeId, (launchGen.get(nodeId) ?? 0) + 1)
+}
 
 export function registerInbox(s: WindowSession, nodeId: string, socket: unknown, token: unknown): { ok: boolean; error?: string } {
   const n = s.board.nodes.get(nodeId)
@@ -292,7 +304,8 @@ function pastePrompt(ctx: MainContext, nodeId: string, text: string): void {
 /**
  * Give an agent card a prompt: into its Claude Code inbox when it registered one (a running turn takes it between
  * tool calls, an idle session starts a turn), else typed into its terminal (bracketed paste + Enter). An inbox that
- * fails is dropped and the text typed instead. Command cards run their template.
+ * fails is dropped and the text typed instead, unless nothing listens on it any more (Claude Code exited: the terminal
+ * is then the card's shell, and nothing is typed). Command cards run their template.
  */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   const asleep = s.board.nodes.get(nodeId)
@@ -327,10 +340,22 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
   }
   const inbox = inboxes.get(nodeId)
   if (inbox) {
-    void pushInbox(inbox, text).then((ok) => {
-      if (ok) return
+    const gen = launchGen.get(nodeId)
+    void deliverInbox(inbox, text).then((r) => {
+      if (r === 'ok') return
       if (inboxes.get(nodeId) === inbox) inboxes.delete(nodeId)
       if (!ctx.ptys.isAlive(nodeId)) return log(`inbox: ${nodeId} did not take the prompt and its process has exited; the prompt is dropped`)
+      // the card was restarted meanwhile: this answer is about the process it replaced, and the new one is still starting
+      if (launchGen.get(nodeId) !== gen) return log(`inbox: ${nodeId} was restarted before it took the prompt; the prompt is dropped`)
+      // nothing listens on the inbox any more: Claude Code exited and the live process is the card's shell, where the
+      // prompt would run as a command. Marked like a CLI that never started (a Restart, a hook or a new inbox clears it).
+      if (r === 'gone' && inboxes.get(nodeId) === undefined) {
+        launchFailed.add(nodeId)
+        dropWake(nodeId, 'Claude Code exited')
+        log(`inbox: ${nodeId} has no Claude Code behind it any more (its shell is still open); the prompt is dropped, nothing typed`)
+        if (s.board.nodes.has(nodeId)) s.board.setStatus(nodeId, { status: 'needs-you', statusDetail: 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.' })
+        return
+      }
       log(`inbox: ${nodeId} did not take the prompt; typed into the terminal instead`)
       pastePrompt(ctx, nodeId, text)
     })
@@ -2749,6 +2774,7 @@ export function registerIpc(ctx: MainContext): void {
       ctx.windows.bindNode(opts.nodeId, s.id)
       // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
       endCardSubagents(s, opts.nodeId)
+      forgetInbox(opts.nodeId)
       await throttledSpawn(() => ptys.spawn(opts))
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'idle', statusDetail: 'shell' })
@@ -2850,6 +2876,7 @@ export function registerIpc(ctx: MainContext): void {
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
       launchFailed.delete(opts.nodeId)
+      forgetInbox(opts.nodeId)
       trustAsked.delete(opts.nodeId) // a Restart (no pty exit event) asks again
       // a stale ANTHROPIC_API_KEY in the owner's environment would beat the sign-in inside every Claude card
       const login = engine === 'claude' ? claudeLoginFromFiles(claudeConfigDirOf(process.env, homedir()), existsSync, (p) => readFileSync(p, 'utf8')) : false

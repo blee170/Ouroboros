@@ -27,7 +27,7 @@ vi.mock('../src/main/claude-launcher', async (importOriginal) => ({ ...(await im
 // never read the owner's Claude sign-in files from a test
 vi.mock('../src/main/engines', async (importOriginal) => ({ ...(await importOriginal<object>()), claudeLoginFromFiles: () => false }))
 
-const { registerIpc, createApiHandlers, wakeCard } = await import('../src/main/ipc')
+const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
 const { IPC } = await import('../src/shared/protocol')
 
@@ -240,5 +240,26 @@ describe('appInfo.initialProject', () => {
     expect((await call(IPC.appInfo)).initialProject).toBe(ROOT)
     board.projectRoot = ''
     expect((await call(IPC.appInfo)).initialProject).toBe(OTHER)
+  })
+})
+
+describe("a restarted card's inbox", () => {
+  const pipe = (n: string): string => (process.platform === 'win32' ? `\\\\.\\pipe\\LOCAL\\cc-msg-restarttest-${n}-${process.pid}` : join(tmpdir(), `cc-msg-restarttest-${n}-${process.pid}`))
+  it('is accepted: the inbox of the process the Restart replaced is forgotten (a Restart reports no pty exit)', async () => {
+    boardWith([card('in8', 'claude')], ['in8'])
+    expect(registerInbox(s as never, 'in8', pipe('old'), undefined).ok).toBe(true)
+    expect(registerInbox(s as never, 'in8', pipe('other'), undefined).ok).toBe(false) // one inbox per process
+    await call(IPC.ptySpawn, { nodeId: 'in8', cwd: ROOT, cols: 80, rows: 24 })
+    expect(registerInbox(s as never, 'in8', pipe('new'), undefined).ok).toBe(true)
+  })
+  it('a prompt still on its way to the old inbox when the card restarts does not mark the new process as gone', async () => {
+    boardWith([card('in9', 'claude')], ['in9'])
+    expect(registerInbox(s as never, 'in9', pipe('dead'), undefined).ok).toBe(true)
+    expect(sendPrompt(ctx as never, s as never, 'in9', 'on its way')).toBe(true) // nothing listens: the answer will be 'gone'
+    await call(IPC.ptySpawn, { nodeId: 'in9', cwd: ROOT, cols: 80, rows: 24 }) // restarted before the answer
+    await new Promise((r) => setTimeout(r, 400))
+    expect(board.nodes.get('in9')?.data.statusDetail ?? '').not.toMatch(/^failed:/)
+    expect(ptys.write).not.toHaveBeenCalled() // and nothing typed into the shell that is still starting
+    expect(registerInbox(s as never, 'in9', pipe('fresh'), undefined).ok).toBe(true)
   })
 })

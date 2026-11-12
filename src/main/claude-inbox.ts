@@ -26,21 +26,34 @@ export function inboxFrames(text: string, token?: string): string {
 
 /** Write the text into the inbox; true once it was written and the inbox closed without an error, within 3 s. */
 export function pushInbox(to: InboxAddress, text: string, open: (path: string) => Socket = (p) => connect(p)): Promise<boolean> {
+  return deliverInbox(to, text, open).then((r) => r === 'ok')
+}
+
+/**
+ * The same write, saying how it failed: 'gone' when nothing listens on the inbox any more (the pipe or socket is not
+ * there, or refuses: Claude Code has exited, and the card's live process is its shell), 'failed' for anything else
+ * (too slow, an error after it opened, or one that says nothing about the listener: no access, out of handles).
+ */
+export function deliverInbox(to: InboxAddress, text: string, open: (path: string) => Socket = (p) => connect(p)): Promise<'ok' | 'gone' | 'failed'> {
   return new Promise((resolve) => {
     let done = false
-    const finish = (ok: boolean): void => {
+    let connected = false
+    const finish = (r: 'ok' | 'gone' | 'failed'): void => {
       if (done) return
       done = true
       clearTimeout(timer)
-      resolve(ok)
+      resolve(r)
     }
     const timer = setTimeout(() => {
       c.destroy()
-      finish(false)
+      finish('failed')
     }, 3000)
     const c = open(to.socket)
-    c.on('error', () => finish(false))
-    c.on('connect', () => c.end(inboxFrames(text, to.token)))
-    c.on('close', (hadError) => finish(!hadError))
+    c.on('error', (err: NodeJS.ErrnoException) => finish(!connected && (err?.code === 'ENOENT' || err?.code === 'ECONNREFUSED') ? 'gone' : 'failed'))
+    c.on('connect', () => {
+      connected = true
+      c.end(inboxFrames(text, to.token))
+    })
+    c.on('close', (hadError) => finish(hadError ? 'failed' : 'ok'))
   })
 }

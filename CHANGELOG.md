@@ -4,6 +4,11 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A prompt is no longer typed into a card's shell after Claude Code has exited in it.** When Claude Code died inside a card (seen with the PC out of memory) its PowerShell stayed open, and a prompt the app could not put into Claude Code's inbox was typed into the terminal instead: a board-mail nudge and a fresh-start handoff request were handed to PowerShell, which tried to run them as commands. Now, when nothing listens on the card's inbox any more and its shell is still alive, nothing is typed: the card shows *needs you* with "Claude Code is no longer running in this card (only its shell is). Restart the card.", later prompts are refused (board mail stays queued for the restart, the relay stops and keeps the conversation), and a Restart, a hook from the card or a newly registered inbox clears it. An inbox that fails any other way (too slow, an error after it opened) still falls back to typing, as before. Verified: unit tests against a real pipe (nothing typed, the status, the refusal, delivery again after a new inbox). Not verified: in the real app with a Claude Code process killed inside a card. Not covered: a card that never registered an inbox (older Claude Code) is still typed into.
+
 ## [0.20.2] — 2026-11-11
 
 ### Added

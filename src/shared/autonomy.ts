@@ -161,10 +161,10 @@ const withOptionsBefore = (p: string): string[] => {
  */
 export const DATA_DIR_DENY_RULES = ['Edit(~/AppData/Roaming/Ouroboros/**)', 'Edit(~/Library/Application Support/Ouroboros/**)']
 
-/** A Claude card's extra `--settings`: the run's fragment when one is on, and the data-folder rules always. */
-export function cardSettingsExtra(runFragment?: Record<string, unknown>): Record<string, unknown> {
+/** A Claude card's extra `--settings`: the run's fragment when one is on, the data-folder rules always, and the card's own extra deny rules (the phone commands, for a card that is not a phone card). */
+export function cardSettingsExtra(runFragment?: Record<string, unknown>, extraDeny: readonly string[] = []): Record<string, unknown> {
   const run = (runFragment ?? {}) as { permissions?: { deny?: string[] } }
-  const deny = [...new Set([...(run.permissions?.deny ?? []), ...DATA_DIR_DENY_RULES])]
+  const deny = [...new Set([...(run.permissions?.deny ?? []), ...DATA_DIR_DENY_RULES, ...extraDeny])]
   return { ...run, permissions: { ...run.permissions, deny } }
 }
 

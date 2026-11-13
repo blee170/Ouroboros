@@ -213,6 +213,9 @@ const api: OuroborosApi = {
   wsl: {
     check: () => ipcRenderer.invoke(IPC.wslCheck)
   },
+  phoneControl: {
+    check: () => ipcRenderer.invoke(IPC.phoneControlCheck)
+  },
   history: {
     list: (rootFilter) => ipcRenderer.invoke(IPC.historyList, rootFilter)
   },

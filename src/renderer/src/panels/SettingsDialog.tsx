@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useBoard } from '@/store/board'
 import type { AppInfo, GitHubCardTokenStatus, GitHubProtectionResult, UpdateStatus } from '@shared/protocol'
 import type { WslCheck } from '@shared/wsl'
+import type { PhoneControlCheck } from '@shared/phone-control'
 import { PROTECT_RULES, protectedFully } from '@shared/rulesets'
 import { EnginesPanel } from './EnginesPanel'
 import { PhoneSettings } from './PhoneSettings'
@@ -60,6 +61,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [cardToken, setCardToken] = useState('')
   const [cardTokenStatus, setCardTokenStatus] = useState<GitHubCardTokenStatus>({ hasToken: false })
   const [wslCheck, setWslCheck] = useState<WslCheck | 'checking' | null>(null)
+  const [phoneCheck, setPhoneCheck] = useState<PhoneControlCheck | 'checking' | null>(null)
   useEscape(onClose)
   useEffect(() => {
     void window.ouroboros.app.info().then((i) => {
@@ -117,6 +119,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     const r = await window.ouroboros.github.cardTokenStatus(true)
     setCardTokenStatus(r)
     setMsg(r.error ? `Card token: ${r.error}` : `Card token: belongs to ${r.login}${r.expiresAt ? `, expires ${r.expiresAt}` : ', no expiry'}.`)
+  }
+  const checkPhoneControl = async (): Promise<void> => {
+    setPhoneCheck('checking')
+    setPhoneCheck(await window.ouroboros.phoneControl.check())
   }
   const checkWsl = async (): Promise<void> => {
     setWslCheck('checking')
@@ -432,6 +438,25 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
             <div {...pane('phone')}>
               <PhoneSettings />
+              <section className="settings-section">
+                <h4>Phone control (a card drives your phone)</h4>
+                <div className="hint">
+                  The other direction from the companion above: a Claude card with <em>Phone card</em> ticked (Inspector) may run phone-harness and adb to open apps, tap, type and read your Android phone. Every other Claude card is denied those commands. You install phone-harness and adb yourself and connect the phone; what is on the screen goes to the model the card runs.
+                </div>
+                <div className="ctl">
+                  <button className="btn" disabled={phoneCheck === 'checking'} onClick={() => void checkPhoneControl()}>
+                    {phoneCheck === 'checking' ? 'Checking…' : 'Check'}
+                  </button>
+                </div>
+                {phoneCheck && phoneCheck !== 'checking' && (
+                  <div className="hint">
+                    {phoneCheck.ok ? `Ready: ${phoneCheck.devices.filter((d) => d.state === 'device').map((d) => d.serial).join(', ')}.` : 'Not ready yet.'}
+                    {phoneCheck.missing.map((m) => (
+                      <div key={m}>• {m}</div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
 
             <div {...pane('ouro')}>

@@ -46,6 +46,8 @@ export interface ClaudeOptions {
   boardTools?: boolean
   /** Light card: `--strict-mcp-config`, so it starts only the MCP servers in its own config (the board server and mcpServers), not the owner's global ones. Plugins are not affected. */
   lightMcp?: boolean
+  /** Phone card: may run phone-harness / adb (every other Claude card is denied them) and gets the phone rules in its system prompt. Set by the owner only. */
+  phone?: boolean
   /** Run this Claude card inside WSL2 with Claude Code's sandbox on (experimental; needs the distro set up, see Settings). */
   wsl?: boolean
 }

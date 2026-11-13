@@ -33,6 +33,7 @@ export const PRIVILEGE_FIELDS = [
   'claude.effort',
   'claude.wsl',
   'claude.lightMcp',
+  'claude.phone',
   'handoffs'
 ] as const
 export type PrivilegeField = (typeof PRIVILEGE_FIELDS)[number]

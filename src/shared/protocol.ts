@@ -39,6 +39,7 @@ import type { OuroSettingsView, OuroStatusView } from './ouro'
 import type { OuroCallSettingsView, OuroCallStatusView } from './ouro-call'
 import type { ProtectionView } from './rulesets'
 import type { WslCheck } from './wsl'
+import type { PhoneControlCheck } from './phone-control'
 
 /** IPC channel names shared by main, preload and renderer. */
 export const IPC = {
@@ -103,6 +104,7 @@ export const IPC = {
   githubSetCardToken: 'github:setCardToken',
   githubCardTokenStatus: 'github:cardTokenStatus',
   wslCheck: 'wsl:check',
+  phoneControlCheck: 'phoneControl:check',
   ouroStatus: 'ouro:status',
   ouroConfigure: 'ouro:configure',
   ouroSetToken: 'ouro:setToken',
@@ -700,6 +702,10 @@ export interface OuroborosApi {
   wsl: {
     /** Whether WSL cards can run here: the distro, what is missing (with what to do) and small notes. */
     check(): Promise<WslCheck>
+  }
+  phoneControl: {
+    /** Whether a phone card can work here: phone-harness and adb on PATH, and the phones adb sees. */
+    check(): Promise<PhoneControlCheck>
   }
   history: {
     /** Claude Code sessions on this machine grouped by cwd (optionally only under rootFilter). */

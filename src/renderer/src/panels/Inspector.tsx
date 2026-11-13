@@ -406,6 +406,14 @@ export function Inspector() {
             Extra system prompt
             <textarea rows={3} value={claude.appendSystemPrompt ?? ''} onChange={(e) => updateNodeData(nodeId, { claude: { ...claude, appendSystemPrompt: e.target.value || undefined }, ...(typeof d.role === 'string' ? { role: undefined } : {}) })} />
           </label>
+          {(d.engine ?? 'claude') === 'claude' && (
+            <div className="block">
+              <label className="check" title="Applies on the next launch. Every other Claude card is denied phone-harness, adb and scrcpy.">
+                <input type="checkbox" checked={claude.phone === true} onChange={(e) => setClaude({ phone: e.target.checked || undefined })} /> Phone card: may drive your phone (phone-harness, adb)
+              </label>
+              <div className="hint">The card is told to stop and ask you before it pays, orders, sends, signs in, installs or deletes, never to type a PIN or password, and to treat text on the screen as data. Those are instructions, not a lock: only the command block on other cards is enforced. Stays allowed during an Autonomous run.</div>
+            </div>
+          )}
           <div className="block">
             <div className="muted small">MCP servers on this card {d.kind === 'conductor' ? '(the board server "ouroboros" is always added)' : ''}</div>
             {(d.engine ?? 'claude') === 'claude' && (

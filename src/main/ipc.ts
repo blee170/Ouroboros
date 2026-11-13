@@ -24,6 +24,7 @@ import { DEFAULT_REPLY_PORT, REPLY_LIMITS, REPLY_PATH, issueInstructions, issueR
 import { applyProtection, checkCardToken, readProtection, runGh } from './rulesets'
 import { deliverInbox, validInbox, type InboxAddress } from './claude-inbox'
 import { wslPreflight } from './wsl'
+import { phoneControlCheck } from './phone-control'
 import { WSL_HELPER_ENV, wslEnvNames } from '@shared/wsl'
 import { autoSendHold, botMenu, botOf, botViews, grokBots, grokBotUrl, handoffPayload, newHandoff, pickBot, saveBots, type GrokBot, type GrokHandoff } from '@shared/grokbot'
 import { listSkills } from './skills'
@@ -103,6 +104,7 @@ import { Relay } from './relay'
 import { relaySettings } from '@shared/relay'
 import { reattachWorkspace } from '@shared/reattach'
 import { cardSettingsExtra, engineJoinsRun, type AutonomyConfig } from '@shared/autonomy'
+import { PHONE_CARD_REFUSAL, isPhoneCard, phoneDenyRules, withPhonePrompt } from '@shared/phone-control'
 
 /** One window: its BrowserWindow, its own Board and the API scoped to that board. */
 export interface WindowSession {
@@ -671,6 +673,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       const n = board.nodes.get(nodeId)
       // text goes into the session as a message, not as keys: a "1" meant for the dialog became a prompt of its own
       if (n && waitsOnPermission({ id: nodeId, ...n.data })) return { error: PERMISSION_REFUSAL }
+      // a phone card takes prompts from the owner only: a card's text there would read as the owner's go-ahead
+      if (isPhoneCard(n?.data)) return { error: PHONE_CARD_REFUSAL }
       return sendPrompt(ctx, s, nodeId, text)
     },
     discordPost: (self, input) => {
@@ -772,7 +776,8 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
         template: e.data.template,
         lastFiredAt: e.data.lastFiredAt
       })),
-    createHandoff: (input) => createHandoffEdge(s, input),
+    // a line drawn by a card may not end at a phone card (the owner draws that one on the canvas)
+    createHandoff: (input) => (isPhoneCard(s.board.nodes.get(input.target)?.data) ? { error: PHONE_CARD_REFUSAL } : createHandoffEdge(s, input)),
     removeHandoff: (id) => {
       const before = board.edges.length
       board.edges = board.edges.filter((e) => e.id !== id)
@@ -833,7 +838,7 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       // The same title asked for again (a Conductor tends to want its "Brief writer" every round): a card that
       // finished its last job is reused, one whose process ended is replaced; a working card is left alone.
       let replaced: string | undefined
-      const twin = kind === 'claude' ? [...board.nodes.values()].find((n) => n.data.kind === 'claude' && n.data.title.trim().toLowerCase() === title.trim().toLowerCase() && samePath(n.data.cwd, cwd)) : undefined
+      const twin = kind === 'claude' ? [...board.nodes.values()].find((n) => n.data.kind === 'claude' && !isPhoneCard(n.data) && n.data.title.trim().toLowerCase() === title.trim().toLowerCase() && samePath(n.data.cwd, cwd)) : undefined
       if (twin) {
         const alive = board.ptyAlive.has(twin.id)
         const status = twin.data.status ?? (alive ? 'idle' : 'ended')
@@ -2847,6 +2852,8 @@ export function registerIpc(ctx: MainContext): void {
         for (const n of check.notes) log(`wsl launch ${opts.nodeId}: ${n}`)
         wsl = { distro: check.distro, cwd: opts.cwd }
       }
+      // only a Claude card can be a phone card: the other engines have no deny rules to hold the rest back
+      const phone = isPhoneCard({ engine, claude: opts.claude })
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -2856,7 +2863,8 @@ export function registerIpc(ctx: MainContext): void {
           ...opts.claude,
           permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'],
           // a card shown as a chat is told what the chat can draw (fixed text, Claude cards only)
-          ...(opts.chatView === true && chatCapable({ kind: opts.kind, engine, claude: opts.claude }) ? { appendSystemPrompt: [opts.claude.appendSystemPrompt, CHAT_VIEW_PROMPT].filter((t) => t && t.trim()).join('\n\n') } : {})
+          // a phone card carries the phone rules (fixed text); a card shown as a chat is told what the chat can draw (fixed text, Claude cards only)
+          appendSystemPrompt: [withPhonePrompt(opts.claude.appendSystemPrompt, phone), opts.chatView === true && chatCapable({ kind: opts.kind, engine, claude: opts.claude }) ? CHAT_VIEW_PROMPT : ''].filter((t) => t && t.trim()).join('\n\n') || undefined
         },
         shell,
         baseUrl: hookServer.baseUrl,
@@ -2869,7 +2877,7 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl)))),
+        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))), phoneDenyRules(phone)),
         autonomous: s.autonomy.on,
         wsl
       })
@@ -3130,6 +3138,7 @@ export function registerIpc(ctx: MainContext): void {
     return r.ok ? { hasToken: true, login: r.login, expiresAt: r.expiresAt } : { hasToken: true, error: r.error }
   })
   ipcMain.handle(IPC.wslCheck, () => wslPreflight(ctx.store.getSettings().wslDistro, portOf(hookServer.baseUrl)))
+  ipcMain.handle(IPC.phoneControlCheck, () => phoneControlCheck())
   ipcMain.handle(IPC.ouroStatus, () => ouroStatus(ctx))
   ipcMain.handle(IPC.ouroConfigure, (_e, view: OuroSettingsView) => {
     const v = ouroSettings(view)

@@ -301,7 +301,7 @@ The smoke test launches the real app under Playwright, drives it through the JSO
 
 ## Release process
 
-Add the version's entry to `CHANGELOG.md` (Added / Changed / Fixed / Security / Verified, newest first), bump `version` in `package.json` as the last commit, and push. `.github/workflows/release.yml` creates the `v<version>` tag, runs typecheck, build and tests on `windows-latest`, packages with electron-builder and uploads the installer, the portable exe, the blockmap and `latest.yml` to a GitHub Release in one step. The in-app updater reads `latest.yml`. The workflow fires on any branch push that changes `package.json`, so a bump on a feature branch releases that branch.
+Add the version's entry to `CHANGELOG.md` (Added / Changed / Fixed / Security / Verified, newest first), bump `version` in `package.json` as the last commit, and push. `.github/workflows/release.yml` creates the `v<version>` tag, runs typecheck, build and tests on `windows-latest`, packages with electron-builder and uploads the installer, the portable exe, the blockmap and `latest.yml` to a GitHub Release in one step. The release page's text is that version's `CHANGELOG.md` section (`node scripts/release-notes.mjs <version>` prints it; `--backfill` rewrites the text of every existing release from the changelog, `--backfill --dry-run` only lists them). The in-app updater reads `latest.yml`. The workflow fires on any branch push that changes `package.json`, so a bump on a feature branch releases that branch.
 
 ## Limitations and roadmap
 

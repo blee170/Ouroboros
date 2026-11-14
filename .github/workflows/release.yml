@@ -84,7 +84,9 @@ jobs:
                 echo "deleting incomplete release $id for $TAG"
                 gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
               done
-          gh release create "$TAG" --title "$VERSION" --notes "Ouroboros $VERSION" "${FILES[@]}"
+          # the release page carries the version's CHANGELOG.md section; a version without one gets its name only
+          node scripts/release-notes.mjs "$VERSION" > release-notes.md || echo "Ouroboros $VERSION" > release-notes.md
+          gh release create "$TAG" --title "$VERSION" --notes-file release-notes.md "${FILES[@]}"
           gh release view "$TAG" --json assets --jq '.assets[].name'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

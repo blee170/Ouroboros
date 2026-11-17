@@ -21,6 +21,9 @@ export interface Decision {
   decidedAt?: number
   /** 'owner', or 'phone <device>' */
   by?: string
+  /** asked on behalf of this card (ask_owner for_card): it gets the owner's answer too */
+  forCard?: string
+  forTitle?: string
 }
 
 export const DECISION_LIMITS = {
@@ -82,6 +85,15 @@ export function decisionMessage(d: Decision): string {
   if (d.state === 'expired') return `${head}\nNo answer within 24 hours: the question expired. Carry on without it, or ask again if it still matters.`
   if (d.state === 'withdrawn') return `${head}\nThe question was withdrawn.`
   return `${head}\nAnswer: ${d.answer ?? '(none)'}${d.note ? `\nNote from the owner: ${d.note}` : ''}`
+}
+
+/** Pure: the board message the card a question was asked for gets (ask_owner for_card), once it is settled. */
+export function decisionForMessage(d: Decision): string {
+  // the whole question as the owner saw it, every line quoted: nothing in it can pass for the answer line below
+  const title = oneLine(d.title).replace(/["'`[\]]/g, '').slice(0, 40)
+  const head = `[owner decision ${d.id}] Card "${title}" asked the owner this for you (quoted in full):\n${d.question.split('\n').map((l) => `> ${l}`).join('\n')}`
+  if (d.state === 'expired') return `${head}\nNo answer within 24 hours: the question expired.`
+  return `${head}\nThe owner's answer: ${d.answer ?? '(none)'}${d.note ? `\nNote from the owner:\n${d.note.split('\n').map((l) => `> ${l}`).join('\n')}` : ''}`
 }
 
 /** Pure: what ask_owner returns when the owner has not answered within the wait. */

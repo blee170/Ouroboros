@@ -17,11 +17,13 @@ export interface OwnerAction {
   copy?: Array<{ label: string; text: string }>
   /** do: how the owner sees that it worked */
   check?: string
+  /** approve: the most it may spend once approved ("up to 63 images, about $5"); without it an approval spends nothing */
+  limit?: string
   /** the card that asked (set by the ledger, never by the card): it gets the owner's answer */
   by?: string
 }
 
-export const OWNER_ACTION_LIMITS = { askChars: 300, steps: 12, stepChars: 300, copies: 3, labelChars: 60, copyChars: 8000, checkChars: 300, noteChars: 1000, pasteChars: 4000 } as const
+export const OWNER_ACTION_LIMITS = { askChars: 300, steps: 12, stepChars: 300, copies: 3, labelChars: 60, copyChars: 8000, checkChars: 300, limitChars: 160, noteChars: 1000, pasteChars: 4000 } as const
 
 const APPROVAL_RE = /^\s*APPROVAL NEEDED\s*[:—–-]?\s*/i
 // blank-looking characters the ledger's own cleaning keeps (braille blank, grapheme joiner, Khmer vowels, object mark)
@@ -63,6 +65,12 @@ export function ownerActionInput(raw: unknown): { ok: true; action: OwnerAction 
     if (typeof r.check !== 'string' || check.length > L.checkChars) return { ok: false, error: `owner_action.check: up to ${L.checkChars} characters` }
     if (check) action.check = check
   }
+  if (r.limit !== undefined && r.limit !== null && r.limit !== '') {
+    if (r.kind !== 'approve') return { ok: false, error: 'owner_action.limit goes with kind=approve: something only the owner may do needs no spending limit' }
+    const limit = typeof r.limit === 'string' ? line(r.limit, L.limitChars + 1) : ''
+    if (!limit || limit.length > L.limitChars) return { ok: false, error: `owner_action.limit: the most it may spend, in words, 1 to ${L.limitChars} characters` }
+    action.limit = limit
+  }
   return { ok: true, action }
 }
 
@@ -73,6 +81,8 @@ export interface OwnerNeed {
   steps: string[]
   copy: Array<{ label: string; text: string }>
   check?: string
+  /** approve: the spending limit the owner approves with it */
+  limit?: string
   /** the card that asked */
   by?: string
 }
@@ -80,7 +90,7 @@ export interface OwnerNeed {
 /** Pure: the owner's part of a task, or undefined when it waits on nobody in particular. */
 export function ownerNeed(t: Pick<Task, 'state' | 'reason' | 'ownerAction'>): OwnerNeed | undefined {
   if (t.state !== 'blocked') return undefined
-  if (t.ownerAction) return { kind: t.ownerAction.kind, ask: t.ownerAction.ask, steps: t.ownerAction.steps ?? [], copy: t.ownerAction.copy ?? [], check: t.ownerAction.check, by: t.ownerAction.by }
+  if (t.ownerAction) return { kind: t.ownerAction.kind, ask: t.ownerAction.ask, steps: t.ownerAction.steps ?? [], copy: t.ownerAction.copy ?? [], check: t.ownerAction.check, ...(t.ownerAction.limit ? { limit: t.ownerAction.limit } : {}), by: t.ownerAction.by }
   if (!APPROVAL_RE.test(t.reason ?? '')) return undefined
   return { kind: 'unknown', ask: (t.reason ?? '').replace(APPROVAL_RE, '').trim() || 'needs your decision', steps: [], copy: [] }
 }
@@ -92,8 +102,11 @@ export function approvalMessage(t: Pick<Task, 'id' | 'title'>, need: OwnerNeed, 
   return [
     `[owner approval ${t.id}] APPROVED BY OWNER: ${need.ask}`,
     `Task: ${t.id} ${t.title}`,
+    need.limit ? `Spending limit approved with it: ${need.limit}` : '',
     note ? `Note from the owner:\n${quote(note)}` : '',
-    'Go ahead with it now, then update the task (done with a result, or blocked again if something else needs the owner). This approves only what the task asked: production database changes, spending money, accounts and secrets stay with the owner.'
+    need.limit
+      ? 'Go ahead with it now, then update the task (done with a result, or blocked again if something else needs the owner). This approves only what the task asked, and spending only up to the limit above: stop and ask again before going past it. Production database changes, accounts and secrets stay with the owner.'
+      : 'Go ahead with it now, then update the task (done with a result, or blocked again if something else needs the owner). This approves only what the task asked: production database changes, spending money, accounts and secrets stay with the owner.'
   ].filter(Boolean).join('\n')
 }
 

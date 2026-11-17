@@ -46,6 +46,8 @@ export const IPC = {
   // renderer -> main (invoke)
   ptySpawn: 'pty:spawn',
   ptyWrite: 'pty:write',
+  ptyType: 'pty:type',
+  ptyOwnerSaid: 'pty:ownerSaid',
   ptyResize: 'pty:resize',
   ptyKill: 'pty:kill',
   ptyAttach: 'pty:attach',
@@ -424,6 +426,10 @@ export interface OuroborosApi {
   pty: {
     spawn(opts: PtySpawnOptions): Promise<{ ok: boolean; error?: string }>
     write(nodeId: string, data: string): void
+    /** What the owner typed on a card's terminal keyboard (written like `write`, and read for the owner's own words). */
+    type(nodeId: string, data: string): void
+    /** A text the owner sent to a card from the composer or the chat view, just before it is typed in. */
+    ownerSaid(nodeId: string, text: string): void
     resize(nodeId: string, cols: number, rows: number): void
     kill(nodeId: string): Promise<void>
     /**

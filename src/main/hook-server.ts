@@ -27,7 +27,11 @@ export interface ApiHandlers {
   /** The caller's Claude Code inbox (its MCP server's CLAUDE_CODE_MESSAGING_SOCKET and token): text for the card goes in there. */
   registerInbox(self: string, socket: unknown, token: unknown): { ok: boolean; error?: string }
   /** ask_owner: the caller's question to the owner; waits a while for the answer, else says it is pending. */
-  askOwner(self: string, input: { question?: unknown; choices?: unknown }, signal?: AbortSignal): Promise<{ ok: true; id: string; answered: boolean; text: string } | { ok: false; error: string }>
+  askOwner(self: string, input: { question?: unknown; choices?: unknown; for_card?: unknown }, signal?: AbortSignal): Promise<{ ok: true; id: string; answered: boolean; text: string } | { ok: false; error: string }>
+  /** owner_words: the owner's own words typed or sent into the caller's card (Claude cards), newest first */
+  ownerWords(self: string): { text: string }
+  /** relay_owner_words: one of them passed on to another card as the owner's, exactly as written */
+  relayOwnerWords(self: string, input: { id?: unknown; to?: unknown }): { ok: true; text: string } | { ok: false; error: string }
   /** post_discord: the caller posts to a Discord channel the owner allows, as the bot. */
   discordPost(self: string, input: { channel?: unknown; text?: unknown }): Promise<{ ok: true; channel: string } | { ok: false; error: string }>
   /** Specialist roles the board can give a card, and the catalog's runbooks (team rosters). */
@@ -358,13 +362,19 @@ export class HookServer {
         return send(res, r.ok ? 200 : 400, r)
       }
       if (method === 'POST' && path === '/api/mail/ask') {
-        const body = (await readJson(req, 16_000)) as { question?: unknown; choices?: unknown }
+        const body = (await readJson(req, 16_000)) as { question?: unknown; choices?: unknown; for_card?: unknown }
         // a caller that hangs up (a cancelled tool call, a restarted card) stops waiting: a later answer then goes by mail
         const gone = new AbortController()
         res.on('close', () => {
           if (!res.writableEnded) gone.abort()
         })
-        const r = await api.askOwner(claimed, { question: body?.question, choices: body?.choices }, gone.signal)
+        const r = await api.askOwner(claimed, { question: body?.question, choices: body?.choices, for_card: body?.for_card }, gone.signal)
+        return send(res, r.ok ? 200 : 400, r)
+      }
+      if (method === 'GET' && path === '/api/mail/owner-words') return send(res, 200, api.ownerWords(claimed))
+      if (method === 'POST' && path === '/api/mail/owner-words/relay') {
+        const body = (await readJson(req, 4_000)) as { id?: unknown; to?: unknown }
+        const r = api.relayOwnerWords(claimed, { id: body?.id, to: body?.to })
         return send(res, r.ok ? 200 : 400, r)
       }
       const ack = /^\/api\/mail\/([^/]+)\/ack$/.exec(path)

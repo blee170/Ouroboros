@@ -91,7 +91,7 @@ export function useTerminal(nodeId: string, containerRef: React.RefObject<HTMLDi
     loadWebgl()
     const api = window.ouroboros
     const offData = api.pty.onData(nodeId, (data) => term.write(data))
-    const keys = replayInput((d) => api.pty.write(nodeId, d))
+    const keys = replayInput((d) => api.pty.type(nodeId, d))
     const inputSub = term.onData(keys.input)
     // Screenshots pasted or files dropped onto the card are saved/resolved and their path typed into
     // the prompt (Claude Code reads image paths), so feedback screenshots can be handed to an agent.

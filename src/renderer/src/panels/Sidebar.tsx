@@ -194,6 +194,7 @@ export function Sidebar() {
           typed.push(quote(p))
         }
         const prompt = [body.trim(), ...typed].filter(Boolean).join(' ')
+        if (prompt) window.ouroboros.pty.ownerSaid(n.id, prompt)
         if (prompt && asleep) void window.ouroboros.board.wake(n.id, prompt)
         else if (prompt) typePrompt(n.id, prompt)
       }

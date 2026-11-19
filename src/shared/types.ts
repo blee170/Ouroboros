@@ -272,6 +272,8 @@ export interface AppSettings {
   announceToast?: boolean
   /** Speak the announcement with a Windows voice (default on). */
   announceVoice?: boolean
+  /** After a spoken decision, ask "shall I read it?" and listen for yes/no; then take a spoken answer (default on; needs voice input). */
+  announceReadAloud?: boolean
   /** Voice engine for spoken announcements: windows (default, offline) | gemini | openai | elevenlabs | voicebox (local app). */
   ttsEngine?: 'windows' | 'gemini' | 'openai' | 'elevenlabs' | 'voicebox'
   /** Voice name / id for the chosen engine (empty = the engine's default). */

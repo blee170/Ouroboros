@@ -14,7 +14,7 @@ import { normalizeEffort, normalizeEngine, type AppSettings, type ClaudeOptions,
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf } from '@shared/status'
-import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
+import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, readAloudText, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
 import { sendToGrokBot } from './grokbot'
@@ -1848,7 +1848,10 @@ function installAnnouncer(ctx: MainContext, s: WindowSession): void {
     done.stopped(announced)
     if (!announced) return
     const body = ownerMarker(message)?.line || firstLine(message)
-    deliver({ kind, title: n.data.title, lang: langFor(n.data.title, message) }, body || undefined, prefs)
+    const lang = langFor(n.data.title, message)
+    // a decision carries its text for "shall I read it?": spoken only when the owner says yes
+    const read = kind === 'decision' && prefs.readAloud ? readAloudText(message, lang) || undefined : undefined
+    deliver({ kind, title: n.data.title, lang, nodeId, read }, body || undefined, prefs)
   })
 }
 

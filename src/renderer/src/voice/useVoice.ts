@@ -25,7 +25,7 @@ const REOPEN_TRIES = 5
  * Push-to-talk (the mic button, the global hotkey) and, when it is on, the wake phrase, for the left composer.
  * `onText` gets each transcript; `fromWake` says it came with the wake phrase ("Ouroboros, run the tests").
  */
-export function useVoice(onText: (text: string, fromWake: boolean) => void): { state: VoiceState; message: string; toggle: () => void; wakeOn: boolean; meterRef: MutableRefObject<HTMLElement | null> } {
+export function useVoice(onText: (text: string, fromWake: boolean) => void): { state: VoiceState; message: string; toggle: () => void; ask: () => Promise<string | undefined>; wakeOn: boolean; meterRef: MutableRefObject<HTMLElement | null> } {
   const raw = useBoard((s) => s.settings.voice)
   const v = voiceSettings(raw)
   const wakeOn = v.enabled && v.wake && v.stt === 'whisper' && Boolean(v.whisperServerPath && v.whisperModelPath)
@@ -98,6 +98,10 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   const takeQueued = useRef(false)
   /** the queued take comes from the wake phrase, whose chime already said "speak now" */
   const wakeHeard = useRef(false)
+  /** set by `ask`: the next take's transcript goes here, not into the composer */
+  const capture = useRef<((text: string | undefined) => void) | null>(null)
+  /** false once the composer is gone: an exchange still running must not open the microphone again */
+  const alive = useRef(true)
 
   const toText = useCallback(async (samples: Float32Array): Promise<string | undefined> => {
     const r = await window.ouroboros.voice.transcribe(wavFromFloat32(samples, VOICE_LIMITS.sampleRate))
@@ -141,7 +145,12 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   }, [toText])
 
   const take = useCallback(async (): Promise<void> => {
-    if (wakePaused > 0) return // a Settings test holds the microphone
+    if (wakePaused > 0 || !alive.current) {
+      // a Settings test holds the microphone (or the composer is gone): an `ask` waiting on this take gets nothing
+      capture.current?.(undefined)
+      capture.current = null
+      return
+    }
     if (busy.current) {
       // a wake clip is being written down: the take follows it instead of being dropped
       takeQueued.current = true
@@ -175,13 +184,19 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
         return
       }
       if (text === '') setMessage('Did not catch any words.')
-      else if (text) onTextRef.current(text, false)
+      else if (text && capture.current) {
+        capture.current(text)
+        capture.current = null
+      } else if (text) onTextRef.current(text, false)
     } catch (err) {
       setMessage(`Microphone: ${(err as Error).message}`)
       closeMic()
     } finally {
       busy.current = false
       setState('idle')
+      // a take asked for by `ask` that heard nothing: it answers undefined
+      capture.current?.(undefined)
+      capture.current = null
     }
   }, [openMic, closeMic, listen, toText])
   const takeRef = useRef(take)
@@ -194,6 +209,32 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
   }, [state])
   const toggleRef = useRef(toggle)
   toggleRef.current = toggle
+
+  /**
+   * One take whose words come back here instead of landing in the composer (the read-aloud exchange). Undefined
+   * when voice input is off, the mic is busy with another take, a Settings test holds it, or nobody spoke.
+   */
+  const ask = useCallback(async (): Promise<string | undefined> => {
+    if (!voiceSettings(useBoard.getState().settings.voice).enabled || capture.current) return undefined
+    // a wake clip being written down, or a take of the owner's own: wait a little for it, else give up. The take
+    // started below sets `busy` before it yields, so the capture can only ever be answered by this take.
+    for (let i = 0; (busy.current || wakePaused > 0) && i < 30; i++) await new Promise((r) => setTimeout(r, 100))
+    if (busy.current || wakePaused > 0 || capture.current || !alive.current) return undefined
+    return new Promise((resolve) => {
+      const done = (text: string | undefined): void => {
+        clearTimeout(timer)
+        resolve(text)
+      }
+      // never left hanging: a take that cannot end (a device gone quiet) gives up after its own limit and more
+      const timer = setTimeout(() => {
+        if (capture.current !== done) return
+        capture.current = null
+        resolve(undefined)
+      }, VOICE_LIMITS.maxTakeMs + 15_000)
+      capture.current = done
+      void takeRef.current()
+    })
+  }, [])
 
   useEffect(() => window.ouroboros.voice.onHotkey(() => toggleRef.current()), [])
 
@@ -249,7 +290,15 @@ export function useVoice(onText: (text: string, fromWake: boolean) => void): { s
     }
   }, [wakeOn, v.micDeviceId, wakeRound, openMic, closeMic, listen])
 
-  useEffect(() => () => closeMic(), [closeMic])
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      capture.current?.(undefined)
+      capture.current = null
+      closeMic()
+    }
+  }, [closeMic])
 
-  return { state, message, toggle, wakeOn, meterRef }
+  return { state, message, toggle, ask, wakeOn, meterRef }
 }

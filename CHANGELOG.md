@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.20.4] — 2026-11-19
 
 ### Added
 - **"Shall I read it?" after a spoken decision.** The voice used to say only "<card>: a decision is needed", so you had to go and look. Now it asks "Shall I read it?" and listens once through the composer's microphone. Say yes and it reads the end of the reply, where the question and its options are (code, links and markdown left out; a long reply keeps its end and says the start is on screen). It then listens for an answer, reads it back ("Send \"…\"?"), and only on a second yes types it into that card as your words (the same path as the composer, so it counts for relaying). Only a short reply that is just a yes counts ("네", "응 읽어줘", "yes", "go ahead"); a sentence with a yes word in it, "어", a question or silence does nothing, and no or 안 stops. Other announcements wait while it listens, so it never hears them as your answer. A card that started working meanwhile does not get the answer. Settings → Announce: "After a decision, ask…" (on by default; needs voice input on).

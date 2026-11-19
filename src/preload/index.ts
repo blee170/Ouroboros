@@ -15,6 +15,8 @@ const api: OuroborosApi = {
   pty: {
     spawn: (opts) => ipcRenderer.invoke(IPC.ptySpawn, opts),
     write: (nodeId, data) => ipcRenderer.send(IPC.ptyWrite, nodeId, data),
+    type: (nodeId, data) => ipcRenderer.send(IPC.ptyType, nodeId, data),
+    ownerSaid: (nodeId, text) => ipcRenderer.send(IPC.ptyOwnerSaid, nodeId, text),
     resize: (nodeId, cols, rows) => ipcRenderer.send(IPC.ptyResize, nodeId, cols, rows),
     kill: (nodeId) => ipcRenderer.invoke(IPC.ptyKill, nodeId),
     attach: (nodeId) => ipcRenderer.invoke(IPC.ptyAttach, nodeId),

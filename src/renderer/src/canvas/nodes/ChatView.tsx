@@ -96,6 +96,7 @@ export function ChatView({ id, data, status, hidden, onShowTerminal }: { id: str
     // typed like the left composer does (bracketed paste, then Enter), except that the Enter is held back when the
     // card started asking a question in between: Enter there would pick the dialog's highlighted answer
     const api = window.ouroboros
+    api.pty.ownerSaid(id, body)
     api.pty.write(id, toPastePayload(body))
     setTimeout(() => {
       if (statusNow.current === 'needs-you') return setNotice('The card started asking a question just as this was sent, so it was not submitted. Answer the question in the terminal; your text is in its input box.')

@@ -23,11 +23,11 @@ export class DecisionDesk extends EventEmitter {
     return dropped
   }
 
-  ask(card: { id: string; title: string }, question: string, choices: string[] | undefined, now = Date.now()): { ok: true; decision: Decision } | { ok: false; error: string } {
+  ask(card: { id: string; title: string }, question: string, choices: string[] | undefined, now = Date.now(), forCard?: { id: string; title: string }): { ok: true; decision: Decision } | { ok: false; error: string } {
     this.sweep(now)
     const open = this.decisions.find((d) => d.card === card.id && d.state === 'pending')
     if (open) return { ok: false, error: `you already asked the owner ${open.id} and it is not answered yet: one question at a time. Its answer comes as a board message headed [owner decision ${open.id}].` }
-    const decision: Decision = { id: `D${this.next++}`, card: card.id, title: card.title, question, ...(choices ? { choices } : {}), createdAt: now, state: 'pending' }
+    const decision: Decision = { id: `D${this.next++}`, card: card.id, title: card.title, question, ...(choices ? { choices } : {}), createdAt: now, state: 'pending', ...(forCard ? { forCard: forCard.id, forTitle: forCard.title } : {}) }
     this.decisions = trimDecisions([...this.decisions, decision])
     this.emit('change', this.decisions)
     this.emit('asked', decision)

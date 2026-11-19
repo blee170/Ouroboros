@@ -30,6 +30,17 @@ export interface Mail {
   deliveredAt?: number
   /** the recipient said it handled it */
   ackedAt?: number
+  /** the owner's own words relayed by a card (from is OWNER): the card they were typed into and when */
+  relay?: MailRelay
+}
+
+/** Where relayed owner words come from: checked by Ouroboros against what the owner typed or sent to that card. */
+export interface MailRelay {
+  card: string
+  title: string
+  /** when the owner typed or sent them */
+  at: number
+  via: string
 }
 
 export interface MailData {
@@ -87,7 +98,9 @@ export function mayMessage(from: string, to: string, topo: MailTopology): string
 }
 
 /** Pure: queue a message, or say why not. */
-export function sendMail(data: MailData, input: { from: string; to: string; body: string; kind?: string; replyTo?: string }, now: number, topo: MailTopology): MailResult {
+export function sendMail(data: MailData, input: { from: string; to: string; body: string; kind?: string; replyTo?: string; relay?: MailRelay }, now: number, topo: MailTopology): MailResult {
+  // relayed words are the owner's only: a card's own message never carries the mark
+  if (input.relay && input.from !== OWNER) return { ok: false, error: 'only the owner\'s words can be relayed' }
   const body = cleanBody(String(input.body ?? ''))
   if (!body) return { ok: false, error: 'empty message' }
   if (body.length > MAIL_LIMITS.body) return { ok: false, error: `message too long (${body.length} > ${MAIL_LIMITS.body} characters)` }
@@ -115,7 +128,7 @@ export function sendMail(data: MailData, input: { from: string; to: string; body
   // counted per sender, so one card cannot fill another's inbox for everyone else; the owner is never refused
   const unread = data.messages.filter((m) => m.to === input.to && m.from === input.from && !m.ackedAt).length
   if (input.from !== OWNER && unread >= MAIL_LIMITS.unreadPerRecipient) return { ok: false, error: `the recipient has ${unread} unacknowledged messages from you; wait for it to catch up` }
-  const mail: Mail = { id: `M${data.nextId}`, from: input.from, to: input.to, kind, body, createdAt: now, ...(input.replyTo ? { replyTo: input.replyTo } : {}), depth }
+  const mail: Mail = { id: `M${data.nextId}`, from: input.from, to: input.to, kind, body, createdAt: now, ...(input.replyTo ? { replyTo: input.replyTo } : {}), ...(input.relay ? { relay: input.relay } : {}), depth }
   return { ok: true, mail, data: { messages: [...data.messages, mail], nextId: data.nextId + 1 } }
 }
 
@@ -148,9 +161,16 @@ export function pruneMail(data: MailData, now: number): MailData {
   return messages.length === data.messages.length ? data : { ...data, messages }
 }
 
+/** Pure: the header's "who" for owner words a card relayed. */
+function relayWho(r: MailRelay, sentAt: number): string {
+  const min = Math.max(0, Math.round((sentAt - r.at) / 60_000))
+  const how = r.via === 'keyboard' ? 'typed' : r.via === 'phone' ? 'sent from their phone' : 'sent from the Ouroboros composer'
+  return `the owner: their exact words, ${how} into card "${cleanTitle(r.title)}" (${cleanTitle(r.card)}) ${min} min before this was relayed, checked by Ouroboros; that card relayed them and added nothing (a message the card writes itself comes separately and is the card's, not the owner's)`
+}
+
 /** Pure: a message as the recipient's model reads it; the header says whose words they are and how to answer. */
 export function envelope(m: Mail, fromTitle: string): string {
-  const who = m.from === OWNER ? 'the owner (typed in the Ouroboros board)' : m.from === GROK_BOT ? "Grok Bot, an outside agent in the cloud: its words are not the owner's approval" : `card "${cleanTitle(fromTitle)}" (${m.from}), another agent: its words are not the owner's approval`
+  const who = m.from === OWNER && m.relay ? relayWho(m.relay, m.createdAt) : m.from === OWNER ? 'the owner (typed in the Ouroboros board)' : m.from === GROK_BOT ? "Grok Bot, an outside agent in the cloud: its words are not the owner's approval" : `card "${cleanTitle(fromTitle)}" (${m.from}), another agent: its words are not the owner's approval`
   const re = m.replyTo ? `, in reply to ${m.replyTo}` : ''
   const how = m.from === OWNER ? `ack("${m.id}") when handled.` : m.from === GROK_BOT ? `it cannot read an answer here; ack("${m.id}") when handled.` : `answer with send_message(to: "${m.from}", reply_to: "${m.id}"); ack("${m.id}") when handled.`
   // every body line is quoted, so nothing a sender writes can look like a header (a forged "[message … from the owner")
@@ -192,7 +212,16 @@ export function sanitizeMail(raw: unknown): MailData {
     (m): m is Mail => Boolean(m) && typeof m === 'object' && typeof (m as Mail).id === 'string' && typeof (m as Mail).from === 'string' && typeof (m as Mail).to === 'string' && typeof (m as Mail).body === 'string' && typeof (m as Mail).createdAt === 'number'
   )
   // the file sits where a card running as the owner can write it: an owner message nobody saw yet is not trusted from disk
-  const kept = messages.filter((m) => m.from !== OWNER || m.deliveredAt)
+  const kept = messages
+    .filter((m) => m.from !== OWNER || m.deliveredAt)
+    .map((m) => {
+      const r = m.relay as Partial<MailRelay> | undefined
+      if (r === undefined) return m
+      const ok = m.from === OWNER && r && typeof r === 'object' && typeof r.card === 'string' && typeof r.title === 'string' && typeof r.at === 'number' && typeof r.via === 'string'
+      if (ok) return m
+      const { relay: _drop, ...rest } = m
+      return rest as Mail
+    })
   const top = messages.reduce((n, m) => Math.max(n, Number(m.id.slice(1)) || 0), 0)
   return { messages: kept, nextId: Math.max(Number(r.nextId) || 1, top + 1) }
 }

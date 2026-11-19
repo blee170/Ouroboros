@@ -33,7 +33,7 @@ import { filterRoles } from '@shared/roles'
 import { buildGateCommand, prepareLaunch } from './claude-launcher'
 import { GateKeeper, auditFile } from './gate'
 import { DecisionDesk } from './decisions'
-import { answersOf, askInput, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
+import { answersOf, askInput, decisionForMessage, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
 import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
 import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
@@ -45,7 +45,9 @@ import { RoutineDesk, routinesFile } from './routines'
 import type { CliWatch } from './cli-watch'
 import { CLI_UPDATES_TOKEN } from '@shared/cli-watch'
 import { resolveRoutineCard, routineRefusal, type Routine, type RoutineInput } from '@shared/routines'
-import { GROK_BOT, cleanTitle, deliveryNote, envelope, type MailTopology } from '@shared/mail'
+import { GROK_BOT, cleanTitle, deliveryNote, envelope, mayMessage, type MailTopology } from '@shared/mail'
+import { OWNER_WORDS, ownerWordsText } from '@shared/owner-words'
+import { OwnerWordsLog } from './owner-words'
 import { aiTitleOf, isInterruptKey, showsInterrupt, stepOf } from '@shared/doing'
 import { emptyActivity, endRunningSubagents, recordActivity, summarize, type CardActivity } from '@shared/activity'
 import { PtyManager, defaultShell } from './pty-manager'
@@ -237,6 +239,8 @@ const launchOut = new Map<string, string>()
 const LAUNCH_OUT_CAP = 16_000
 /** cards whose latest launch never came up (the CLI is missing): a prompt would land in a bare shell */
 const launchFailed = new Set<string>()
+/** the owner's own words per card (what a card may relay as the owner's); in memory only */
+const ownerWords = new OwnerWordsLog()
 /** Cards whose CLI asked whether to trust the folder (needs-you until the owner answers; the ready signals then make them idle). */
 const trustAsked = new Set<string>()
 
@@ -590,6 +594,7 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   lastInputAt.delete(id)
   ctx.usage.forgetCard(id)
   forgetMail(id)
+  ownerWords.forget(id)
   inboxes.delete(id)
   for (const d of s.decisions.withdraw(id)) s.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): the card was removed`)
   transcripts.delete(id)
@@ -657,15 +662,49 @@ export function createApiHandlers(ctx: MainContext, s: WindowSession): ApiHandle
       if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'only agent cards can ask the owner' }
       const q = askInput(input)
       if (!q.ok) return q
-      const r = s.decisions.ask({ id: self, title: n.data.title }, q.question, q.choices)
+      // asked for another card: the owner sees whose question it is, and that card gets the answer from the owner
+      let forCard: { id: string; title: string } | undefined
+      if (input.for_card !== undefined && input.for_card !== null && input.for_card !== '') {
+        const target = typeof input.for_card === 'string' ? resolveMailTarget(board, input.for_card) : undefined
+        if (!target) return { ok: false, error: `for_card: no agent card "${String(input.for_card).slice(0, 80)}" on this board (an id from list_agents or an exact title)` }
+        const denied = mayMessage(self, target, mailTopology(board))
+        if (denied) return { ok: false, error: `for_card: ${denied}` }
+        forCard = { id: target, title: board.nodes.get(target)?.data.title ?? target }
+      }
+      const question = forCard ? `For card "${cleanTitle(forCard.title)}": ${q.question}` : q.question
+      const r = s.decisions.ask({ id: self, title: n.data.title }, question, q.choices, Date.now(), forCard)
       if (!r.ok) return r
       const id = r.decision.id
-      s.autonomy.noteDecision(self, n.data.title, `asked (${id}): ${q.question.replace(/\s+/g, ' ').slice(0, 200)}${q.choices ? ` [${q.choices.join(' / ')}]` : ''}`)
+      s.autonomy.noteDecision(self, n.data.title, `asked (${id}): ${question.replace(/\s+/g, ' ').slice(0, 200)}${q.choices ? ` [${q.choices.join(' / ')}]` : ''}`)
       // the owner is away during a run: no point holding the card's turn
       const d = s.autonomy.on ? undefined : await s.decisions.wait(id, DECISION_LIMITS.waitMs, signal)
       if (d && d.state === 'answered') return { ok: true, id, answered: true, text: decisionMessage(d) }
       if (d) return { ok: true, id, answered: false, text: decisionMessage(d) }
       return { ok: true, id, answered: false, text: pendingMessage(id, s.autonomy.on) }
+    },
+    ownerWords: (self) => ({ text: ownerWordsText(ownerWords.of(self), Date.now()) }),
+    relayOwnerWords: (self, input) => {
+      const n = board.nodes.get(self)
+      if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'only agent cards can relay the owner\'s words' }
+      if (typeof input.id !== 'string' || typeof input.to !== 'string') return { ok: false, error: 'id (W<n> from owner_words) and to are required' }
+      const word = ownerWords.get(self, input.id.trim())
+      if (!word) return { ok: false, error: `${input.id.slice(0, 20)} is not one of the owner's words in this card from the last ${OWNER_WORDS.keepMs / 60_000} minutes (call owner_words). Only what the owner typed or sent into this card counts; if they told you something you cannot find there, ask them with ask_owner(for_card).` }
+      const to = resolveMailTarget(board, input.to)
+      if (!to) return { ok: false, error: `no agent card "${input.to.slice(0, 80)}" on this board (an id from list_agents or an exact title)` }
+      // the same reach as the card's own messages: owner words go where the card may write, not anywhere
+      const denied = mayMessage(self, to, mailTopology(board))
+      if (denied) return { ok: false, error: denied }
+      // owner mail skips the senders' limits: one relay of a word per recipient keeps a card from repeating it
+      if (!ownerWords.markRelayed(word.id, to)) return { ok: false, error: `${word.id} was already relayed to ${titleOf(board, to)}` }
+      const r = s.mail.send({ from: OWNER, to, body: word.text, kind: 'note', relay: { card: self, title: n.data.title, at: word.at, via: word.via } }, mailTopology(board))
+      if (!r.ok) {
+        ownerWords.unmarkRelayed(word.id, to)
+        return r
+      }
+      s.autonomy.noteDecision(self, n.data.title, `relayed the owner's words ${word.id} to ${titleOf(board, to)}: ${word.text.replace(/\s+/g, ' ').slice(0, 200)}`)
+      log(`owner words: ${self} relayed ${word.id} (${word.via}) to ${to} as ${r.mail.id}`)
+      const t = board.nodes.get(to)?.data
+      return { ok: true, text: `Relayed ${word.id} to ${titleOf(board, to)} as ${r.mail.id}, marked as the owner's exact words. ${deliveryNote(t && { status: t.status, statusDetail: t.statusDetail, engine: t.engine, running: Boolean(t.ptyAlive) }, hasInbox(to))}` }
     },
     listAgents: () => board.snapshot(),
     readOutput: (nodeId, lines) => (board.nodes.has(nodeId) ? tailLines(board.getOutput(nodeId), lines) : null),
@@ -1127,6 +1166,7 @@ function answerDecision(s: WindowSession, id: string, answer: unknown, note: unk
   if (!r.ok) return r
   const d = r.decision
   s.autonomy.noteDecision(d.card, d.title, `answered (${d.id}) by ${by}: ${d.answer}${d.note ? ` — ${d.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`)
+  const forWarning = tellForCard(s, d)
   // a fresh-start question is Ouroboros's own: the card never asked it, so it is not told the answer
   if (s.relay?.owns(d.id)) {
     s.relay.answered(d.id, d.answer)
@@ -1134,10 +1174,19 @@ function answerDecision(s: WindowSession, id: string, answer: unknown, note: unk
   }
   if (r.waited) {
     watchHandedAnswer(s, d)
-    return { ok: true }
+    return forWarning ? { ok: true, warning: forWarning } : { ok: true }
   }
   const m = s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
-  return m.ok ? { ok: true } : { ok: true, warning: `answered, but the card was not told: ${m.error}` }
+  const warning = [m.ok ? '' : `answered, but the card was not told: ${m.error}`, forWarning].filter(Boolean).join(' ')
+  return warning ? { ok: true, warning } : { ok: true }
+}
+
+/** A question asked for another card (ask_owner for_card): that card hears the owner's answer from the owner. */
+function tellForCard(s: WindowSession, d: Decision): string | undefined {
+  if (!d.forCard || d.forCard === d.card) return undefined
+  if (!s.board.nodes.has(d.forCard)) return `the card it was asked for (${d.forTitle ?? d.forCard}) is gone`
+  const m = s.mail.send({ from: OWNER, to: d.forCard, body: decisionForMessage(d), kind: 'note' }, mailTopology(s.board))
+  return m.ok ? undefined : `${d.forTitle ?? d.forCard} was not told: ${m.error}`
 }
 
 /** The card an owner action is answered to: the card that asked, else the task's owner, else the Conductor. */
@@ -1229,6 +1278,8 @@ export function createPhone(ctx: MainContext): PhoneServer {
       const n = s?.board.nodes.get(id)
       if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
       if (n.data.status === 'needs-you') return { ok: false, error: 'the card is waiting on a prompt: answer it first' }
+      // the owner wrote it on their paired phone: their own words once the card submits it
+      if (typeof text === 'string') ownerWords.sent(id, text, 'phone')
       return sendPrompt(ctx, s, id, text) ? { ok: true } : { ok: false, error: 'not delivered (the card is not running, or the run does not allow it)' }
     },
     answer: (id, key, promptAt) => {
@@ -1403,7 +1454,7 @@ export function createOuro(ctx: MainContext): Ouro {
         for (const a of w.gate.pending()) needs.push({ ref: `${w.id}-${a.id}`, kind: 'approval', title: a.title, text: a.command })
         for (const t of w.ledger.data.tasks) {
           const need = ownerNeed(t)
-          if (need) needs.push({ ref: `${w.id}-${t.id}`, kind: need.kind === 'approve' ? 'task-approve' : need.kind === 'do' ? 'task-do' : 'task-either', title: `${t.id} ${t.title}`, text: need.ask, shownAt: t.updatedAt })
+          if (need) needs.push({ ref: `${w.id}-${t.id}`, kind: need.kind === 'approve' ? 'task-approve' : need.kind === 'do' ? 'task-do' : 'task-either', title: `${t.id} ${t.title}`, text: need.limit ? `${need.ask} (spending up to ${need.limit})` : need.ask, shownAt: t.updatedAt })
         }
         for (const n of w.board.nodes.values()) {
           if (n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission')) needs.push({ ref: `${w.id}-P:${n.id}`, kind: 'permission', title: n.data.title, text: n.data.statusDetail ?? '' })
@@ -2324,6 +2375,7 @@ export function createSession(ctx: MainContext, win: BrowserWindow, board: Board
     s.autonomy.noteDecision(d.card, d.title, `expired (${d.id})`)
     if (s.relay?.owns(d.id)) return s.relay.answered(d.id, undefined)
     s.mail.send({ from: OWNER, to: d.card, body: decisionMessage(d), kind: 'note' }, mailTopology(s.board))
+    tellForCard(s, d)
   })
   installWakeDelivery(ctx, s)
   // board mail wakes an asleep card; once it is up (idle) the nudge below hands it the mail
@@ -2353,6 +2405,11 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
     handedAnswers.delete(nodeId)
+  }
+  // a prompt the owner typed or sent into this card is kept as their word (a card may relay it, exactly as written)
+  if (event.hook_event_name === 'UserPromptSubmit' && !event.agent_id && (s.board.nodes.get(nodeId)?.data.engine ?? 'claude') === 'claude') {
+    const w = ownerWords.submitted(nodeId, event.prompt)
+    if (w) log(`owner words: ${w.id} kept for ${nodeId} (${w.via}, ${w.text.length} chars)`)
   }
   const reply = mailReply(s, nodeId, event)
   // a Stop that mail turned into another round is not the end of the turn: no "done", no handoff, no report
@@ -2797,7 +2854,20 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.on(IPC.ptyWrite, (_e, nodeId: string, data: string) => {
     if (typeof data === 'string' && isInterruptKey(data)) watchInterrupt(ctx, nodeId)
     lastInputAt.set(nodeId, Date.now())
+    // written by the app, not typed: the line on the card's keyboard is no longer known
+    if (typeof nodeId === 'string') ownerWords.untracked(nodeId)
     void ptys.write(nodeId, data)
+  })
+  // the owner's keys on a card's terminal: written the same way, and read for the line they type (their own words)
+  ipcMain.on(IPC.ptyType, (_e, nodeId: string, data: string) => {
+    if (typeof nodeId !== 'string' || typeof data !== 'string') return
+    if (isInterruptKey(data)) watchInterrupt(ctx, nodeId)
+    lastInputAt.set(nodeId, Date.now())
+    ownerWords.keys(nodeId, data)
+    void ptys.write(nodeId, data)
+  })
+  ipcMain.on(IPC.ptyOwnerSaid, (_e, nodeId: string, text: string) => {
+    if (typeof nodeId === 'string' && typeof text === 'string') ownerWords.sent(nodeId, text, 'composer')
   })
   ipcMain.on(IPC.ptyResize, (_e, nodeId: string, cols: number, rows: number) => ptys.resize(nodeId, cols, rows))
   ipcMain.handle(IPC.ptyKill, (e, nodeId: string) => {
@@ -2979,6 +3049,8 @@ export function registerIpc(ctx: MainContext): void {
     s?.routines.load(routinesFile(app.getPath('userData'), projectRoot))
     s?.gate.load(auditFile(app.getPath('userData'), projectRoot))
     for (const d of s?.decisions.load() ?? []) s?.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): another project was opened`)
+    // the owner's words belong to the cards they were typed into, in the session that was open: a reopened board starts with none
+    for (const id of [...(s?.board.nodes.keys() ?? []), ...(workspace?.nodes ?? []).map((n) => n.id)]) if (typeof id === 'string') ownerWords.forget(id)
     // check() never throws: anything unexpected holds every card
     const held: HeldCard[] = read ? ctx.boardTrust.check(projectRoot, read.text, known) : []
     // tasks from a board this app never wrote (a cloned repo) or one changed behind its back go to Notion only once they change here

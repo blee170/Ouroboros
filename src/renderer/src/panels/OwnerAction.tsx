@@ -49,6 +49,11 @@ export function OwnerActionBox({ task, cardTitle }: { task: Task; cardTitle?: st
         {cardTitle && <span className="muted"> · asked by {cardTitle}</span>}
       </div>
       <div className="owner-action-ask">{need.ask}</div>
+      {need.limit && (
+        <div className="owner-action-check">
+          <span className="owner-action-label">Approving also allows spending up to</span> {need.limit}
+        </div>
+      )}
       {need.steps.length > 0 && (
         <>
           <div className="owner-action-label">{doIt ? 'What to do' : 'What happens once you approve'}</div>

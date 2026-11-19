@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { ackMail, deliveryBatch, EMPTY_MAIL, inbox, markDelivered, pruneMail, sanitizeMail, sendMail, undelivered, type Mail, type MailData, type MailResult, type MailTopology } from '@shared/mail'
+import { ackMail, deliveryBatch, EMPTY_MAIL, inbox, markDelivered, pruneMail, sanitizeMail, sendMail, undelivered, type Mail, type MailData, type MailRelay, type MailResult, type MailTopology } from '@shared/mail'
 
 const SAVE_DELAY_MS = 300
 
@@ -54,7 +54,7 @@ export class Mailbox extends EventEmitter {
     this.emit('change', this.data.messages)
   }
 
-  send(input: { from: string; to: string; body: string; kind?: string; replyTo?: string }, topo: MailTopology, now = Date.now()): MailResult {
+  send(input: { from: string; to: string; body: string; kind?: string; replyTo?: string; relay?: MailRelay }, topo: MailTopology, now = Date.now()): MailResult {
     if (!this.file) return { ok: false, error: 'no project open' }
     const r = sendMail(this.data, input, now, topo)
     if (r.ok) {

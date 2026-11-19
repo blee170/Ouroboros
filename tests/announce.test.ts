@@ -3,8 +3,8 @@ import { BoardDone, Burst, MIN_TURN_MS, announceSettings, firstLine, langFor, ow
 
 describe('announce settings', () => {
   it('defaults to conductor replies, decisions and reports only, toast and voice on', () => {
-    expect(announceSettings({})).toEqual({ target: 'conductor', toast: true, voice: true, mode: 'important' })
-    expect(announceSettings({ announce: 'all', announceToast: false, announceVoice: false, announceMode: 'every' })).toEqual({ target: 'all', toast: false, voice: false, mode: 'every' })
+    expect(announceSettings({})).toEqual({ target: 'conductor', toast: true, voice: true, mode: 'important', readAloud: true })
+    expect(announceSettings({ announce: 'all', announceToast: false, announceVoice: false, announceMode: 'every', announceReadAloud: false })).toEqual({ target: 'all', toast: false, voice: false, mode: 'every', readAloud: false })
   })
 })
 

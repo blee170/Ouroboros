@@ -12,6 +12,7 @@ import { StateGlyph } from '@/lib/StateGlyph'
 import { kindIcon } from '@/lib/cardKinds'
 import { setDragShield } from '@/lib/dragShield'
 import { useVoice } from '@/voice/useVoice'
+import { useReadAloud } from '@/voice/useReadAloud'
 import { voiceSettings, VOICE_LIMITS } from '@shared/voice'
 
 const WIDTH_KEY = 'ouroboros.sidebarWidth'
@@ -216,6 +217,17 @@ export function Sidebar() {
     const watched = document.hasFocus() && !document.hidden
     if (autoSend && targets.length && (!fromWake || watched)) setCountdown({ until: Date.now() + VOICE_LIMITS.autoSendMs, text: next })
     else inputRef.current?.focus()
+  })
+  // a decision read out on request: the spoken, confirmed answer goes to that card as the owner's words
+  useReadAloud(voice.ask, (nodeId, said) => {
+    const n = useBoard.getState().nodes.find((x) => x.id === nodeId)
+    if (!n || n.data.kind === 'external') return 'gone'
+    // the owner answered on screen meanwhile, or the card moved on: the spoken answer is not typed into a turn
+    if (n.data.status === 'working' || n.data.status === 'needs-you') return 'busy'
+    window.ouroboros.pty.ownerSaid(n.id, said)
+    if (n.data.asleep === true) void window.ouroboros.board.wake(n.id, said)
+    else typePrompt(n.id, said)
+    return 'sent'
   })
   useEffect(() => {
     if (!countdown) return

@@ -360,7 +360,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   </select>
                 </div>
                 <div className="hint">
-                  Decisions and reports: a reply ending in an OWNER: DECIDE or OWNER: REPORT line (the Conductor is told to add one), a report link, or a task blocked on your approval. Every reply: any turn of 10 s or more, and "all cards have finished". A card waiting on you is always announced; the reply itself is never read out.
+                  Decisions and reports: a reply ending in an OWNER: DECIDE or OWNER: REPORT line (the Conductor is told to add one), a report link, or a task blocked on your approval. Every reply: any turn of 10 s or more, and "all cards have finished". A card waiting on you is always announced; the reply itself is read out only when you say yes (below).
                 </div>
               </label>
               <label className="check">
@@ -372,6 +372,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   <Icon name="volume" size={13} /> Test
                 </button>
               </label>
+              <label className="check">
+                <input type="checkbox" checked={announce.readAloud} disabled={!announce.voice} onChange={(e) => void setSettings({ announceReadAloud: e.target.checked })} /> After a decision, ask &quot;Shall I read it?&quot; and listen
+              </label>
+              <div className="hint">
+                Needs voice input on (Voice below). Say yes and the end of the reply is read out; then say an answer, hear it read back, and say yes to send it to that card. Nothing is read or sent without a spoken yes.
+              </div>
               <label className="field">
                 <span>Voice engine</span>
                 <div className="ctl">

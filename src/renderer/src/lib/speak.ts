@@ -25,16 +25,27 @@ export function voiceFor(lang: AnnounceLang): SpeechSynthesisVoice | undefined {
   return voices.find((v) => want.test(v.lang) && v.default) ?? voices.find((v) => want.test(v.lang))
 }
 
-/** Windows voice; a Korean sentence falls back to the English one when no Korean voice is installed. */
-function speakWindows(p: AnnouncePayload): void {
+/**
+ * Windows voice; a Korean sentence falls back to the English one when no Korean voice is installed. Resolves when
+ * it has been said, or after a watchdog (Chromium does not always fire `end`).
+ */
+function speakWindows(text: (lang: AnnounceLang) => string, want: AnnounceLang): Promise<void> {
   const synth = window.speechSynthesis
-  if (!synth) return
-  const lang: AnnounceLang = p.lang === 'ko' && !voiceFor('ko') ? 'en' : p.lang
-  const u = new SpeechSynthesisUtterance(phrase(p, lang))
+  if (!synth) return Promise.resolve()
+  const lang: AnnounceLang = want === 'ko' && !voiceFor('ko') ? 'en' : want
+  const said = text(lang)
+  const u = new SpeechSynthesisUtterance(said)
   const voice = voiceFor(lang)
   if (voice) u.voice = voice
   u.lang = lang === 'ko' ? 'ko-KR' : 'en-US'
-  synth.speak(u)
+  return new Promise((resolve) => {
+    const watchdog = setTimeout(resolve, 5000 + said.length * 150)
+    u.onend = u.onerror = () => {
+      clearTimeout(watchdog)
+      resolve()
+    }
+    synth.speak(u)
+  })
 }
 
 let queue: Promise<void> = Promise.resolve()
@@ -66,25 +77,69 @@ function play(bytes: Uint8Array, mime: string): Promise<void> {
   return turn
 }
 
-/**
- * Say the announcement. Resolves with the engine's error when the chosen voice engine failed (the Windows
- * voice spoke instead), else with the engine's note when it has one (Voicebox's own Autoplay is on), else {}.
- */
-export async function speak(p: AnnouncePayload): Promise<{ error?: string; note?: string }> {
+/** Say any text: the chosen engine, else the Windows voice. Resolves once it has been said. */
+async function say(text: (lang: AnnounceLang) => string, lang: AnnounceLang): Promise<{ error?: string; note?: string }> {
   const tts = ttsSettings(useBoard.getState().settings)
   if (tts.engine === 'windows') {
-    speakWindows(p)
+    await speakWindows(text, lang)
     return {}
   }
   try {
-    const r = await window.ouroboros.tts.synthesize(phrase(p))
+    const r = await window.ouroboros.tts.synthesize(text(lang))
     if (!r.ok) throw new Error(r.error)
     await play(r.bytes, r.mime)
     return r.note ? { note: r.note } : {}
   } catch (err) {
     const m = (err as Error).message
     console.warn(`[tts] ${tts.engine}: ${m} — Windows voice instead`)
-    speakWindows(p)
+    await speakWindows(text, lang)
     return { error: m }
   }
+}
+
+/** Everything asked to be said (announcements, read-alouds), one after another; settles when the last one has. */
+let speaking: Promise<unknown> = Promise.resolve()
+
+function queued<T>(job: () => Promise<T>): Promise<T> {
+  const turn = speaking.then(job, job)
+  speaking = turn.catch(() => undefined)
+  return turn
+}
+
+/** Resolves once everything asked to be said so far has been said. */
+export function speechSettled(): Promise<void> {
+  return speaking.then(
+    () => undefined,
+    () => undefined
+  )
+}
+
+/**
+ * Say the announcement. Resolves with the engine's error when the chosen voice engine failed (the Windows
+ * voice spoke instead), else with the engine's note when it has one (Voicebox's own Autoplay is on), else {}.
+ */
+export async function speak(p: AnnouncePayload): Promise<{ error?: string; note?: string }> {
+  // a read-aloud exchange is listening: another card's announcement waits, so the mic never takes it for an answer
+  while (held) await held
+  return queued(() => say((lang) => phrase(p, lang), p.lang))
+}
+
+let held: Promise<void> | null = null
+
+/** Hold announcements back while a read-aloud exchange runs; the returned function lets them go. */
+export function holdAnnouncements(): () => void {
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  held = gate
+  return () => {
+    if (held === gate) held = null
+    release()
+  }
+}
+
+/** Say one sentence of the read-aloud exchange (the question, the decision itself, the read-back), in turn. */
+export function speakText(text: string, lang: AnnounceLang): Promise<void> {
+  return queued(() => say(() => text, lang)).then(() => undefined)
 }

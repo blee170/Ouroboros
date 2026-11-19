@@ -20,6 +20,10 @@ export interface AnnouncePayload {
   kind: AnnounceKind
   title: string
   lang: AnnounceLang
+  /** the card it is about (a decision: where a spoken answer goes) */
+  nodeId?: string
+  /** a decision: what is read out if the owner says yes to "shall I read it?" (readAloudText) */
+  read?: string
 }
 
 /** A turn shorter than this is a quick exchange, not finished work: nothing is announced. */
@@ -53,10 +57,12 @@ export interface AnnounceSettings {
   toast: boolean
   voice: boolean
   mode: AnnounceMode
+  /** after a spoken decision, ask "shall I read it?" and listen for the answer (needs voice input on) */
+  readAloud: boolean
 }
 
-export function announceSettings(s: Pick<AppSettings, 'announce' | 'announceToast' | 'announceVoice' | 'announceMode'>): AnnounceSettings {
-  return { target: s.announce ?? 'conductor', toast: s.announceToast ?? true, voice: s.announceVoice ?? true, mode: s.announceMode === 'every' ? 'every' : 'important' }
+export function announceSettings(s: Pick<AppSettings, 'announce' | 'announceToast' | 'announceVoice' | 'announceMode' | 'announceReadAloud'>): AnnounceSettings {
+  return { target: s.announce ?? 'conductor', toast: s.announceToast ?? true, voice: s.announceVoice ?? true, mode: s.announceMode === 'every' ? 'every' : 'important', readAloud: s.announceReadAloud ?? true }
 }
 
 /**
@@ -159,5 +165,92 @@ export class BoardDone {
     const due = this.stops >= 2 && !this.lastAnnounced
     this.stops = 0
     return due
+  }
+}
+
+/** The most a decision read-out says; longer, it keeps the end (where the question is) and says the rest is on screen. */
+export const READ_ALOUD_MAX = 600
+
+/**
+ * What is read out when the owner says yes to "shall I read it?": the end of the reply, where a Conductor puts
+ * the question and its options, as plain speech. Code blocks, links and markdown are dropped (a link is said as
+ * "link"); the OWNER: DECIDE label goes, its question stays.
+ */
+export function readAloudText(reply: string, lang: AnnounceLang, max = READ_ALOUD_MAX): string {
+  const noCode = reply.replace(/```[\s\S]*?(```|$)/g, '\n')
+  const lines = noCode
+    .split(/\r?\n/)
+    .map((l) =>
+      l
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/https?:\/\/\S+/g, lang === 'ko' ? '링크' : 'link')
+        .replace(/^[\s>#*•-]*(?:\d+[.)]\s*)?[*_`]*OWNER[*_`]*\s*[:：][\s*_`]*(?:DECIDE|DECISION|REPORT)\b[\s*_`]*[-—–:：]?\s*/i, '')
+        .replace(/^[\s>#•-]+/, '')
+        .replace(/[*_`|]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+    .filter((l) => l && !/^[-=:\s]+$/.test(l))
+  // whole lines from the end while they fit, so the question is never cut off
+  const kept: string[] = []
+  let size = 0
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i]
+    if (size + l.length + 1 > max) {
+      if (!kept.length) kept.push(`…${l.slice(-(max - 1))}`)
+      break
+    }
+    kept.unshift(l)
+    size += l.length + 1
+  }
+  const text = kept.join('\n')
+  const cut = kept.length < lines.length || kept[0]?.startsWith('…') === true
+  if (!text) return ''
+  return cut ? `${lang === 'ko' ? '앞부분은 화면에 있어요. ' : 'The start is on screen. '}${text}` : text
+}
+
+const NO_EN = /(^|\s)(no|nope|nah|don'?t|do not|stop|skip|later|cancel|not now|wait|hold on)(\s|$)/
+const NO_KO = /(아니|아뇨|됐어|됐습니다|괜찮|나중|하지 ?마|읽지 ?마|보내지 ?마|그만|취소|싫어|잠깐|(^|\s)안(\s|$)|(^|\s)안 )/
+const YES_EN = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|read it|send it|do it)( (yes|yeah|sure|ok|okay|please|it|now))?$/
+const YES_KO = /^((응|네|예|그래|좋아|오케이|ㅇㅇ)(요)?( (읽어|보내|해)(줘|주세요|요)?)?|(읽어|보내)(줘|주세요)?)$/
+
+/**
+ * A spoken yes or no to "shall I read it?" / "send it?", or undefined when it is neither (then nothing is read or
+ * sent). Strict on purpose: a yes is a short reply that is only a yes ("네", "응 읽어줘", "yes", "go ahead"), never a
+ * sentence that happens to hold a yes word ("Please check the report", "안 보내", "어 잠깐만"), and a question
+ * ("그래?") is neither.
+ */
+export function yesNo(said: string): 'yes' | 'no' | undefined {
+  if (/[?？]/.test(said)) return undefined
+  const t = said.toLowerCase().replace(/[.,!~…。"'“”]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!t) return undefined
+  if (NO_EN.test(t) || NO_KO.test(t)) return 'no'
+  if (t.split(' ').length > 4) return undefined
+  return YES_EN.test(t) || YES_KO.test(t) ? 'yes' : undefined
+}
+
+export type ReadAloudStep = 'offer' | 'listen-answer' | 'confirm' | 'sent' | 'cancelled' | 'unclear' | 'gone' | 'busy'
+
+/** The sentences of the read-aloud exchange. `text` is the answer read back (confirm) or the card's title (gone). */
+export function readAloudLine(step: ReadAloudStep, lang: AnnounceLang, text = ''): string {
+  const ko = lang === 'ko'
+  switch (step) {
+    case 'offer':
+      return ko ? '내용을 읽어드릴까요?' : 'Shall I read it to you?'
+    case 'listen-answer':
+      return ko ? '답하실 말씀이 있으면 지금 말씀하세요.' : 'If you want to answer, say it now.'
+    case 'confirm':
+      return ko ? `"${text}" 이렇게 보낼까요?` : `Send "${text}"?`
+    case 'sent':
+      return ko ? '보냈어요.' : 'Sent.'
+    case 'cancelled':
+      return ko ? '보내지 않았어요.' : 'Not sent.'
+    case 'unclear':
+      return ko ? '잘 못 알아들었어요. 화면에서 확인해 주세요.' : 'I did not catch that. Please check the screen.'
+    case 'busy':
+      return ko ? `${text} 카드가 이미 다른 일을 하고 있어서 안 보냈어요. 화면에서 확인해 주세요.` : `${text} is busy with something else; not sent. Please check the screen.`
+    case 'gone':
+      return ko ? `${text} 카드가 없어서 못 보냈어요.` : `${text} is gone; not sent.`
   }
 }

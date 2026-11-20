@@ -4,6 +4,12 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A start that fails no longer leaves an app that cannot be opened.** Reported by another user: after an update, clicking the icon did nothing. If anything threw before the first window, the process stayed alive with no window and no tray icon and kept the single-instance lock, and it was not yet listening for a second launch, so every later click ended at once with nothing on screen. Now a failed start shows "Ouroboros could not start" with the error and the path of `main.log`, then closes, so the next launch works. A second launch that finds a start still without a window after 20 seconds asks "Keep waiting / Quit Ouroboros". An error after the window exists is only logged, as before.
+  - Checked: typecheck, build, vitest 1032 passed before the last edit (the question box made asynchronous after an Opus review: the launch that triggers it waits for the handler to return); typecheck, build and the new test again after it. **Not verified**: the cause on the reporting machine (no log from it yet; the review found no start step that throws on a broken settings file, so this may be a safety net and not the cause), and the two boxes in a built app.
+
 ## [0.20.4] — 2026-11-19
 
 ### Added

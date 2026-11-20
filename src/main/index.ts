@@ -1,6 +1,7 @@
-import { BrowserWindow, Menu, Notification, Tray, app, crashReporter, globalShortcut, nativeImage, session, shell } from 'electron'
+import { BrowserWindow, Menu, Notification, Tray, app, crashReporter, dialog, globalShortcut, nativeImage, session, shell } from 'electron'
 import { whisper } from './stt'
-import { initDiagnostics, log } from './diagnostics'
+import { initDiagnostics, log, logPath } from './diagnostics'
+import { secondLaunchBeforeWindow, startupFailureText, stillStartingText } from './startup'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -41,6 +42,49 @@ import { homedir } from 'node:os'
 const isDev = !app.isPackaged
 let tray: Tray | null = null
 let quitting = false
+const startedAt = Date.now()
+/** Set once the first window exists: until then a failed or stuck start has nothing on screen. */
+let started: MainContext | undefined
+let askingToQuit = false
+
+/** A launch while this one runs: show it, or, before its first window, offer a way out of a start that hangs. */
+function onSecondInstance(argv: string[], cwd: string): void {
+  if (started) {
+    // `Ouroboros.exe <folder>` while running: open that folder in its own window.
+    const root = projectFromArgv(argv, cwd, app.isPackaged)
+    if (root) started.openProjectWindow(root)
+    else showAll(started)
+    return
+  }
+  const ms = Date.now() - startedAt
+  log(`second launch ${Math.round(ms / 1000)} s into a start with no window yet`)
+  if (askingToQuit || !app.isReady() || secondLaunchBeforeWindow(ms) === 'wait') return
+  askingToQuit = true
+  const text = stillStartingText(ms, logPath())
+  // not the Sync box: the launch that got us here waits for this handler to return, and a start that is only slow
+  // must be able to carry on behind the question
+  void dialog
+    .showMessageBox({ type: 'warning', title: text.title, message: text.title, detail: text.body, buttons: ['Keep waiting', 'Quit Ouroboros'], defaultId: 0, cancelId: 0, noLink: true })
+    .then(({ response }) => {
+      askingToQuit = false
+      if (response !== 1 || started) return
+      log('start abandoned by the owner: no window yet')
+      app.exit(1)
+    })
+    .catch((err: Error) => {
+      askingToQuit = false
+      log(`still-starting question failed: ${err.message}`)
+    })
+}
+
+/** A start that threw: before the first window the owner is told and the app ends, so the next launch can work. */
+function startupFailed(err: unknown): void {
+  log(`startup failed: ${(err as Error)?.stack ?? String(err)}`)
+  if (started) return
+  const text = startupFailureText(err, logPath())
+  dialog.showErrorBox(text.title, text.body)
+  app.exit(1)
+}
 
 function iconPath(): string {
   const packaged = join(process.resourcesPath ?? '', 'icon.png')
@@ -164,6 +208,7 @@ async function main(): Promise<void> {
     app.quit()
     return
   }
+  app.on('second-instance', (_e, argv, cwd) => onSecondInstance(argv, cwd))
   // Separate ids: toasts left in Action Center by a dev run must not COM-activate node_modules\electron.exe later.
   app.setAppUserModelId(isDev ? 'dev.blee170.ouroboros.dev' : 'dev.blee170.ouroboros')
   // Electron's default menu keeps Ctrl+R (reloads the page; it reattaches to the running cards) and Ctrl+W live even
@@ -322,16 +367,11 @@ async function main(): Promise<void> {
     })
 
   createWindow(ctx, initialProjectArg())
+  started = ctx
   createTray(ctx)
   // a dev build has no section of its own in the CHANGELOG and must not publish the installed version's notes
   if (app.isPackaged) void publishReleaseNotes(ctx, app.getVersion()).catch((err) => log(`[notion] release notes: ${(err as Error).message}`))
 
-  app.on('second-instance', (_e, argv, cwd) => {
-    // `Ouroboros.exe <folder>` while running: open that folder in its own window.
-    const root = projectFromArgv(argv, cwd, app.isPackaged)
-    if (root) ctx.openProjectWindow(root)
-    else showAll(ctx)
-  })
   app.on('activate', () => {
     if (ctx.windows.size === 0) createWindow(ctx)
   })
@@ -353,4 +393,4 @@ async function main(): Promise<void> {
   })
 }
 
-void main()
+void main().catch(startupFailed)

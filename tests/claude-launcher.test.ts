@@ -183,3 +183,10 @@ describe('card tokens at launch', () => {
   })
 })
 })
+
+describe('the Conductor prompt names its tools the way Claude Code knows them', () => {
+  it('says the full name carries the server prefix, so a bare create_agent is not tried first', () => {
+    expect(CONDUCTOR_SYSTEM_PROMPT).toContain('mcp__ouroboros__create_agent, not create_agent')
+    expect(CONDUCTOR_SYSTEM_PROMPT.indexOf('mcp__ouroboros__create_agent')).toBeLessThan(CONDUCTOR_SYSTEM_PROMPT.indexOf('- list_agents'))
+  })
+})

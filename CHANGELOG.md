@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.20.6] — 2026-11-22
 
 ### Fixed
 - **The Conductor no longer tries a bare tool name first.** Its prompt listed the board tools by short name (`create_agent`), and a card sometimes called exactly that and got "No such tool available" before retrying. The prompt now says the full name carries the server prefix (`mcp__ouroboros__create_agent`) and to load deferred tools with ToolSearch first.

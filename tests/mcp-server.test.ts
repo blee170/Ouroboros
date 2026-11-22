@@ -60,6 +60,12 @@ describe('bundled mcp server', () => {
     await client.connect(transport)
     const tools = await client.listTools()
     expect(tools.tools.map((t) => t.name).sort()).toEqual(['ack', 'ask_owner', 'browser_bookmarks', 'browser_click', 'browser_links', 'browser_list', 'browser_navigate', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'check_inbox', 'connect_agents', 'create_agent', 'create_checkpoint', 'delete_checkpoint', 'fire_handoff', 'get_changes', 'handoff_to_grok_bot', 'list_agents', 'list_checkpoints', 'list_grok_bots', 'list_handoffs', 'list_roles', 'owner_words', 'post_discord', 'read_output', 'relay_owner_words', 'remove_agent', 'remove_handoff', 'restore_checkpoint', 'send_message', 'send_prompt', 'set_board_tools', 'set_note', 'task_claim', 'task_create', 'task_list', 'task_update', 'tidy_board', 'wait_for_agents'])
+    // the title limit is in the schema the model reads, so it is not found out by a refused call
+    for (const name of ['task_create', 'task_update']) {
+      const props = (tools.tools.find((t) => t.name === name)!.inputSchema as { properties: Record<string, { description?: string; maxLength?: number }> }).properties
+      expect(props.title.maxLength).toBe(120)
+      expect(props.title.description).toContain('120 characters')
+    }
 
     const list = await client.callTool({ name: 'list_agents', arguments: {} })
     const listText = (list.content as Array<{ text: string }>)[0].text

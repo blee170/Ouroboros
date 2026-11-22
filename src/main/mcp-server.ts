@@ -417,7 +417,7 @@ server.registerTool(
     description:
       'The task ledger is the durable list of work on this board: one task per stage or work item, with dependencies. Create them at intake, before dispatching. Returns the new task (T1, T2, …). deps = tasks that must be done before this one can be claimed; parent groups sub-tasks; owner = agent_id to claim it at once.',
     inputSchema: {
-      title: z.string().max(120),
+      title: z.string().max(120).describe('one short line, at most 120 characters; the rest goes in detail'),
       detail: z.string().max(2000).optional().describe('what to do, for the card that takes it'),
       parent: TASK_ID.optional(),
       deps: z.array(TASK_ID).max(50).optional(),
@@ -449,7 +449,7 @@ server.registerTool(
       state: TASK_STATE.optional(),
       result: z.string().max(2000).optional(),
       reason: z.string().max(300).optional(),
-      title: z.string().max(120).optional(),
+      title: z.string().max(120).optional().describe('at most 120 characters'),
       detail: z.string().max(2000).optional(),
       deps: z.array(TASK_ID).max(50).optional(),
       parent: TASK_ID.nullable().optional(),

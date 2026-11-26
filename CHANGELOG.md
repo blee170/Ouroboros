@@ -4,7 +4,7 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
-## [Unreleased]
+## [0.20.8] — 2026-11-26
 
 ### Fixed
 - **A Claude card whose turn failed says why.** Claude Code's StopFailure hook carries a code in `error` (`rate_limit`, `server_error`, `authentication_failed`, …), the words it showed in `last_assistant_message` and sometimes the API's raw message in `error_details`. It has no `message`, which is the field Ouroboros read. So every failed turn of a Claude card showed "failed: turn failed (API error)" whatever the cause: a rate limit, an overloaded API and a rejected key looked the same on the card, in the toast, in Today and in an Autonomous run's report. The card now shows the words Claude Code showed, then the raw message, then the code. The other engines' hooks, which do send `message`, are read as before, and `npm run compat` now checks that the installed Claude Code still has `error_details`. An Autonomous run still sends no usage-limit continue to a Claude card, and that is now on purpose: Claude Code can wait for a usage limit to reset and continue by itself, and a prompt submitted during that wait cancels it.

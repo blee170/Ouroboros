@@ -14,6 +14,7 @@ import { normalizeEffort, normalizeEngine, type AppSettings, type ClaudeOptions,
 import { DEFAULT_HANDOFF_TEMPLATE, REPORT_TEMPLATE, selectHandoffs, renderTemplate, toPastePayload } from '@shared/handoff'
 import { stripAnsi, tailLines } from '@shared/ansi'
 import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf } from '@shared/status'
+import { feedShellWatch, shellIsBack, type ShellWatch } from '@shared/shell-back'
 import { BoardDone, Burst, NEEDS_YOU_REPEAT_MS, SETTLE_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, readAloudText, stopAnnouncement, type AnnouncePayload } from '@shared/announce'
 import type { Board, NodeMeta } from './board'
 import { findBriefUrl, urlKey } from './briefs'
@@ -237,6 +238,8 @@ const EXIT_CHECK_MS = 6000
 /** the first output of each card's latest launch (its own buffer: the board's is capped and trimmed from the front) */
 const launchOut = new Map<string, string>()
 const LAUNCH_OUT_CAP = 16_000
+/** agent cards' output after their launch, read for the shell's own prompt: a CLI that exited leaves the card on it */
+const shellWatch = new Map<string, ShellWatch>()
 /** cards whose latest launch never came up (the CLI is missing): a prompt would land in a bare shell */
 const launchFailed = new Set<string>()
 /** the owner's own words per card (what a card may relay as the owner's); in memory only */
@@ -265,6 +268,12 @@ function viewing(s: WindowSession, nodeId: string): boolean {
 
 /** Claude cards' inboxes, registered by their board MCP server (in memory only: the token never reaches a file or the log). */
 const inboxes = new Map<string, InboxAddress>()
+/**
+ * The latest other inbox a card offered while it had one, used only once the registered one is gone. A card can start
+ * two board servers (seen at launch): the first registers, the second is refused, and when the first one's process is
+ * gone the card's Claude Code still runs behind the second.
+ */
+const inboxReserve = new Map<string, InboxAddress>()
 /** Counts each card's launches: an answer about the inbox of the process a Restart replaced says nothing about the new one. */
 const launchGen = new Map<string, number>()
 
@@ -275,6 +284,7 @@ const launchGen = new Map<string, number>()
  */
 function forgetInbox(nodeId: string): void {
   inboxes.delete(nodeId)
+  inboxReserve.delete(nodeId)
   launchGen.set(nodeId, (launchGen.get(nodeId) ?? 0) + 1)
 }
 
@@ -285,8 +295,13 @@ export function registerInbox(s: WindowSession, nodeId: string, socket: unknown,
   if (token !== undefined && (typeof token !== 'string' || token.length > 512)) return { ok: false, error: 'bad inbox token' }
   // one inbox per process: a card cannot move its prompts to a pipe of its own making later (a failed push clears it)
   const had = inboxes.get(nodeId)
-  if (had && had.socket !== socket) return { ok: false, error: 'this card already has an inbox' }
+  if (had && had.socket !== socket) {
+    inboxReserve.set(nodeId, { socket, ...(token ? { token } : {}) })
+    log(`inbox: ${nodeId} offered a second inbox while it has one; kept in reserve`)
+    return { ok: false, error: 'this card already has an inbox' }
+  }
   inboxes.set(nodeId, { socket, ...(token ? { token } : {}) })
+  shellWatch.delete(nodeId)
   log(`inbox: ${nodeId} registered (text goes into its session, not its terminal)`)
   // Claude Code sends no SessionStart to an HTTP hook, and the ready text in the terminal can be missed: its board
   // server registering the inbox means the CLI is up
@@ -308,10 +323,24 @@ function pastePrompt(ctx: MainContext, nodeId: string, text: string): void {
 }
 
 /**
+ * The card's CLI has exited and its live process is its shell, where a prompt would run as a command: nothing is
+ * typed. Marked like a CLI that never started (a Restart, a hook or a new inbox clears it).
+ */
+function shellOnly(s: WindowSession, nodeId: string, seen: string): void {
+  const engine = s.board.nodes.get(nodeId)?.data.engine ?? 'claude'
+  const cli = engine === 'claude' ? 'Claude Code' : engine
+  launchFailed.add(nodeId)
+  dropWake(nodeId, `${cli} exited`)
+  log(`${seen}; the prompt is dropped, nothing typed`)
+  if (s.board.nodes.has(nodeId)) s.board.setStatus(nodeId, { status: 'needs-you', statusDetail: `failed: ${cli} is no longer running in this card (only its shell is). Restart the card.` })
+}
+
+/**
  * Give an agent card a prompt: into its Claude Code inbox when it registered one (a running turn takes it between
  * tool calls, an idle session starts a turn), else typed into its terminal (bracketed paste + Enter). An inbox that
  * fails is dropped and the text typed instead, unless nothing listens on it any more (Claude Code exited: the terminal
- * is then the card's shell, and nothing is typed). Command cards run their template.
+ * is then the card's shell, and nothing is typed) or the terminal shows the shell's own prompt. Command cards run
+ * their template.
  */
 export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, text: string): boolean {
   const asleep = s.board.nodes.get(nodeId)
@@ -347,25 +376,37 @@ export function sendPrompt(ctx: MainContext, s: WindowSession, nodeId: string, t
   const inbox = inboxes.get(nodeId)
   if (inbox) {
     const gen = launchGen.get(nodeId)
-    void deliverInbox(inbox, text).then((r) => {
-      if (r === 'ok') return
-      if (inboxes.get(nodeId) === inbox) inboxes.delete(nodeId)
-      if (!ctx.ptys.isAlive(nodeId)) return log(`inbox: ${nodeId} did not take the prompt and its process has exited; the prompt is dropped`)
-      // the card was restarted meanwhile: this answer is about the process it replaced, and the new one is still starting
-      if (launchGen.get(nodeId) !== gen) return log(`inbox: ${nodeId} was restarted before it took the prompt; the prompt is dropped`)
-      // nothing listens on the inbox any more: Claude Code exited and the live process is the card's shell, where the
-      // prompt would run as a command. Marked like a CLI that never started (a Restart, a hook or a new inbox clears it).
-      if (r === 'gone' && inboxes.get(nodeId) === undefined) {
-        launchFailed.add(nodeId)
-        dropWake(nodeId, 'Claude Code exited')
-        log(`inbox: ${nodeId} has no Claude Code behind it any more (its shell is still open); the prompt is dropped, nothing typed`)
-        if (s.board.nodes.has(nodeId)) s.board.setStatus(nodeId, { status: 'needs-you', statusDetail: 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.' })
-        return
-      }
-      log(`inbox: ${nodeId} did not take the prompt; typed into the terminal instead`)
-      pastePrompt(ctx, nodeId, text)
-    })
+    const push = (to: InboxAddress): void => {
+      void deliverInbox(to, text).then((r) => {
+        if (r === 'ok') return
+        if (inboxes.get(nodeId) === to) inboxes.delete(nodeId)
+        if (!ctx.ptys.isAlive(nodeId)) return log(`inbox: ${nodeId} did not take the prompt and its process has exited; the prompt is dropped`)
+        // the card was restarted meanwhile: this answer is about the process it replaced, and the new one is still starting
+        if (launchGen.get(nodeId) !== gen) return log(`inbox: ${nodeId} was restarted before it took the prompt; the prompt is dropped`)
+        if (r === 'gone' && inboxes.get(nodeId) === undefined) {
+          // the registered inbox was another process's: the card's Claude Code may run behind the one it offered later
+          const reserve = inboxReserve.get(nodeId)
+          if (reserve) {
+            inboxReserve.delete(nodeId)
+            inboxes.set(nodeId, reserve)
+            log(`inbox: ${nodeId} registered inbox was gone; its reserve inbox is used`)
+            return push(reserve)
+          }
+          // nothing listens on the inbox any more: Claude Code exited and the live process is the card's shell
+          return shellOnly(s, nodeId, `inbox: ${nodeId} has no Claude Code behind it any more (its shell is still open)`)
+        }
+        if (shellIsBack(shellWatch.get(nodeId))) return shellOnly(s, nodeId, `inbox: ${nodeId} did not take the prompt and its terminal shows the shell's own prompt`)
+        log(`inbox: ${nodeId} did not take the prompt; typed into the terminal instead`)
+        pastePrompt(ctx, nodeId, text)
+      })
+    }
+    push(inbox)
     return true
+  }
+  // the watch is fed only for agent cards: a terminal card is a shell by design
+  if (shellIsBack(shellWatch.get(nodeId))) {
+    shellOnly(s, nodeId, `prompt: ${nodeId} shows its shell's own prompt, its CLI has exited`)
+    return false
   }
   pastePrompt(ctx, nodeId, text)
   // Codex has no prompt-submitted hook; we know we just gave it work
@@ -596,6 +637,8 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   forgetMail(id)
   ownerWords.forget(id)
   inboxes.delete(id)
+  inboxReserve.delete(id)
+  shellWatch.delete(id)
   for (const d of s.decisions.withdraw(id)) s.autonomy.noteDecision(d.card, d.title, `withdrawn (${d.id}): the card was removed`)
   transcripts.delete(id)
   activities.delete(id)
@@ -2404,6 +2447,8 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   clearMailBlockWatch(nodeId)
   // a card that reports from its CLI is running: a "failed at launch" read from its output was wrong
   if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
+  // and so was a shell prompt read from its output (not after SessionEnd: the CLI is ending, its prompt may already show)
+  if (event.hook_event_name !== 'SessionEnd') shellWatch.delete(nodeId)
   trustAsked.delete(nodeId) // its hooks run: the trust question was answered
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
@@ -2706,6 +2751,22 @@ function checkInterrupt(s: WindowSession, nodeId: string, data: string): void {
   s.board.setStatus(nodeId, { status: 'idle', statusDetail: 'interrupted' })
 }
 
+/**
+ * Read an agent card's output for its shell's own prompt (sendPrompt then types nothing). A card still starting is the
+ * launch watch's, and what the process its launch replaced printed meanwhile is forgotten. The ready text means the CLI
+ * was started again by hand: what came before it no longer counts, and the chunk itself is read (a CLI's last frame
+ * and the prompt after it can arrive together).
+ */
+function noteCardOutput(s: WindowSession, nodeId: string, data: string): void {
+  const n = s.board.nodes.get(nodeId)
+  if (!n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return
+  if (n.data.status === 'starting') return void shellWatch.delete(nodeId)
+  if (detectClaudeReady(data)) shellWatch.delete(nodeId)
+  let w = shellWatch.get(nodeId)
+  if (!w) shellWatch.set(nodeId, (w = { tail: '', back: false }))
+  feedShellWatch(w, data, Date.now())
+}
+
 const HELD_ERROR = 'held: the board file was changed outside Ouroboros. Review the change in the banner above the board.'
 
 /** Process-wide IPC handlers; each one resolves the calling window's session from the sender. */
@@ -2722,6 +2783,7 @@ export function registerIpc(ctx: MainContext): void {
     checkInterrupt(s, nodeId, data)
     ptyOut.push(s, nodeId, data)
     watchCommandOutput(s, nodeId, data)
+    noteCardOutput(s, nodeId, data)
     const n = board.nodes.get(nodeId)
     // a card still answering its CLI's trust question is watched the same way: the answer makes it ready, or exits
     if (n && (n.data.kind === 'claude' || n.data.kind === 'conductor') && (n.data.status === 'starting' || trustAsked.has(nodeId))) {
@@ -2809,8 +2871,10 @@ export function registerIpc(ctx: MainContext): void {
     running.delete(nodeId)
     if (wakePrompts.delete(nodeId)) log(`sleep: ${nodeId} exited before it was up; the prompt it was woken with is dropped`)
     inboxes.delete(nodeId)
+    inboxReserve.delete(nodeId)
     transcripts.delete(nodeId)
     launchOut.delete(nodeId)
+    shellWatch.delete(nodeId)
     launchFailed.delete(nodeId)
     trustAsked.delete(nodeId)
     launchCommands.delete(nodeId)
@@ -2956,6 +3020,7 @@ export function registerIpc(ctx: MainContext): void {
       })
       ctx.windows.bindNode(opts.nodeId, s.id)
       launchOut.delete(opts.nodeId)
+      shellWatch.delete(opts.nodeId)
       launchFailed.delete(opts.nodeId)
       forgetInbox(opts.nodeId)
       trustAsked.delete(opts.nodeId) // a Restart (no pty exit event) asks again

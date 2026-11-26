@@ -6,6 +6,7 @@
  */
 import { Marked, type Token } from 'marked'
 import { stripAnsi } from './ansi'
+import { failureOf } from './status'
 import type { AgentEngine, AgentStatus, NodeKind } from './types'
 
 export type CardView = 'chat' | 'terminal'
@@ -266,9 +267,12 @@ export function confirmPending<P extends { text: string; at: number }>(pending: 
 }
 
 /** Pure: may the owner's prompt be typed into this card now? Typing into a card that asks a question would answer the question. */
-export function composerBlock(status: AgentStatus | undefined, ptyAlive: boolean | undefined): string | undefined {
+export function composerBlock(status: AgentStatus | undefined, ptyAlive: boolean | undefined, statusDetail?: string): string | undefined {
   if (status === 'ended' || ptyAlive === false) return 'The card is not running. Restart it, then send.'
   if (status === 'starting' || status === undefined) return 'The card is still starting. Send once it is ready.'
+  // a failed card asks nothing: say what failed instead of pointing at a question in its terminal
+  const failed = status === 'needs-you' ? failureOf(statusDetail) : undefined
+  if (failed) return `Not sent. ${failed}`
   if (status === 'needs-you') return 'The card is waiting on a question in its terminal. Answer it there first: a prompt typed now would be taken as the answer.'
   return undefined
 }

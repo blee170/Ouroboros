@@ -149,6 +149,13 @@ describe('the composer', () => {
     expect(composerBlock('ended', undefined)).toContain('not running')
     expect(composerBlock('idle', false)).toContain('not running')
   })
+  it('says what failed for a failed card, not that it is asking a question', () => {
+    const detail = 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.'
+    expect(composerBlock('needs-you', undefined, detail)).toBe('Not sent. Claude Code is no longer running in this card (only its shell is). Restart the card.')
+    // a question (a permission prompt) is still a question
+    expect(composerBlock('needs-you', undefined, 'permission: Bash')).toContain('Answer it there first')
+    expect(composerBlock('idle', undefined, detail)).toBeUndefined()
+  })
   it('confirms a sent prompt only from a prompt recorded after it was sent, one line per prompt', () => {
     const at = Date.parse('2026-11-05T10:00:00.000Z')
     const items: ChatItem[] = [{ type: 'user', id: 'u', at, text: 'fix   the\nmenu' }]

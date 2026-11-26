@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CHAT_LIMITS, composerBlock, confirmPending, pendingTool, splitReply, toolLabel, type ChatItem } from '@shared/chat'
 import { toPastePayload } from '@shared/handoff'
-import { STATUS_LABEL } from '@shared/status'
+import { STATUS_LABEL, failureOf } from '@shared/status'
 import { shownDetail } from '@shared/doing'
 import type { AgentStatus, NodeData } from '@shared/types'
 import { useChat } from '@/lib/useChat'
@@ -48,6 +48,8 @@ export function ChatView({ id, data, status, hidden, onShowTerminal }: { id: str
   }, [chat.items, pending.length])
   const statusNow = useRef(status)
   statusNow.current = status
+  const detailNow = useRef(data.statusDetail)
+  detailNow.current = data.statusDetail
   useEffect(() => {
     if (!pending.length) return
     const t = setInterval(() => setNow(Date.now()), 2000)
@@ -87,7 +89,7 @@ export function ChatView({ id, data, status, hidden, onShowTerminal }: { id: str
     setAway(!stick.current)
   }
 
-  const block = composerBlock(status, undefined)
+  const block = composerBlock(status, undefined, data.statusDetail)
   const send = (): void => {
     const body = text.trim()
     if (!body) return
@@ -98,11 +100,20 @@ export function ChatView({ id, data, status, hidden, onShowTerminal }: { id: str
     const api = window.ouroboros
     api.pty.ownerSaid(id, body)
     api.pty.write(id, toPastePayload(body))
+    const sent = ++pendingSeq.current
     setTimeout(() => {
+      // the card failed as this was written (its CLI has exited: the app types nothing into its shell): the text goes
+      // back into the box instead of waiting as "Sending…"
+      const failed = statusNow.current === 'needs-you' ? failureOf(detailNow.current) : undefined
+      if (failed) {
+        setPending((cur) => cur.filter((p) => p.id !== sent))
+        setText((cur) => cur || body)
+        return setNotice(`Not sent. ${failed}`)
+      }
       if (statusNow.current === 'needs-you') return setNotice('The card started asking a question just as this was sent, so it was not submitted. Answer the question in the terminal; your text is in its input box.')
       api.pty.write(id, '\r')
     }, 150)
-    setPending((cur) => [...cur, { id: ++pendingSeq.current, text: body, at: Date.now() }])
+    setPending((cur) => [...cur, { id: sent, text: body, at: Date.now() }])
     setText('')
     stick.current = true
     setAway(false)

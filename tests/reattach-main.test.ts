@@ -294,7 +294,21 @@ describe('a card whose CLI exited and left its shell open', () => {
     /** a resize: the dead frame repainted, prompt rows and all */
     37: "\u001b[?25l\u001b[38;2;215;119;87m\u001b[H▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀  \u001b[38;2;153;153;153mHaiku 5.5 · Claude Ultra\u001b[K\u001b[38;2;215;119;87m\r\n ▝▝   ▝▝   \u001b[38;2;153;153;153m~\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[K\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[80X\u001b[38;2;153;153;153m\u001b[80C◐ medium · /effort \u001b[38;2;136;136;136m\r\n───────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m❯ \u001b[2mTry \"fix lint errors\"\u001b[22m\u001b[K\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M[55\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[91m^C\u001b[38;2;153;153;153mft+tab to cycle) · ← 1 agent\u001b[K\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M   \u001b[m\r\n\u001b[K\u001b[29;97H\u001b[?25h",
     38: "\u001b[?25l\u001b[38;2;215;119;87m\u001b[H▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀  \u001b[38;2;153;153;153mHaiku 5.5 · Claude Ultra\u001b[K\u001b[38;2;215;119;87m\r\n ▝▝   ▝▝   \u001b[38;2;153;153;153m~\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[K\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[80X\u001b[38;2;153;153;153m\u001b[80C◐ medium · /effort  \u001b[38;2;136;136;136m\r\n─────────────────────────────────────────────────────────────────────────────────────────────────── \u001b[m❯ \u001b[2mTry \"fix lint errors\"\u001b[22m\u001b[K\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M[55 \u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[91m^C\u001b[38;2;153;153;153mft+tab to cycle) · ← 1 agent\u001b[K\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M    \u001b[m\r\n\u001b[K\u001b[29;97H\u001b[?25h",
+    /** a live TUI's status row redrawn (no ready words in it) */
+    50: "\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;44H1 agent   \u001b[27;3H\u001b[?25h",
   }
+  /**
+   * A third recorded session's /exit, chunk by chunk (all of them are in shell-back.test.ts): the TUI's last frames, its
+   * modes turned off, the CLI moving the cursor to column 1 itself, then the shell's prompt with no newline before it.
+   */
+  const EXIT_NO_NEWLINE = [
+    "\u001b[?25l\u001b[38;2;153;153;153m\u001b[48;2;55;55;55m\u001b[12;1H❯ \u001b[38;2;255;255;255m/exit                                                                                             \u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n· Schlepping…\u001b[K\u001b[m\u001b[15;3H\u001b[K\u001b[38;2;136;136;136m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;255;193;7m\u001b[19;3H⏵⏵ auto mode on\u001b[63X\u001b[38;2;153;153;153m\u001b[63C◐ medium · /effort\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[17;3H\u001b[?25h",
+    "\u001b[?25l\u001b[38;2;153;153;153m\u001b[19;18H (shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[17;3H\u001b[?25h",
+    "\u001b[?1006l\u001b[?1003l\u001b[?1002l\u001b[?1000l",
+    "\u001b[>4m\u001b[?2031l\u001b[?2004l\u001b[?1016l",
+    "\u001b[?25l\u001b[m\u001b[20;1H\u001b[?25h",
+    "PS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b> ",
+  ]
   const FAILED = 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.'
   /** what the composer, voice and the Changes panel write (a bracketed paste; Enter follows 150 ms later) */
   const PASTE = '\u001b[200~fix the build\u001b[201~'
@@ -397,6 +411,18 @@ describe('a card whose CLI exited and left its shell open', () => {
     await settle(200)
     expect(ptys.write).not.toHaveBeenCalled()
     expect(board.nodes.get('sh8')?.data.statusDetail).toBe(FAILED)
+  })
+
+  it('nor does a normal exit that leaves the prompt with no newline before it, for a report or the composer', async () => {
+    boardWith([card('ex1', 'claude', { status: 'idle', statusDetail: 'ready' })], ['ex1'])
+    ptys.emit('data', 'ex1', TUI_IDLE)
+    for (const chunk of EXIT_NO_NEWLINE) ptys.emit('data', 'ex1', chunk)
+    const taken = sendPrompt(ctx as never, s as never, 'ex1', 'report')
+    call(IPC.ptyWrite, 'ex1', PASTE)
+    await settle(200)
+    expect(taken).toBe(false)
+    expect(ptys.write).not.toHaveBeenCalled()
+    expect(board.nodes.get('ex1')?.data.statusDetail).toBe(FAILED)
   })
 
   it('a hook that lands after its CLI exited does not take the refusal back', async () => {
@@ -505,6 +531,18 @@ describe('a card whose CLI exited and left its shell open', () => {
       ptys.emit('data', 'pw5', TUI_IDLE)
       call(IPC.ptyWrite, 'pw5', PASTE)
       expect(ptys.write.mock.calls).toEqual([['pw5', PASTE]])
+    })
+
+    it('goes through to Claude Code started again by hand whose ready text was missed and whose inbox is kept in reserve', () => {
+      boardWith([card('rs1', 'claude', { status: 'idle', statusDetail: 'ready' })], ['rs1'])
+      expect(registerInbox(s as never, 'rs1', pipe('rs1-dead'), undefined).ok).toBe(true)
+      ptys.emit('data', 'rs1', TUI_IDLE)
+      ptys.emit('data', 'rs1', CLI_KILLED)
+      ptys.emit('data', 'rs1', LIVE2[26]) // mouse reports after the prompt
+      ptys.emit('data', 'rs1', LIVE2[50]) // the new TUI's output, its ready words missed
+      expect(registerInbox(s as never, 'rs1', pipe('rs1-new'), undefined)).toEqual({ ok: false, error: 'this card already has an inbox' })
+      call(IPC.ptyWrite, 'rs1', PASTE)
+      expect(ptys.write.mock.calls).toEqual([['rs1', PASTE]])
     })
 
     it('an inbox registering clears a wrong read of a live TUI', () => {

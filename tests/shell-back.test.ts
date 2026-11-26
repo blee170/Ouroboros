@@ -77,6 +77,25 @@ const LIVE2: Record<number, string> = {
   55: "\u001b[?25l\u001b[38;2;215;119;87m\u001b[H ▐\u001b[48;2;0;0;0m▛███▛█\u001b[m   \u001b[1mClaude\u001b[22m \u001b[1mCode\u001b[22m \u001b[38;2;153;153;153mv2.1.332\u001b[K\u001b[38;2;215;119;87m\r\n▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀  \u001b[38;2;153;153;153mHaiku 5.5 · Claude Ultra\u001b[K\u001b[38;2;215;119;87m\r\n ▝▝   ▝▝   \u001b[38;2;153;153;153m~\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[K\u001b[m\r\n\u001b[K\r\n\u001b[K\u001b[38;2;136;136;136m\r\n───────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n❯ \u001b[2mTry\u001b[22m \u001b[2m\"write\u001b[22m \u001b[2ma\u001b[22m \u001b[2mtest\u001b[22m \u001b[2mfor\u001b[22m \u001b[2m<filepath>\"\u001b[22m\u001b[K\u001b[38;2;136;136;136m\r\n───────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;255;193;7m⏵⏵ auto mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · ← 1 agent                             ◐ medium · /effort  \u001b[m\r\n                                                                                                   \r\n\u001b[K\r\n                                                                                                   \r\n\u001b[K\r\n\u001b[K\r\n                                                                                                                                                                                                      \r\n\u001b[K\r\n                                                                                                                                                                                                      \r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[7;3H\u001b[?25h",
 }
 
+/**
+ * A third recorded session, chunk by chunk (node-pty, powershell.exe, a real Claude Code 2.1.332; the keys are the
+ * chunks' numbers in the recording).
+ */
+const LIVE1A: Record<number, string> = {
+  /** a TUI's first frame, drawn with cursor-forward moves where the spaces are ("Claude Code v2.1.332", "auto mode on") */
+  8: "\u001b[38;2;215;119;87m ▐\u001b[48;2;0;0;0m▛███▛█\u001b[m\u001b[1m\u001b[3CClaude\u001b[1CCode\u001b[38;2;153;153;153m\u001b[22m\u001b[1Cv2.1.332\u001b[38;2;215;119;87m\r\n▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀\u001b[38;2;153;153;153m\u001b[2CHaiku\u001b[1C5.5\u001b[1C·\u001b[1CClaude\u001b[1CUltra\u001b[38;2;215;119;87m\r\n ▝▝\u001b[3C▝▝\u001b[38;2;153;153;153m\u001b[3C~\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[38;2;136;136;136m\u001b[9;1H────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n❯ \u001b[2mTry\u001b[1C\"how\u001b[1Cdoes\u001b[1C<filepath>\u001b[1Cwork?\"\u001b[38;2;136;136;136m\u001b[22m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;255;193;7m\u001b[12;3H⏵⏵\u001b[1Cauto\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C←\u001b[1Cfor\u001b[1Cagents\u001b[27C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[10;3H\u001b[?25h",
+  /** /exit typed: the TUI's last frames */
+  147: "\u001b[?25l\u001b[38;2;153;153;153m\u001b[48;2;55;55;55m\u001b[12;1H❯ \u001b[38;2;255;255;255m/exit                                                                                             \u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n· Schlepping…\u001b[K\u001b[m\u001b[15;3H\u001b[K\u001b[38;2;136;136;136m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;255;193;7m\u001b[19;3H⏵⏵ auto mode on\u001b[63X\u001b[38;2;153;153;153m\u001b[63C◐ medium · /effort\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[17;3H\u001b[?25h",
+  148: "\u001b[?25l\u001b[38;2;153;153;153m\u001b[19;18H (shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[17;3H\u001b[?25h",
+  /** the CLI turns mouse tracking and its other modes off */
+  149: "\u001b[?1006l\u001b[?1003l\u001b[?1002l\u001b[?1000l",
+  150: "\u001b[>4m\u001b[?2031l\u001b[?2004l\u001b[?1016l",
+  /** the CLI moves the cursor to column 1 of row 20 itself and exits: no newline */
+  151: "\u001b[?25l\u001b[m\u001b[20;1H\u001b[?25h",
+  /** the shell's prompt, a second later */
+  152: "PS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b> ",
+}
+
 /** Feed recorded chunks one by one: is the shell back after each? */
 const after = (w: ShellWatch, ...ids: number[]): boolean[] => ids.map((i) => (feedShellWatch(w, LIVE2[i]), shellIsBack(w)))
 const range = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, k) => from + k)
@@ -180,6 +199,39 @@ describe('the shell watch over a recorded session', () => {
     // the claude command typed at the prompt is typed at the shell
     expect(after(w, ...range(40, 48))).toEqual(all(9, true))
     expect(after(w, ...range(49, 55))).toEqual(all(7, false))
+  })
+})
+
+describe('lines a cursor move starts, blanks a cursor move skips', () => {
+  it('a normal /exit that moves the cursor to column 1 and prints no newline leaves the prompt on a line of its own', () => {
+    const w = newShellWatch()
+    feedShellWatch(w, TUI_IDLE)
+    expect([147, 148, 149, 150, 151, 152].map((i) => (feedShellWatch(w, LIVE1A[i]), shellIsBack(w)))).toEqual([...all(5, false), true])
+  })
+
+  it('the same with the cursor move and the prompt in one chunk', () => {
+    const w = newShellWatch()
+    feedShellWatch(w, TUI_IDLE)
+    for (const i of [147, 148, 149, 150]) feedShellWatch(w, LIVE1A[i])
+    feedShellWatch(w, LIVE1A[151] + LIVE1A[152])
+    expect(shellIsBack(w)).toBe(true)
+  })
+
+  it('Claude Code started again by hand is not the shell once its first frame is drawn with cursor moves where the spaces are', () => {
+    const w = newShellWatch()
+    after(w, 9, ...range(24, 48))
+    expect(shellIsBack(w)).toBe(true) // junk on the prompt row, then the claude command typed at it
+    feedShellWatch(w, LIVE1A[8])
+    expect(shellIsBack(w)).toBe(false)
+  })
+
+  it('a row a TUI indents with a cursor move is not a prompt line', () => {
+    // built from the way the TUI draws indents (a cursor-forward move in place of blanks), not recorded as such
+    expect(endsAtBarePrompt(TUI_IDLE + '\r\n\u001b[2CPS C:\\work>')).toBe(false)
+  })
+
+  it('a row drawn at column 3 stays glued to what came before it', () => {
+    expect(endsAtBarePrompt(TUI_IDLE + '\u001b[14;3HPS C:\\work>')).toBe(false)
   })
 })
 

@@ -298,6 +298,8 @@ export function registerInbox(s: WindowSession, nodeId: string, socket: unknown,
   const had = inboxes.get(nodeId)
   if (had && had.socket !== socket) {
     inboxReserve.set(nodeId, { socket, ...(token ? { token } : {}) })
+    // an offer means a board server started, so a CLI did (one started again by hand whose ready text was missed)
+    cliReported(shellWatch.get(nodeId))
     log(`inbox: ${nodeId} offered a second inbox while it has one; kept in reserve`)
     return { ok: false, error: 'this card already has an inbox' }
   }

@@ -26,8 +26,14 @@ vi.mock('../src/main/diagnostics', async (importOriginal) => ({ ...(await import
 vi.mock('../src/main/claude-launcher', async (importOriginal) => ({ ...(await importOriginal<object>()), prepareLaunch: () => ({ command: 'claude', initialPrompt: 'ROLE: you are the tester' }) }))
 // never read the owner's Claude sign-in files from a test
 vi.mock('../src/main/engines', async (importOriginal) => ({ ...(await importOriginal<object>()), claudeLoginFromFiles: () => false }))
+// an inbox that fails without being gone (too slow, an error after it opened): a real pipe on Windows always reports ok
+const failingInboxes = vi.hoisted(() => new Set<string>())
+vi.mock('../src/main/claude-inbox', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/main/claude-inbox')>()
+  return { ...real, deliverInbox: (...a: Parameters<typeof real.deliverInbox>) => (failingInboxes.has(a[0].socket) ? Promise.resolve('failed' as const) : real.deliverInbox(...a)) }
+})
 
-const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt } = await import('../src/main/ipc')
+const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt, routeHook } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
 const { IPC } = await import('../src/shared/protocol')
 
@@ -58,7 +64,7 @@ const s = {
   selectedNodeId: 'x' as string | null,
   initialProject: undefined as string | undefined,
   ledger: { flush: vi.fn(), load: vi.fn(), cardStopped: vi.fn(), release: vi.fn(), data: { tasks: [] } },
-  mail: { load: vi.fn() },
+  mail: { load: vi.fn(), hasUndelivered: () => false },
   routines: { load: vi.fn(), list: () => [] },
   gate: { load: vi.fn() },
   decisions: { load: vi.fn(() => []), withdraw: () => [] },
@@ -261,5 +267,85 @@ describe("a restarted card's inbox", () => {
     expect(board.nodes.get('in9')?.data.statusDetail ?? '').not.toMatch(/^failed:/)
     expect(ptys.write).not.toHaveBeenCalled() // and nothing typed into the shell that is still starting
     expect(registerInbox(s as never, 'in9', pipe('fresh'), undefined).ok).toBe(true)
+  })
+})
+
+describe('a card whose CLI exited and left its shell open', () => {
+  // real output of a PowerShell card (every stage is in shell-back.test.ts): Claude Code's TUI idle, then Claude Code
+  // killed (its last frame, then the shell's bare prompt)
+  const TUI_IDLE = "─────────────────────────────────────────\u001b[m  \u001b[38;2;255;193;7m⏵⏵ auto mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · ← for agents\u001b[K\u001b[28;3H\u001b[?25h\u001b[m\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;44H1 agent\u001b[K\u001b[28;3H\u001b[?25h\u001b[>0q\u001b[?u\u001b[m"
+  const CLI_KILLED = "\u001b[?25l\u001b[2m\u001b[28;3HTry \"fix lint errors\"\u001b[22m\u001b[K\u001b[38;2;153;153;153m\u001b[30;39H · ← 1 agent\u001b[28;3H\u001b[?25h\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b> "
+  const FAILED = 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.'
+  const pipe = (n: string): string => (process.platform === 'win32' ? `\\\\.\\pipe\\LOCAL\\cc-msg-shelltest-${n}-${process.pid}` : join(tmpdir(), `cc-msg-shelltest-${n}-${process.pid}`))
+  const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  const typed = (): string => ptys.write.mock.calls.map((c) => String(c[1])).join('')
+  /** A Claude card with no inbox whose CLI ran and then exited, leaving PowerShell on its prompt. */
+  function exitedCard(id: string): void {
+    boardWith([card(id, 'claude', { status: 'idle', statusDetail: 'ready' })], [id])
+    ptys.emit('data', id, TUI_IDLE)
+    ptys.emit('data', id, CLI_KILLED)
+  }
+
+  it('gets nothing typed into its shell and asks for a Restart; a hook from it takes prompts again', async () => {
+    exitedCard('sh1')
+    expect(sendPrompt(ctx as never, s as never, 'sh1', '[watchdog] worker silent for 15 min')).toBe(false)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+    expect(board.nodes.get('sh1')?.data).toMatchObject({ status: 'needs-you', statusDetail: FAILED })
+    expect(sendPrompt(ctx as never, s as never, 'sh1', 'again')).toBe(false)
+    // the owner started Claude Code again by hand: its hooks say the CLI runs
+    routeHook(ctx as never, 'sh1', { hook_event_name: 'PreToolUse', tool_name: 'Bash' })
+    expect(sendPrompt(ctx as never, s as never, 'sh1', 'next task')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('next task')
+  })
+
+  it('takes prompts again after a new launch', async () => {
+    exitedCard('sh2')
+    expect(sendPrompt(ctx as never, s as never, 'sh2', 'refused')).toBe(false)
+    expect(await call(IPC.claudeLaunch, { nodeId: 'sh2', cwd: ROOT, shell: 'powershell', cols: 80, rows: 24, kind: 'claude', engine: 'claude', claude: {}, title: 'sh2' })).toEqual({ ok: true })
+    ptys.emit('data', 'sh2', TUI_IDLE) // the TUI drew: ready
+    expect(board.nodes.get('sh2')?.data.status).toBe('idle')
+    expect(sendPrompt(ctx as never, s as never, 'sh2', 'after the restart')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('after the restart')
+  })
+
+  it('with its TUI still up and no inbox, a prompt is typed as before', async () => {
+    boardWith([card('sh3', 'claude', { status: 'idle', statusDetail: 'ready' })], ['sh3'])
+    ptys.emit('data', 'sh3', TUI_IDLE)
+    expect(sendPrompt(ctx as never, s as never, 'sh3', 'go on')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('go on')
+  })
+
+  it('an inbox that fails without being gone does not fall back to typing into the shell', async () => {
+    boardWith([card('sh4', 'claude', { status: 'idle', statusDetail: 'ready' })], ['sh4'])
+    failingInboxes.add(pipe('sh4'))
+    expect(registerInbox(s as never, 'sh4', pipe('sh4'), undefined).ok).toBe(true)
+    ptys.emit('data', 'sh4', TUI_IDLE)
+    ptys.emit('data', 'sh4', CLI_KILLED)
+    expect(sendPrompt(ctx as never, s as never, 'sh4', 'report')).toBe(true)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+    expect(board.nodes.get('sh4')?.data.statusDetail).toBe(FAILED)
+  })
+
+  it('the same failure with the TUI up still falls back to typing', async () => {
+    boardWith([card('sh5', 'claude', { status: 'idle', statusDetail: 'ready' })], ['sh5'])
+    failingInboxes.add(pipe('sh5'))
+    expect(registerInbox(s as never, 'sh5', pipe('sh5'), undefined).ok).toBe(true)
+    ptys.emit('data', 'sh5', TUI_IDLE)
+    expect(sendPrompt(ctx as never, s as never, 'sh5', 'report')).toBe(true)
+    await settle(300)
+    expect(typed()).toContain('report')
+  })
+
+  it('a terminal card is a shell by design: never refused for showing its prompt', async () => {
+    boardWith([card('sh6', 'terminal')], ['sh6'])
+    ptys.emit('data', 'sh6', CLI_KILLED)
+    expect(sendPrompt(ctx as never, s as never, 'sh6', 'dir')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('dir')
   })
 })

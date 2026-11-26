@@ -70,6 +70,29 @@ describe('a prompt for a card whose Claude Code has exited', () => {
   })
 })
 
+describe("a card whose registered inbox was a dead process's while its Claude Code runs", () => {
+  it('gets the text through the second inbox it offered, is not marked failed, and keeps that inbox', async () => {
+    const { board, ctx, s, written } = setup('r1')
+    // two board servers started for one card: the first registered and its process went away, the second was refused
+    expect(registerInbox(s, 'r1', pipe('r1dead'), undefined).ok).toBe(true)
+    let got = ''
+    const path = pipe('r1live')
+    const server = createServer((c) => c.on('data', (d) => (got += d)))
+    await new Promise<void>((r) => server.listen(path, r))
+    expect(registerInbox(s, 'r1', path, 'tok-r1')).toEqual({ ok: false, error: 'this card already has an inbox' })
+    expect(sendPrompt(ctx, s, 'r1', '[watchdog] worker silent')).toBe(true)
+    await settle(400)
+    expect(got).toContain('[watchdog] worker silent')
+    expect(got).toContain('"token":"tok-r1"')
+    expect(board.nodes.get('r1')?.data.statusDetail ?? '').not.toMatch(/^failed:/)
+    expect(sendPrompt(ctx, s, 'r1', 'the next prompt')).toBe(true)
+    await settle(300)
+    expect(got).toContain('the next prompt')
+    expect(written).toEqual([])
+    await new Promise<void>((r) => server.close(() => r()))
+  })
+})
+
 describe('deliverInbox error codes', () => {
   const failing = (code: string) => (): Socket => {
     const c = Object.assign(new EventEmitter(), { end: () => undefined, destroy: () => undefined })

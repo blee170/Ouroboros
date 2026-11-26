@@ -83,7 +83,8 @@ export const CLI_CONTRACTS: CliContract[] = [
     strings: [
       ...CLAUDE_HOOK_EVENTS.map(hook),
       { text: 'allowedEnvVars', why: 'http hook header reads the card token from the environment' },
-      { text: 'last_assistant_message', why: 'Stop payload: the card reply that lines forward' },
+      { text: 'last_assistant_message', why: 'Stop payload: the card reply that lines forward; StopFailure: the words shown for the error' },
+      { text: 'error_details', why: 'StopFailure payload, with `error`: why a turn failed (status.ts stopFailureText)' },
       { text: 'notification_type', why: 'Notification payload (status.ts)' },
       { text: 'permission_prompt', why: 'notification type: card needs you' },
       { text: 'idle_prompt', why: 'notification type: idle reminder' },

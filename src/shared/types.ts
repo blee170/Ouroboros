@@ -195,8 +195,11 @@ export interface HookEvent {
   /** Notification hook: permission_prompt | idle_prompt | agent_needs_input | ... */
   notification_type?: string
   message?: string
-  /** Stop hook */
+  /** Stop hook: the reply. StopFailure (Claude Code): the words it showed for the error */
   last_assistant_message?: string
+  /** StopFailure (Claude Code): a code such as rate_limit, and sometimes the API's raw message; it sends no `message` */
+  error?: string
+  error_details?: string
   /** SessionStart */
   source?: string
   /** Set when the hook fires inside a subagent (absent for the main agent) */

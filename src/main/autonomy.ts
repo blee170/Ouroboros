@@ -395,6 +395,10 @@ export class Autonomy {
       const input = typeof ev.tool_input === 'object' && ev.tool_input ? JSON.stringify(ev.tool_input).slice(0, 160) : ''
       this.record({ kind: 'deny', card: p.nodeId, title: this.titleOf(p.nodeId), detail: `${ev.tool_name ?? 'tool'} ${input}`.trim() })
     } else if (ev.hook_event_name === 'StopFailure' && isUsageLimit(typeof ev.message === 'string' ? ev.message : undefined)) {
+      // `message` is what the other engines' hooks carry (main/agent-hook.ts); Claude Code's StopFailure has none (its
+      // cause is in `error` and `last_assistant_message`, status.ts stopFailureText), so a Claude card gets no continue.
+      // Do not read those fields here to change that: Claude Code can wait for a usage limit to reset and continue by
+      // itself, and a prompt submitted during that wait cancels it (2.1.332: the armed continue ends as "manual_submit").
       s.limited[p.nodeId] = this.now()
       this.record({ kind: 'limit', card: p.nodeId, title: this.titleOf(p.nodeId), detail: String(ev.message ?? '').slice(0, 160) })
     }

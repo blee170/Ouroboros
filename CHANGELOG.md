@@ -4,6 +4,12 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A Claude card whose turn failed says why.** Claude Code's StopFailure hook carries a code in `error` (`rate_limit`, `server_error`, `authentication_failed`, …), the words it showed in `last_assistant_message` and sometimes the API's raw message in `error_details`. It has no `message`, which is the field Ouroboros read. So every failed turn of a Claude card showed "failed: turn failed (API error)" whatever the cause: a rate limit, an overloaded API and a rejected key looked the same on the card, in the toast, in Today and in an Autonomous run's report. The card now shows the words Claude Code showed, then the raw message, then the code. The other engines' hooks, which do send `message`, are read as before, and `npm run compat` now checks that the installed Claude Code still has `error_details`. An Autonomous run still sends no usage-limit continue to a Claude card, and that is now on purpose: Claude Code can wait for a usage limit to reset and continue by itself, and a prompt submitted during that wait cancels it.
+  - Checked: typecheck, build, vitest (new tests on StopFailure hooks recorded from Claude Code 2.1.332, `claude -p` against a local API that answered 429, 529, 401 and 500; the whole recorded bodies replayed through the board and a run). **Not verified**: the built app; a real plan limit in a card (its words were not seen, and that a submitted prompt cancels Claude Code's own wait is read from its code, not seen). Known and unchanged: a run ends about 15 minutes after its last card stops on a limit and then restarts its cards, so nothing carries a run across a usage limit yet.
+
 ## [0.20.7] — 2026-11-26
 
 ### Fixed

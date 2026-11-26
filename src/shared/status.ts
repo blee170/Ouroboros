@@ -17,6 +17,19 @@ function detailOf(event: HookEvent): string | undefined {
   return undefined
 }
 
+/**
+ * What a StopFailure says went wrong, in words. Claude Code sends a code in `error` (rate_limit, server_error,
+ * authentication_failed, …), the words it showed in `last_assistant_message`, sometimes the API's raw message in
+ * `error_details`, and no `message` (recorded from 2.1.332); the other engines' hooks arrive with `message`
+ * (main/agent-hook.ts). `unknown` is the code Claude Code sends when it has none, so it says nothing.
+ */
+export function stopFailureText(event: HookEvent): string | undefined {
+  for (const said of [event.message, event.last_assistant_message, event.error_details, event.error === 'unknown' ? undefined : event.error]) {
+    if (typeof said === 'string' && said.trim()) return said.trim().slice(0, 200)
+  }
+  return undefined
+}
+
 /** A card whose turn is over: done, idle, ended, or stopped on an error (a needs-you marked "failed:"). */
 function isFinished(prev: AgentStatus | undefined, prevDetail: string | undefined): boolean {
   return prev === 'done' || prev === 'idle' || prev === 'ended' || (prev === 'needs-you' && !!failureOf(prevDetail))
@@ -76,7 +89,7 @@ export function reduceHook(prev: AgentStatus | undefined, event: HookEvent, prev
       }
     case 'StopFailure':
       // "failed:" marks a turn that ended in an error (API failure, usage limit): the toast and the sidebar say so
-      return { status: 'needs-you', statusDetail: `failed: ${detailOf(event) ?? 'turn failed (API error)'}`, sessionId }
+      return { status: 'needs-you', statusDetail: `failed: ${stopFailureText(event) ?? 'turn failed (API error)'}`, sessionId }
     case 'SessionEnd':
       // /clear ends the old conversation, but the CLI stays open and ready for the next prompt
       if (event.reason === 'clear') return { status: 'idle', statusDetail: 'cleared', sessionId }

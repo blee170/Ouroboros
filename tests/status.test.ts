@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { detectClaudeReady, detectLaunchExit, detectMissingCommand, detectTrustQuestion, endsAtShellPrompt, failureOf, reduceHook } from '@shared/status'
+import { STOP_FAILURE_401, STOP_FAILURE_429, STOP_FAILURE_529 } from './stop-failure-recorded'
 
 describe('reduceHook', () => {
   it('maps lifecycle events to statuses', () => {
@@ -82,6 +83,23 @@ describe('failures', () => {
     expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure' })?.statusDetail)).toBe('turn failed (API error)')
     expect(failureOf('permission: Bash')).toBeUndefined()
     expect(failureOf(undefined)).toBeUndefined()
+  })
+  it("says what Claude Code's StopFailure names: it carries a code and the words it showed, and no message", () => {
+    expect(reduceHook('working', STOP_FAILURE_429)).toMatchObject({ status: 'needs-you', statusDetail: "failed: API Error: Request rejected (429) · This request would exceed your account's rate limit. Please try again later." })
+    expect(failureOf(reduceHook('working', STOP_FAILURE_401)?.statusDetail)).toBe('Invalid API key · Fix external API key')
+    // an overloaded API: the code only says server_error, the words say what it was
+    expect(failureOf(reduceHook('working', STOP_FAILURE_529)?.statusDetail)).toMatch(/^API Error: 529 Overloaded\./)
+    // no words (or blank ones): the raw API message, then the code, rather than "turn failed (API error)"
+    expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure', error: 'invalid_request', last_assistant_message: '  ', error_details: 'prompt is too long: 210000 tokens > 200000 maximum' })?.statusDetail)).toBe('prompt is too long: 210000 tokens > 200000 maximum')
+    expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure', error: 'billing_error' })?.statusDetail)).toBe('billing_error')
+    // `unknown` is the code of a failure Claude Code could not name: it says nothing
+    expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure', error: 'unknown' })?.statusDetail)).toBe('turn failed (API error)')
+    // long words are cut like every other detail
+    expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure', error: 'server_error', last_assistant_message: 'x'.repeat(500) })?.statusDetail)).toHaveLength(200)
+    // the words Claude Code showed come before the raw message when both are there
+    expect(failureOf(reduceHook('working', { ...STOP_FAILURE_401, error_details: '401 {"type":"error"}' })?.statusDetail)).toBe('Invalid API key · Fix external API key')
+    // another engine's hook (main/agent-hook.ts) still arrives with a message
+    expect(failureOf(reduceHook('working', { hook_event_name: 'StopFailure', message: 'rate limited' })?.statusDetail)).toBe('rate limited')
   })
 })
 

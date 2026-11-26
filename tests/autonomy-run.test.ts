@@ -6,6 +6,7 @@ import { Board } from '../src/main/board'
 import { Autonomy, type AutonomyHost } from '../src/main/autonomy'
 import { IDLE_END_MINUTES, LIMIT_PROMPT, NUDGE_PROMPT } from '../src/shared/autonomy'
 import type { NodeData } from '../src/shared/types'
+import { STOP_FAILURE_429 } from './stop-failure-recorded'
 
 const T0 = 1_800_000_000_000
 
@@ -175,6 +176,18 @@ describe('Autonomy run', () => {
     s.tick(16 * 60_000)
     await s.auto.tick()
     expect(s.calls.prompts.filter(([, t]) => t === LIMIT_PROMPT)).toHaveLength(1)
+  })
+
+  it('parks a Claude card stopped by a rate limit under what Claude Code said, and sends it no continue', async () => {
+    // Claude Code waits for a usage limit to reset and continues by itself; a prompt submitted during that wait
+    // cancels it (read in 2.1.332), so the run's continue must not go to a Claude card
+    s.auto.start({ until: T0 + 10 * 3_600_000, maxDispatches: 5, maxRetriesPerTitle: 3, stallMinutes: 0 })
+    s.board.setStatus('w1', { status: 'working', statusDetail: 'thinking' })
+    s.board.applyHook('w1', STOP_FAILURE_429)
+    expect(s.auto.public().parked[0]).toMatchObject({ id: 'w1', reason: "failed: API Error: Request rejected (429) · This request would exceed your account's rate limit. Please try again later." })
+    s.tick(16 * 60_000)
+    await s.auto.tick()
+    expect(s.calls.prompts.filter(([, t]) => t === LIMIT_PROMPT)).toEqual([])
   })
 
   it('dispose writes the report at once, without waiting for evidence', () => {

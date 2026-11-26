@@ -36,6 +36,8 @@ vi.mock('../src/main/claude-inbox', async (importOriginal) => {
 const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt, routeHook } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
 const { IPC } = await import('../src/shared/protocol')
+const { log } = await import('../src/main/diagnostics')
+const { mapCodexNotify } = await import('../src/main/agent-hook')
 
 const ROOT = join(tmpdir(), `ouro-reattach-none-${process.pid}`) // never created: no board file, readWorkspace gives null
 const OTHER = join(tmpdir(), `ouro-reattach-other-${process.pid}`)
@@ -275,25 +277,72 @@ describe('a card whose CLI exited and left its shell open', () => {
   // killed (its last frame, then the shell's bare prompt)
   const TUI_IDLE = "─────────────────────────────────────────\u001b[m  \u001b[38;2;255;193;7m⏵⏵ auto mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · ← for agents\u001b[K\u001b[28;3H\u001b[?25h\u001b[m\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;44H1 agent\u001b[K\u001b[28;3H\u001b[?25h\u001b[>0q\u001b[?u\u001b[m"
   const CLI_KILLED = "\u001b[?25l\u001b[2m\u001b[28;3HTry \"fix lint errors\"\u001b[22m\u001b[K\u001b[38;2;153;153;153m\u001b[30;39H · ← 1 agent\u001b[28;3H\u001b[?25h\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b> "
+  /** chunks of a second recorded session, by their numbers in it (all of them are in shell-back.test.ts) */
+  const LIVE2: Record<number, string> = {
+    /** Claude Code killed */
+    24: "\u001b[m",
+    /** the shell's prompt */
+    25: "\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b> ",
+    /** mouse reports 346 ms later */
+    26: "\u001b[?25l\u001b[91m\u001b[29;71H> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m1\u001b[m\r\n\u001b[17X\u001b[29;91H\u001b[?25h",
+    27: "\u001b[?25l\u001b[93m\u001b[29;73H[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[?25h",
+    /** Ctrl+C: a fresh bare prompt */
+    34: "\u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[91m^C\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b> ",
+    /** mouse reports 2.5 s later */
+    35: "\u001b[?25l\u001b[91m\u001b[30;71H> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[\u001b[14C\u001b[?25h",
+    36: "\u001b[?25l\u001b[m\r\n\u001b[93m\u001b[29;73H[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[m\r\n\u001b[29;97H\u001b[?25h",
+    /** a resize: the dead frame repainted, prompt rows and all */
+    37: "\u001b[?25l\u001b[38;2;215;119;87m\u001b[H▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀  \u001b[38;2;153;153;153mHaiku 5.5 · Claude Ultra\u001b[K\u001b[38;2;215;119;87m\r\n ▝▝   ▝▝   \u001b[38;2;153;153;153m~\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[K\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[80X\u001b[38;2;153;153;153m\u001b[80C◐ medium · /effort \u001b[38;2;136;136;136m\r\n───────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m❯ \u001b[2mTry \"fix lint errors\"\u001b[22m\u001b[K\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M[55\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[91m^C\u001b[38;2;153;153;153mft+tab to cycle) · ← 1 agent\u001b[K\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M   \u001b[m\r\n\u001b[K\u001b[29;97H\u001b[?25h",
+    38: "\u001b[?25l\u001b[38;2;215;119;87m\u001b[H▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀  \u001b[38;2;153;153;153mHaiku 5.5 · Claude Ultra\u001b[K\u001b[38;2;215;119;87m\r\n ▝▝   ▝▝   \u001b[38;2;153;153;153m~\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[K\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[80X\u001b[38;2;153;153;153m\u001b[80C◐ medium · /effort  \u001b[38;2;136;136;136m\r\n─────────────────────────────────────────────────────────────────────────────────────────────────── \u001b[m❯ \u001b[2mTry \"fix lint errors\"\u001b[22m\u001b[K\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M[55 \u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M\u001b[91m^C\u001b[38;2;153;153;153mft+tab to cycle) · ← 1 agent\u001b[K\u001b[m\r\nPS C:\\Users\\piz91\\Ouroboros\\.claude\\worktrees\\serene-mirzakhani-3e232b\u001b[91m> \u001b[93m[555\u001b[37m;\u001b[97m136\u001b[37m;\u001b[93m72M[555\u001b[37m;\u001b[97m141\u001b[37m;\u001b[93m72M    \u001b[m\r\n\u001b[K\u001b[29;97H\u001b[?25h",
+  }
   const FAILED = 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.'
+  /** what the composer, voice and the Changes panel write (a bracketed paste; Enter follows 150 ms later) */
+  const PASTE = '\u001b[200~fix the build\u001b[201~'
   const pipe = (n: string): string => (process.platform === 'win32' ? `\\\\.\\pipe\\LOCAL\\cc-msg-shelltest-${n}-${process.pid}` : join(tmpdir(), `cc-msg-shelltest-${n}-${process.pid}`))
   const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   const typed = (): string => ptys.write.mock.calls.map((c) => String(c[1])).join('')
+  const logged = (id: string): string[] => vi.mocked(log).mock.calls.map((c) => String(c[0])).filter((l) => l.includes(id))
   /** A Claude card with no inbox whose CLI ran and then exited, leaving PowerShell on its prompt. */
   function exitedCard(id: string): void {
     boardWith([card(id, 'claude', { status: 'idle', statusDetail: 'ready' })], [id])
     ptys.emit('data', id, TUI_IDLE)
     ptys.emit('data', id, CLI_KILLED)
   }
+  /** A Claude card with no inbox and its TUI up, then recorded chunks at their recorded times (ms after the first). */
+  function replay(id: string, chunks: Array<[ms: number, chunk: number]>): void {
+    boardWith([card(id, 'claude', { status: 'idle', statusDetail: 'ready' })], [id])
+    ptys.emit('data', id, TUI_IDLE)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const t0 = Date.now()
+      for (const [ms, i] of chunks) {
+        vi.setSystemTime(t0 + ms)
+        ptys.emit('data', id, LIVE2[i])
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+  /** A Claude card with its TUI up, read as its shell: a frame cut by a chunk boundary right after a row that looks like the prompt. */
+  function misreadCard(id: string): void {
+    boardWith([card(id, 'claude', { status: 'idle', statusDetail: 'ready' })], [id])
+    ptys.emit('data', id, TUI_IDLE + '\u001b[12;3H\r\nPS C:\\work>')
+    ptys.emit('data', id, '\u001b[30;44H1 agent\u001b[K\u001b[28;3H\u001b[?25h')
+  }
 
-  it('gets nothing typed into its shell and asks for a Restart; a hook from it takes prompts again', async () => {
+  it('gets nothing typed into its shell and asks for a Restart; started again by hand, it takes prompts once it reports', async () => {
     exitedCard('sh1')
     expect(sendPrompt(ctx as never, s as never, 'sh1', '[watchdog] worker silent for 15 min')).toBe(false)
     await settle(200)
     expect(ptys.write).not.toHaveBeenCalled()
     expect(board.nodes.get('sh1')?.data).toMatchObject({ status: 'needs-you', statusDetail: FAILED })
     expect(sendPrompt(ctx as never, s as never, 'sh1', 'again')).toBe(false)
-    // the owner started Claude Code again by hand: its hooks say the CLI runs
+    // the owner started Claude Code again by hand: its TUI draws before it can send a hook
+    ptys.emit('data', 'sh1', TUI_IDLE)
+    expect(sendPrompt(ctx as never, s as never, 'sh1', 'still marked')).toBe(false)
+    // the owner's message from the composer gets through: its turn sends the hook that clears the mark
+    call(IPC.ptyWrite, 'sh1', PASTE)
+    expect(ptys.write).toHaveBeenCalledWith('sh1', PASTE)
     routeHook(ctx as never, 'sh1', { hook_event_name: 'PreToolUse', tool_name: 'Bash' })
     expect(sendPrompt(ctx as never, s as never, 'sh1', 'next task')).toBe(true)
     await settle(200)
@@ -309,6 +358,80 @@ describe('a card whose CLI exited and left its shell open', () => {
     expect(sendPrompt(ctx as never, s as never, 'sh2', 'after the restart')).toBe(true)
     await settle(200)
     expect(typed()).toContain('after the restart')
+  })
+
+  it('a launch forgets the prompt the replaced shell showed, before the new process prints anything', async () => {
+    exitedCard('sh10')
+    expect(sendPrompt(ctx as never, s as never, 'sh10', 'refused')).toBe(false)
+    expect(await call(IPC.claudeLaunch, { nodeId: 'sh10', cwd: ROOT, shell: 'powershell', cols: 80, rows: 24, kind: 'claude', engine: 'claude', claude: {}, title: 'sh10' })).toEqual({ ok: true })
+    sendPrompt(ctx as never, s as never, 'sh10', 'early') // a report that comes before any output of the new process
+    ptys.emit('data', 'sh10', TUI_IDLE)
+    expect(board.nodes.get('sh10')?.data).toMatchObject({ status: 'idle', statusDetail: 'ready' })
+    expect(sendPrompt(ctx as never, s as never, 'sh10', 'after the launch')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('after the launch')
+  })
+
+  it('what it printed while starting does not count (the shell prompt, the launch line echoed)', async () => {
+    boardWith([card('st1', 'claude', { engine: 'grok', status: 'starting', statusDetail: 'launching grok' })], ['st1'])
+    ptys.emit('data', 'st1', LIVE2[25])
+    ptys.emit('data', 'st1', 'grok --agent card.json\r\n')
+    // a Grok card whose hooks did not load is made ready by four quiet seconds: no ready text, no hook
+    board.setStatus('st1', { status: 'idle', statusDetail: 'ready (no hooks yet: status and lines may not work)' })
+    expect(sendPrompt(ctx as never, s as never, 'st1', 'the task')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('the task')
+  })
+
+  it('mouse reports right after its prompt do not hide that its CLI exited', async () => {
+    replay('sh7', [[0, 24], [24, 25], [370, 26], [386, 27]])
+    expect(sendPrompt(ctx as never, s as never, 'sh7', 'report')).toBe(false)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+    expect(board.nodes.get('sh7')?.data.statusDetail).toBe(FAILED)
+  })
+
+  it('nor does a resize that repaints its dead frame with the prompt rows under it', async () => {
+    replay('sh8', [[0, 34], [2498, 35], [2511, 36], [4006, 37], [4130, 38]])
+    expect(sendPrompt(ctx as never, s as never, 'sh8', 'report')).toBe(false)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+    expect(board.nodes.get('sh8')?.data.statusDetail).toBe(FAILED)
+  })
+
+  it('a hook that lands after its CLI exited does not take the refusal back', async () => {
+    exitedCard('sh9')
+    routeHook(ctx as never, 'sh9', { hook_event_name: 'Stop', last_assistant_message: 'done' })
+    expect(sendPrompt(ctx as never, s as never, 'sh9', 'report')).toBe(false)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+  })
+
+  it("nor does Codex's notify, which Codex starts at the end of a turn and does not wait for", async () => {
+    boardWith([card('cx1', 'claude', { engine: 'codex', status: 'working', statusDetail: 'prompt sent' })], ['cx1'])
+    ptys.emit('data', 'cx1', LIVE2[24])
+    ptys.emit('data', 'cx1', LIVE2[25])
+    routeHook(ctx as never, 'cx1', { ...mapCodexNotify({ type: 'agent-turn-complete', 'thread-id': 't1', 'last-assistant-message': 'done' })! })
+    expect(sendPrompt(ctx as never, s as never, 'cx1', 'next')).toBe(false)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+    expect(board.nodes.get('cx1')?.data.statusDetail).toBe('failed: codex is no longer running in this card (only its shell is). Restart the card.')
+  })
+
+  it('a SessionEnd after the prompt and mouse reports does not take the refusal back: the CLI was ending', async () => {
+    replay('se1', [[0, 34], [2498, 35], [2511, 36]])
+    routeHook(ctx as never, 'se1', { hook_event_name: 'SessionEnd' })
+    expect(sendPrompt(ctx as never, s as never, 'se1', 'report')).toBe(false)
+    await settle(200)
+    expect(ptys.write).not.toHaveBeenCalled()
+  })
+
+  it('a hook from a live TUI clears a wrong read of it', async () => {
+    misreadCard('wr1')
+    routeHook(ctx as never, 'wr1', { hook_event_name: 'PreToolUse', tool_name: 'Bash' })
+    expect(sendPrompt(ctx as never, s as never, 'wr1', 'go on')).toBe(true)
+    await settle(200)
+    expect(typed()).toContain('go on')
   })
 
   it('with its TUI still up and no inbox, a prompt is typed as before', async () => {
@@ -347,5 +470,48 @@ describe('a card whose CLI exited and left its shell open', () => {
     expect(sendPrompt(ctx as never, s as never, 'sh6', 'dir')).toBe(true)
     await settle(200)
     expect(typed()).toContain('dir')
+  })
+
+  describe('text the app writes into its terminal (the composer, voice, the Changes panel, the chat view)', () => {
+    it('is not written, the card asks for a Restart, and the Enter after the paste is dropped too', () => {
+      exitedCard('pw1')
+      call(IPC.ptyWrite, 'pw1', PASTE)
+      expect(board.nodes.get('pw1')?.data).toMatchObject({ status: 'needs-you', statusDetail: FAILED })
+      call(IPC.ptyWrite, 'pw1', '\r')
+      expect(ptys.write).not.toHaveBeenCalled()
+      expect(logged('pw1').filter((l) => l.includes('nothing typed'))).toHaveLength(1)
+    })
+
+    it('goes through to a card with its TUI up, and to a terminal card', () => {
+      boardWith([card('pw2', 'claude', { status: 'idle', statusDetail: 'ready' }), card('pw3', 'terminal')], ['pw2', 'pw3'])
+      ptys.emit('data', 'pw2', TUI_IDLE)
+      ptys.emit('data', 'pw3', CLI_KILLED)
+      call(IPC.ptyWrite, 'pw2', PASTE)
+      call(IPC.ptyWrite, 'pw3', PASTE)
+      expect(ptys.write.mock.calls).toEqual([['pw2', PASTE], ['pw3', PASTE]])
+    })
+
+    it("the owner's own keys in the card's terminal go through: they can start the CLI again by hand", () => {
+      exitedCard('pw4')
+      call(IPC.ptyType, 'pw4', 'claude\r')
+      expect(ptys.write.mock.calls).toEqual([['pw4', 'claude\r']])
+    })
+
+    it('a newly registered inbox does not let it into the shell the terminal shows; the TUI drawn again does', () => {
+      exitedCard('pw5')
+      expect(registerInbox(s as never, 'pw5', pipe('pw5'), undefined).ok).toBe(true)
+      call(IPC.ptyWrite, 'pw5', PASTE)
+      expect(ptys.write).not.toHaveBeenCalled()
+      ptys.emit('data', 'pw5', TUI_IDLE)
+      call(IPC.ptyWrite, 'pw5', PASTE)
+      expect(ptys.write.mock.calls).toEqual([['pw5', PASTE]])
+    })
+
+    it('an inbox registering clears a wrong read of a live TUI', () => {
+      misreadCard('wr2')
+      expect(registerInbox(s as never, 'wr2', pipe('wr2'), undefined).ok).toBe(true)
+      call(IPC.ptyWrite, 'wr2', PASTE)
+      expect(ptys.write.mock.calls).toEqual([['wr2', PASTE]])
+    })
   })
 })

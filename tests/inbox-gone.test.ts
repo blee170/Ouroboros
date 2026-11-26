@@ -91,6 +91,24 @@ describe("a card whose registered inbox was a dead process's while its Claude Co
     expect(written).toEqual([])
     await new Promise<void>((r) => server.close(() => r()))
   })
+
+  it('two prompts on their way to the dead inbox together both reach the second one, and nothing is typed', async () => {
+    const { board, ctx, s, written } = setup('r2')
+    expect(registerInbox(s, 'r2', pipe('r2dead'), undefined).ok).toBe(true)
+    let got = ''
+    const path = pipe('r2live')
+    const server = createServer((c) => c.on('data', (d) => (got += d)))
+    await new Promise<void>((r) => server.listen(path, r))
+    expect(registerInbox(s, 'r2', path, undefined).ok).toBe(false)
+    expect(sendPrompt(ctx, s, 'r2', '[watchdog] worker A silent')).toBe(true)
+    expect(sendPrompt(ctx, s, 'r2', '[watchdog] worker B silent')).toBe(true)
+    await settle(400)
+    expect(written).toEqual([])
+    expect(got).toContain('[watchdog] worker A silent')
+    expect(got).toContain('[watchdog] worker B silent')
+    expect(board.nodes.get('r2')?.data.statusDetail ?? '').not.toMatch(/^failed:/)
+    await new Promise<void>((r) => server.close(() => r()))
+  })
 })
 
 describe('deliverInbox error codes', () => {

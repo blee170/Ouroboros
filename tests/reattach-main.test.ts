@@ -323,6 +323,16 @@ describe('a Claude card launched for the phone', () => {
     expect(view('rw1').refusal).toBeUndefined()
   })
 
+  it('a launch refused after the woken card spawned does not drop the message it was woken with', async () => {
+    boardWith([card('rw2', 'claude', { asleep: true, sessionId: 'sess-rw2' })])
+    expect(phone.prompt('rw2', 'carry on', [])).toEqual({ ok: true }) // it wakes: the page launches it
+    const waiting = launch('rw2', { wsl: true }) // another launch of the card waits on its WSL check
+    expect(await launch('rw2')).toEqual({ ok: true }) // the wake's launch spawns
+    wslChecks.pop()!({ ok: false, missing: ['Claude Code inside Ubuntu.'], notes: [] })
+    expect(await waiting).toMatchObject({ ok: false })
+    expect(vi.mocked(log).mock.calls.flat().join('\n')).not.toMatch(/the prompt it was woken with is dropped/)
+  })
+
   it.each(['resume', 'clear'])('does not put a card to sleep right after /%s: the session main knows is the one it left', (reason) => {
     const id = `sl-${reason}`
     boardWith([card(id, 'claude', { status: 'done', statusDetail: 'finished responding', sessionId: `sess-${id}` })], [id])

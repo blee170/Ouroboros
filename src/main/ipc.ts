@@ -3073,12 +3073,14 @@ export function registerIpc(ctx: MainContext): void {
 
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
     const r = await claudeLaunch(e, opts)
-    // a refused launch reports no exit: a card woken for it never comes up
     if (!r.ok) {
-      dropWake(opts.nodeId, `launch refused (${r.error})`)
-      // not when another launch of the card spawned while this one waited on its WSL check: the card runs
-      if (!ptys.isAlive(opts.nodeId)) launchRefused.set(opts.nodeId, r.error ?? 'unknown error')
       resumeOnce.delete(opts.nodeId) // owed to this launch only: the PC's next own Restart uses the card's options
+      // a refused launch reports no exit: a card woken for it never comes up. Not when another launch of the card
+      // spawned while this one waited on its WSL check: the card runs, and takes what it was woken with
+      if (!ptys.isAlive(opts.nodeId)) {
+        dropWake(opts.nodeId, `launch refused (${r.error})`)
+        launchRefused.set(opts.nodeId, r.error ?? 'unknown error')
+      }
     }
     return r
   })

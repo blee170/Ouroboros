@@ -23,6 +23,7 @@ export interface SleepView {
   engine?: string
   sessionId?: string
   status?: string
+  statusDetail?: string
   ptyAlive?: boolean
   asleep?: boolean
   keep?: boolean
@@ -49,6 +50,9 @@ export function sleepRefusal(c: SleepView, rules: SleepRules = {}): string | und
   if (rules.autonomous) return 'an Autonomous run is on'
   if (!c.ptyAlive) return 'its process is not running'
   if (c.status !== 'idle' && c.status !== 'done') return `it is ${c.status ?? 'starting'}`
+  // /clear and /resume end the session we know and report no new one (SessionStart does not reach the app): a wake
+  // would resume the conversation the owner left. Its next report of any kind carries the session it is on
+  if (c.statusDetail === 'cleared' || c.statusDetail === 'resumed') return 'it left the conversation it would wake on; it can sleep after its next turn'
   if (rules.bulk && c.keep) return 'it is pinned'
   if (rules.protected) return 'a card it is wired to is mid-turn'
   if (rules.busy) return 'it still has work open'

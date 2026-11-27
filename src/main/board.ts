@@ -264,15 +264,18 @@ export class Board extends EventEmitter {
     const prev = this.externalSessions.get(sessionId)
     const update = reduceHook(prev?.status, event, prev?.statusDetail)
     if (!update) return
+    // a session that ended is gone whatever the reason: after /clear or /resume the CLI carries on under another
+    // session id, which shows as a card of its own
+    const over = event.hook_event_name === 'SessionEnd'
     const entry: ExternalSession = {
       sessionId,
       cwd: typeof event.cwd === 'string' ? event.cwd : (prev?.cwd ?? ''),
-      status: update.status,
-      statusDetail: update.statusDetail ?? prev?.statusDetail,
+      status: over ? 'ended' : update.status,
+      statusDetail: over ? 'session ended' : (update.statusDetail ?? prev?.statusDetail),
       lastAssistantMessage: update.lastAssistantMessage ?? prev?.lastAssistantMessage,
       at: Date.now()
     }
-    if (update.status === 'ended') this.externalSessions.delete(sessionId)
+    if (entry.status === 'ended') this.externalSessions.delete(sessionId)
     else this.externalSessions.set(sessionId, entry)
     const payload: ExternalSessionPayload = { ...entry }
     this.emit('external', payload)

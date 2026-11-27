@@ -33,6 +33,19 @@ describe('Board external-session dedupe', () => {
     expect(events[1]).toMatchObject({ sessionId: 's3', cwd: '/elsewhere', status: 'ended', statusDetail: 'moved to its project window' })
     expect(b.externalSessions.has('s3')).toBe(false)
   })
+  it('drops an external session that ended, whatever the reason: after /clear or /resume the CLI carries on under another id', () => {
+    const b = new Board()
+    b.sync({ projectRoot: '/p', nodes: [], edges: [] })
+    const events: ExternalSessionPayload[] = []
+    b.on('external', (p: ExternalSessionPayload) => events.push(p))
+    for (const reason of ['clear', 'resume', 'other']) {
+      b.applyExternalHook({ hook_event_name: 'Stop', session_id: `s-${reason}`, cwd: '/p' })
+      expect(b.externalSessions.has(`s-${reason}`)).toBe(true)
+      b.applyExternalHook({ hook_event_name: 'SessionEnd', reason, session_id: `s-${reason}`, cwd: '/p' })
+      expect(b.externalSessions.has(`s-${reason}`)).toBe(false)
+      expect(events.at(-1)).toMatchObject({ sessionId: `s-${reason}`, status: 'ended' })
+    }
+  })
   it('maps session ids from hooks that do not change status', () => {
     const b = new Board()
     b.sync({ projectRoot: '/p', nodes: [{ id: 'n1', data: { kind: 'claude', title: 'A', cwd: '/p' } }], edges: [] })

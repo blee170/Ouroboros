@@ -323,6 +323,19 @@ describe('a Claude card launched for the phone', () => {
     expect(view('rw1').refusal).toBeUndefined()
   })
 
+  it.each(['resume', 'clear'])('does not put a card to sleep right after /%s: the session main knows is the one it left', (reason) => {
+    const id = `sl-${reason}`
+    boardWith([card(id, 'claude', { status: 'done', statusDetail: 'finished responding', sessionId: `sess-${id}` })], [id])
+    board.applyHook(id, { hook_event_name: 'SessionEnd', reason, session_id: `sess-${id}` })
+    expect(view(id)).toMatchObject({ status: 'idle', promptable: true, restartable: false })
+    expect(sleepCard(ctx as never, s as never, id)).toMatchObject({ ok: false, error: expect.stringMatching(/left the conversation/) })
+    // a turn in the new conversation reports its session: it sleeps on that one
+    board.applyHook(id, { hook_event_name: 'UserPromptSubmit', session_id: `new-${id}` })
+    board.applyHook(id, { hook_event_name: 'Stop', session_id: `new-${id}` })
+    expect(sleepCard(ctx as never, s as never, id)).toEqual({ ok: true })
+    expect(board.nodes.get(id)?.data.sessionId).toBe(`new-${id}`)
+  })
+
   it('resumes the session main knows for the one launch the phone asked for; the card’s own options stay as they are', async () => {
     const own = { continue: true, model: 'opus' }
     boardWith([card('pr1', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr1', claude: own })])

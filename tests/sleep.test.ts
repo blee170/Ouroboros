@@ -37,6 +37,15 @@ describe('sleepRefusal', () => {
     expect(sleepRefusal(a({ keep: true }), { bulk: true })).toMatch(/pinned/)
     expect(sleepRefusal(a({ keep: true }))).toBeUndefined()
   })
+
+  it('never sleeps a card that left its conversation (/clear, /resume) until a turn reports the new one: a wake would bring the old one back', () => {
+    expect(sleepRefusal(a({ status: 'idle', statusDetail: 'cleared' }))).toMatch(/left the conversation/)
+    expect(sleepRefusal(a({ status: 'idle', statusDetail: 'resumed' }))).toMatch(/left the conversation/)
+    expect(selectSleepCandidates([a({ status: 'idle', statusDetail: 'resumed' })], { now })).toEqual([])
+    // any later report carries the session it is on now
+    expect(sleepRefusal(a({ status: 'idle', statusDetail: 'idle' }))).toBeUndefined()
+    expect(sleepRefusal(a({ status: 'done', statusDetail: 'finished responding' }))).toBeUndefined()
+  })
 })
 
 describe('sleepMinutes', () => {

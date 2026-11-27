@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PHONE_CARD_PROMPT, PHONE_DENY_RULES, isPhoneCard, parseAdbDevices, phoneDenyRules, readPhoneCheck, withPhonePrompt } from '@shared/phone-control'
 import { DATA_DIR_DENY_RULES, autonomySettingsFragment, cardSettingsExtra } from '@shared/autonomy'
+import { phoneFilesReadRule } from '@shared/phone'
 import { diffPrivileges, privilegeView, revertPrivileges } from '@shared/board-trust'
 
 describe('phone deny rules', () => {
@@ -30,6 +31,22 @@ describe('phone deny rules', () => {
     const phone = cardSettingsExtra(run, phoneDenyRules(true)) as typeof run
     expect(phone.permissions.deny).toEqual(run.permissions.deny)
     for (const r of PHONE_DENY_RULES) expect(phone.permissions.deny).not.toContain(r)
+  })
+
+  it('let every card read the files a paired phone sent, in a run or not, and nothing else', () => {
+    // the spelling a real Claude Code 2.1.332 took for a folder outside the project (it asks without the rule)
+    const rule = phoneFilesReadRule('C:\\Users\\b\\AppData\\Roaming\\Ouroboros\\phone-uploads')
+    expect(rule).toBe('Read(//c/Users/b/AppData/Roaming/Ouroboros/phone-uploads/**)')
+    expect(phoneFilesReadRule('D:/data/phone-uploads/')).toBe('Read(//d/data/phone-uploads/**)')
+    expect(phoneFilesReadRule('/Users/b/Library/Application Support/Ouroboros/phone-uploads')).toBe('Read(//Users/b/Library/Application Support/Ouroboros/phone-uploads/**)')
+    const off = cardSettingsExtra(undefined, phoneDenyRules(false), [rule]) as { permissions: { deny: string[]; allow?: string[] } }
+    expect(off.permissions.allow).toEqual([rule])
+    expect(off.permissions.deny).toEqual([...DATA_DIR_DENY_RULES, ...PHONE_DENY_RULES])
+    const run = { ...autonomySettingsFragment('node gate.js'), permissions: { deny: ['Bash(x*)'], allow: ['Read(//c/kept/**)'] } }
+    const on = cardSettingsExtra(run, [], [rule, rule]) as typeof off
+    expect(on.permissions.allow).toEqual(['Read(//c/kept/**)', rule])
+    // no rule, no allow list: a card's settings stay as they were before phones could send files
+    expect(cardSettingsExtra(undefined, [])).toEqual({ permissions: { deny: [...DATA_DIR_DENY_RULES] } })
   })
 })
 

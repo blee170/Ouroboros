@@ -167,6 +167,17 @@ export function cleanUploadName(name: unknown): string {
   return `${stem || 'file'}${ext ? `.${ext}` : ''}`
 }
 
+/**
+ * Pure: the Claude Code permission rule that lets a card read the files a phone sent. The folder is outside every
+ * project, so without the rule a card stops on a permission prompt at the first attached file (checked on 2.1.332:
+ * no rule asks, `Read(//c/…/**)` reads). `//` starts an absolute path in a rule; a Windows drive goes in as `//c/`.
+ */
+export function phoneFilesReadRule(dir: string): string {
+  const p = dir.replace(/\\/g, '/').replace(/\/+$/, '')
+  const drive = /^([A-Za-z]):\//.exec(p)
+  return `Read(${drive ? `//${drive[1].toLowerCase()}${p.slice(2)}` : `/${p}`}/**)`
+}
+
 /** The line above the paths of the files a message from the phone carries. */
 export const PHONE_FILES_NOTE = "These files were attached from the owner's phone and are saved on this PC:"
 

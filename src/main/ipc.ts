@@ -37,7 +37,7 @@ import { DecisionDesk } from './decisions'
 import { answersOf, askInput, decisionForMessage, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
 import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
 import { PhoneUploads } from './phone-uploads'
-import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneSend, withPhoneFiles, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
+import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneFilesReadRule, phoneSend, withPhoneFiles, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -1289,9 +1289,12 @@ function ownerAnswerTask(s: WindowSession, id: string, choice: unknown, text: un
   return m.ok ? { ok: true } : { ok: true, warning: `Saved, but the card was not told: ${m.error}` }
 }
 
+/** Where the files a paired phone sends are saved; every Claude card may read it (phoneFilesReadRule). */
+const phoneUploadsDir = (): string => join(app.getPath('userData'), 'phone-uploads')
+
 /** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
 export function createPhone(ctx: MainContext): PhoneServer {
-  const uploads = new PhoneUploads(join(app.getPath('userData'), 'phone-uploads'), { log })
+  const uploads = new PhoneUploads(phoneUploadsDir(), { log })
   return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), phoneHandlers(ctx), log, undefined, { uploads })
 }
 
@@ -3045,7 +3048,7 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))), phoneDenyRules(phone)),
+        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))), phoneDenyRules(phone), [phoneFilesReadRule(phoneUploadsDir())]),
         autonomous: s.autonomy.on,
         wsl
       })

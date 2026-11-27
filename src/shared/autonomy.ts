@@ -161,11 +161,16 @@ const withOptionsBefore = (p: string): string[] => {
  */
 export const DATA_DIR_DENY_RULES = ['Edit(~/AppData/Roaming/Ouroboros/**)', 'Edit(~/Library/Application Support/Ouroboros/**)']
 
-/** A Claude card's extra `--settings`: the run's fragment when one is on, the data-folder rules always, and the card's own extra deny rules (the phone commands, for a card that is not a phone card). */
-export function cardSettingsExtra(runFragment?: Record<string, unknown>, extraDeny: readonly string[] = []): Record<string, unknown> {
-  const run = (runFragment ?? {}) as { permissions?: { deny?: string[] } }
+/**
+ * A Claude card's extra `--settings`: the run's fragment when one is on, the data-folder rules always, the card's own
+ * extra deny rules (the phone commands, for a card that is not a phone card), and what every card may do without
+ * asking (`allow`: read the files the owner's phone sent). A deny rule wins over an allow rule.
+ */
+export function cardSettingsExtra(runFragment?: Record<string, unknown>, extraDeny: readonly string[] = [], allow: readonly string[] = []): Record<string, unknown> {
+  const run = (runFragment ?? {}) as { permissions?: { deny?: string[]; allow?: string[] } }
   const deny = [...new Set([...(run.permissions?.deny ?? []), ...DATA_DIR_DENY_RULES, ...extraDeny])]
-  return { ...run, permissions: { ...run.permissions, deny } }
+  const allowed = [...new Set([...(run.permissions?.allow ?? []), ...allow])]
+  return { ...run, permissions: { ...run.permissions, deny, ...(allowed.length ? { allow: allowed } : {}) } }
 }
 
 export const WORKER_DENY_RULES: string[] = [

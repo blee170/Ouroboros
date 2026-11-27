@@ -162,17 +162,12 @@ describe('the phone page', () => {
     ])
   })
 
-  it('says on the Restart sheet that the last resume did not come up', async () => {
+  it('says on the Restart sheet what the relaunch does to the conversation', async () => {
     const p = page()
     await settle()
-    const card = { id: 'c2', title: 'Worker', status: 'ended', promptable: false, restartable: true, relaunch: 'continue' }
-    ;(p.g.state as { board: unknown }).board = { project: 'p', cards: [{ ...card, resumeFailed: true }], approvals: [], decisions: [], tasks: [] }
+    ;(p.g.state as { board: unknown }).board = { project: 'p', cards: [{ id: 'c2', title: 'Worker', status: 'ended', promptable: false, restartable: true, relaunch: 'resume' }], approvals: [], decisions: [], tasks: [] }
     ;(p.g.openCard as (id: string) => void)('c2')
     p.el('restart').click()
-    expect(p.el('sheet-body').textContent).toContain('Its last restart resumed its conversation and did not come up. Its CLI starts again with --continue')
-    ;(p.g.state as { board: unknown }).board = { project: 'p', cards: [card], approvals: [], decisions: [], tasks: [] }
-    ;(p.g.openCard as (id: string) => void)('c2')
-    p.el('restart').click()
-    expect(p.el('sheet-body').textContent).not.toContain('did not come up')
+    expect(p.el('sheet-body').textContent).toContain('Restart Worker?Its CLI starts again and resumes its conversation.Cancel')
   })
 })

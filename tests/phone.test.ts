@@ -155,13 +155,6 @@ describe('what a Restart from the phone does to a card', () => {
     expect(phoneRestart({ ...gone, sessionId: 'sess-9' })).toEqual({ how: 'resume' })
     expect(phoneRestart({ ...gone, sessionId: 'sess-9', claude: { continue: true } })).toEqual({ how: 'resume' })
   })
-
-  it('after a resume from the phone that did not come up, relaunches as the card’s own options say, and says so', () => {
-    const tried = { status: 'ended', ...down, sessionId: 'sess-9', resumeTried: true }
-    expect(phoneRestart({ ...tried, claude: { continue: true } })).toEqual({ how: 'continue', resumeFailed: true })
-    expect(phoneRestart({ ...tried, claude: { resume: 'sess-own' } })).toEqual({ how: 'resume', resumeFailed: true })
-    expect(phoneRestart(tried)).toEqual({ how: 'new', resumeFailed: true })
-  })
 })
 
 describe('the phone server', () => {

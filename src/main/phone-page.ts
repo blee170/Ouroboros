@@ -1287,7 +1287,7 @@ function restartRow(c) {
   b.id = 'restart'
   b.addEventListener('click', function () {
     var name = split(c.title).name
-    confirmSheet('Restart ' + name + '?', (c.resumeFailed ? 'Its last restart resumed its conversation and did not come up. ' : '') + (RELAUNCH[c.relaunch] || RELAUNCH.new), 'Restart', function () {
+    confirmSheet('Restart ' + name + '?', RELAUNCH[c.relaunch] || RELAUNCH.new, 'Restart', function () {
       api('POST', 'cards/' + encodeURIComponent(c.id) + '/restart', { promptAt: c.promptAt || 0 })
         .then(function () { toast('Restarting ' + name); tick() })
         .catch(function (e) { toast(e.message, true); tick() })

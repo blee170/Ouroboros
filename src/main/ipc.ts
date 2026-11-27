@@ -438,18 +438,16 @@ const restartsOwed = new Set<string>()
 /**
  * Cards whose latest launch the PC refused (a held board file, an Autonomous run, a failed WSL check), with why. A
  * refused launch reports no exit and leaves main's status as it was (a woken card stays starting): the phone says why
- * and offers the Restart again. Cleared by the card's next launch, its sleep and its removal.
+ * and offers the Restart again. Cleared by the card's next launch, the spawn of its process, its sleep and its removal.
  */
 const launchRefused = new Map<string, string>()
 
 /**
- * A phone's Restart resumes the session main knows for one launch, and writes nothing into the card's options (they
- * stay the owner's: --continue, its own resume or none). 'next': the next launch resumes it. 'tried': that launch ran;
- * until the card's CLI reports (a hook other than SessionEnd, which an ending CLI sends) the phone restarts it with its
- * own options, so a session that can no longer be resumed is not tried again and again. Forgotten when the card is
- * removed.
+ * Cards whose next launch resumes the session main knows: a phone's Restart, for that launch only. Nothing is written
+ * into the card's options (they stay the owner's: --continue, its own resume or none). Consumed by that launch; dropped
+ * when it is refused before that, when the card sleeps and when it is removed.
  */
-const resumeOnce = new Map<string, 'next' | 'tried'>()
+const resumeOnce = new Set<string>()
 
 /** A woken card that will not come up: what it was woken with is dropped, not typed in at some later start. */
 export function dropWake(id: string, why: string): void {
@@ -489,6 +487,7 @@ function putToSleep(ctx: MainContext, s: WindowSession, id: string): void {
   launchOut.delete(id)
   launchFailed.delete(id)
   launchRefused.delete(id)
+  resumeOnce.delete(id)
   trustAsked.delete(id)
   launchCommands.delete(id)
   clearTimeout(exitChecks.get(id))
@@ -1339,10 +1338,10 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
   }
   // a restart asked for (restartsOwed) runs until the page's launch starts, then the launch itself (spawning)
   const restartFor = (n: { id: string; data: NodeData }): PhoneRestart =>
-    phoneRestart({ status: n.data.status, engine: n.data.engine, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), launchRefused: launchRefused.get(n.id), sessionId: n.data.sessionId, resumeTried: resumeOnce.get(n.id) === 'tried', claude: n.data.claude })
-  const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new'; resumeFailed?: boolean } => {
+    phoneRestart({ status: n.data.status, engine: n.data.engine, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), launchRefused: launchRefused.get(n.id), sessionId: n.data.sessionId, claude: n.data.claude })
+  const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new' } => {
     const r = restartFor(n)
-    return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how, resumeFailed: r.resumeFailed }
+    return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how }
   }
   // a waiting task as the board carries it: what the Inbox shows; its long parts wait for the task route
   const taskItem = (w: WindowSession, t: Task, need: NonNullable<ReturnType<typeof ownerNeed>>) => {
@@ -1424,8 +1423,8 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       // a card that never had an event has no time on the phone's screen: the page sends 0
       if ((n.data.lastEventAt ?? 0) !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
       // a relaunch keeps the conversation: its next launch resumes the session we know, that launch only (the PC's own
-      // Restart button keeps launching with the card's options as they are), and not after a resume that did not come up
-      if (n.data.sessionId && resumeOnce.get(id) !== 'tried') resumeOnce.set(id, 'next')
+      // Restart button keeps launching with the card's options as they are)
+      if (n.data.sessionId) resumeOnce.add(id)
       // the page kills the process and launches the card again. Owed until that launch, so a page that is dead or
       // reloading launches it instead of taking the old shell back
       restartsOwed.add(id)
@@ -2553,10 +2552,7 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
   // and so was a latch read from its output, though not what the terminal shows now: a hook can land after its CLI exited
   // (Codex starts its notify and does not wait). Not after SessionEnd: the CLI is ending, its prompt may already show
-  if (event.hook_event_name !== 'SessionEnd') {
-    cliReported(shellWatch.get(nodeId))
-    resumeOnce.delete(nodeId) // its CLI is up: a resume from the phone came up
-  }
+  if (event.hook_event_name !== 'SessionEnd') cliReported(shellWatch.get(nodeId))
   trustAsked.delete(nodeId) // its hooks run: the trust question was answered
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
@@ -3080,7 +3076,9 @@ export function registerIpc(ctx: MainContext): void {
     // a refused launch reports no exit: a card woken for it never comes up
     if (!r.ok) {
       dropWake(opts.nodeId, `launch refused (${r.error})`)
-      launchRefused.set(opts.nodeId, r.error ?? 'unknown error')
+      // not when another launch of the card spawned while this one waited on its WSL check: the card runs
+      if (!ptys.isAlive(opts.nodeId)) launchRefused.set(opts.nodeId, r.error ?? 'unknown error')
+      resumeOnce.delete(opts.nodeId) // owed to this launch only: the PC's next own Restart uses the card's options
     }
     return r
   })
@@ -3109,8 +3107,7 @@ export function registerIpc(ctx: MainContext): void {
       // only a Claude card can be a phone card: the other engines have no deny rules to hold the rest back
       const phone = isPhoneCard({ engine, claude: opts.claude })
       // a Restart from the phone: this launch alone resumes the session main knows (resumeOnce)
-      const resume = resumeOnce.get(opts.nodeId) === 'next' ? s.board.nodes.get(opts.nodeId)?.data.sessionId : undefined
-      if (resume) resumeOnce.set(opts.nodeId, 'tried')
+      const resume = resumeOnce.delete(opts.nodeId) ? s.board.nodes.get(opts.nodeId)?.data.sessionId : undefined
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -3168,6 +3165,8 @@ export function registerIpc(ctx: MainContext): void {
       // a restart: the process it replaces is killed without an exit event of its own, and its subagents with it
       endCardSubagents(s, opts.nodeId)
       await throttledSpawn(() => ptys.spawn({ nodeId: opts.nodeId, cwd: opts.cwd, shell, cols: opts.cols, rows: opts.rows, initialCommand: prepared.command, env: launchEnv, omitEnv }))
+      // it runs: a later launch refused while this one waited in the queue is not about this process
+      launchRefused.delete(opts.nodeId)
       s.board.setPtyAlive(opts.nodeId, true)
       s.board.setStatus(opts.nodeId, { status: 'starting', statusDetail: `launching ${engine}` })
       if (prepared.initialPrompt) {

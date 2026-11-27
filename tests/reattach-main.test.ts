@@ -33,8 +33,11 @@ vi.mock('../src/main/claude-inbox', async (importOriginal) => {
   const real = await importOriginal<typeof import('../src/main/claude-inbox')>()
   return { ...real, deliverInbox: (...a: Parameters<typeof real.deliverInbox>) => (failingInboxes.has(a[0].socket) ? Promise.resolve('failed' as const) : real.deliverInbox(...a)) }
 })
+// a WSL card's launch waits on this check: a test holds it back, then answers it
+const wslChecks = vi.hoisted(() => [] as Array<(r: { ok: boolean; missing: string[]; notes: string[] }) => void>)
+vi.mock('../src/main/wsl', async (importOriginal) => ({ ...(await importOriginal<object>()), wslPreflight: () => new Promise((resolve) => wslChecks.push(resolve)) }))
 
-const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt, routeHook, phoneHandlers } = await import('../src/main/ipc')
+const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt, routeHook, phoneHandlers, sleepCard } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
 const { IPC } = await import('../src/shared/protocol')
 const { log } = await import('../src/main/diagnostics')
@@ -258,7 +261,7 @@ describe("a Claude card's settings", () => {
 })
 
 describe('a Claude card launched for the phone', () => {
-  interface PhoneCard { id: string; status: string; promptable: boolean; refusal?: string; promptAt?: number; restartable: boolean; relaunch?: string; resumeFailed?: boolean }
+  interface PhoneCard { id: string; status: string; promptable: boolean; refusal?: string; promptAt?: number; restartable: boolean; relaunch?: string }
   const phone = phoneHandlers(ctx as never)
   const view = (id: string): PhoneCard => (phone.board() as { cards: PhoneCard[] }).cards.find((c) => c.id === id)!
   /** the page's launch of the card, with the card's own launch options */
@@ -292,6 +295,34 @@ describe('a Claude card launched for the phone', () => {
     expect(view('rf1').refusal).toBeUndefined()
   })
 
+  it('a launch refused while an earlier one waits in the spawn queue does not mark the card once that one runs', async () => {
+    boardWith([card('rq0', 'claude'), card('rq1', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-rq1' })])
+    await launch('rq0') // the gap after its spawn holds the next launch in the queue
+    const first = launch('rq1')
+    heldCards.add('rq1')
+    try {
+      expect(await launch('rq1')).toMatchObject({ ok: false }) // a Restart's launch, refused while the first one waits
+    } finally {
+      heldCards.delete('rq1')
+    }
+    expect(view('rq1').refusal).toMatch(/^The PC did not start it/)
+    expect(await first).toEqual({ ok: true })
+    expect(alive.has('rq1')).toBe(true)
+    expect(view('rq1')).toMatchObject({ status: 'starting', restartable: false })
+    expect(view('rq1').refusal).toBeUndefined()
+  })
+
+  it('a launch refused after another launch of the card spawned does not mark the running card', async () => {
+    boardWith([card('rw1', 'claude', { status: 'ended', statusDetail: 'exited (1)' })])
+    const waiting = launch('rw1', { wsl: true }) // waits on its WSL check
+    expect(await launch('rw1')).toEqual({ ok: true }) // another launch of the card spawns meanwhile
+    expect(alive.has('rw1')).toBe(true)
+    wslChecks.pop()!({ ok: false, missing: ['Claude Code inside Ubuntu.'], notes: [] })
+    expect(await waiting).toMatchObject({ ok: false, error: expect.stringMatching(/^WSL2 card not started/) })
+    expect(view('rw1')).toMatchObject({ status: 'starting', restartable: false })
+    expect(view('rw1').refusal).toBeUndefined()
+  })
+
   it('resumes the session main knows for the one launch the phone asked for; the card’s own options stay as they are', async () => {
     const own = { continue: true, model: 'opus' }
     boardWith([card('pr1', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr1', claude: own })])
@@ -308,23 +339,48 @@ describe('a Claude card launched for the phone', () => {
     expect(launched('pr1').resume).toBeUndefined()
   })
 
-  it('after a resume that did not come up, restarts as the card’s own options say and says so, until its CLI reports', async () => {
+  it('after a resume that did not come up, offers and runs the same resume again; the card’s own options stay as they are', async () => {
     boardWith([card('pr2', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr2', claude: { continue: true } })])
     expect(phone.restart('pr2', view('pr2').promptAt ?? 0)).toEqual({ ok: true })
     await launch('pr2', { continue: true })
     expect(launched('pr2').resume).toBe('sess-pr2')
-    exited('pr2') // the session could not be resumed
+    exited('pr2') // the session could not be resumed: the card shows its launch failure
     const c = view('pr2')
-    expect(c).toMatchObject({ restartable: true, relaunch: 'continue', resumeFailed: true })
+    expect(c).toMatchObject({ restartable: true, relaunch: 'resume' })
     expect(phone.restart('pr2', c.promptAt ?? 0)).toEqual({ ok: true })
     await launch('pr2', { continue: true })
-    expect(launched('pr2')).toMatchObject({ continue: true })
-    expect(launched('pr2').resume).toBeUndefined()
-    // its CLI is up and reports: the next Restart from the phone resumes again
-    routeHook(ctx as never, 'pr2', { hook_event_name: 'UserPromptSubmit', session_id: 'sess-pr2', prompt: 'hi' })
-    exited('pr2')
-    expect(view('pr2')).toMatchObject({ restartable: true, relaunch: 'resume' })
-    expect(view('pr2').resumeFailed).toBeUndefined()
+    expect(launched('pr2').resume).toBe('sess-pr2')
+    expect(launched('pr2').continue).toBeFalsy()
+    expect(board.nodes.get('pr2')?.data.claude).toEqual({ continue: true })
+  })
+
+  it('a refused launch drops the resume the phone asked for: the PC’s next own Restart uses the card’s options', async () => {
+    boardWith([card('pr4', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr4', claude: { continue: true } })])
+    expect(phone.restart('pr4', view('pr4').promptAt ?? 0)).toEqual({ ok: true })
+    heldCards.add('pr4')
+    try {
+      expect(await launch('pr4', { continue: true })).toMatchObject({ ok: false })
+    } finally {
+      heldCards.delete('pr4')
+    }
+    expect(await launch('pr4', { continue: true })).toEqual({ ok: true })
+    expect(launched('pr4')).toMatchObject({ continue: true })
+    expect(launched('pr4').resume).toBeUndefined()
+  })
+
+  it('a card put to sleep forgets the resume it was owed', async () => {
+    const own = { continue: true }
+    boardWith([card('pr5', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr5', claude: own })])
+    expect(phone.restart('pr5', view('pr5').promptAt ?? 0)).toEqual({ ok: true })
+    // say its page never ran that restart and the card is back up and done: the owner puts it to sleep
+    alive.add('pr5')
+    board.setPtyAlive('pr5', true)
+    board.setStatus('pr5', { status: 'done', statusDetail: 'finished responding' })
+    expect(sleepCard(ctx as never, s as never, 'pr5')).toEqual({ ok: true })
+    // whatever launches it next, the phone's resume is not owed any more
+    await launch('pr5', own)
+    expect(launched('pr5')).toMatchObject({ continue: true })
+    expect(launched('pr5').resume).toBeUndefined()
   })
 
   it('a removed card forgets the resume it was owed', async () => {

@@ -117,7 +117,8 @@ export class PhoneUploads {
     const mine = [...this.index.values()].filter((u) => u.device === device)
     const coming = this.arriving.get(device) ?? { files: 0, bytes: 0 }
     if (mine.filter((u) => u.sentTo === undefined).length + coming.files >= PHONE_LIMITS.uploadsPending) return { status: 429, error: `${PHONE_LIMITS.uploadsPending} attachments wait to be sent already; send or remove some first` }
-    // sent files count too: a card's files stay uploadKeepMs, so this bounds the disk one phone fills
+    // sent files count too: this bounds what one phone uploads in 24 hours while the app runs (the index is in memory),
+    // not the disk it fills: a card's files stay uploadKeepMs
     const room = this.dailyBytes - mine.reduce((n, u) => n + u.bytes, 0) - coming.bytes
     const daily = { status: 429, error: `at most ${+(this.dailyBytes / 1073741824).toFixed(2)} GB of files from one phone in 24 hours; try again later` }
     if (room <= 0) return daily

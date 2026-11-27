@@ -36,7 +36,8 @@ import { GateKeeper, auditFile } from './gate'
 import { DecisionDesk } from './decisions'
 import { answersOf, askInput, decisionForMessage, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
 import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
-import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneSend, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
+import { PhoneUploads } from './phone-uploads'
+import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneSend, withPhoneFiles, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -1290,7 +1291,8 @@ function ownerAnswerTask(s: WindowSession, id: string, choice: unknown, text: un
 
 /** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
 export function createPhone(ctx: MainContext): PhoneServer {
-  return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), phoneHandlers(ctx), log)
+  const uploads = new PhoneUploads(join(app.getPath('userData'), 'phone-uploads'), { log })
+  return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), phoneHandlers(ctx), log, undefined, { uploads })
 }
 
 /** What the phone sees and may do, on the current window. */
@@ -1337,15 +1339,17 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       ]
       return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, edges, approvals, decisions }
     },
-    prompt: (id, text) => {
+    prompt: (id, text, files) => {
       const s = ctx.windows.forNode(id)
       const n = s?.board.nodes.get(id)
       if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
       const how = sendFor(n)
       if ('refusal' in how) return { ok: false, error: how.refusal }
-      // the owner wrote it on their paired phone: their own words once the card submits it
-      if (typeof text === 'string') ownerWords.sent(id, text, 'phone')
-      return sendPrompt(ctx, s, id, text) ? { ok: true } : { ok: false, error: 'not delivered (the card is not running, or the run does not allow it)' }
+      // files go in as their paths after the text, as the PC composer types a file's path
+      const prompt = withPhoneFiles(text, files.map((f) => f.path))
+      // the owner wrote it on their paired phone: their own words once the card submits it (the prompt as composed)
+      ownerWords.sent(id, prompt, 'phone')
+      return sendPrompt(ctx, s, id, prompt) ? { ok: true } : { ok: false, error: 'not delivered (the card is not running, or the run does not allow it)' }
     },
     answer: (id, key, promptAt) => {
       const s = ctx.windows.forNode(id)

@@ -5,6 +5,7 @@
  * orbit of the cards and their connections, the owner's pick), Inbox (what waits on the owner) and Report tabs, and
  * a bottom sheet per card with its last reply and a message box.
  */
+import { PHONE_LIMITS } from '@shared/phone'
 
 const ICONS = {
   board: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>',
@@ -40,6 +41,8 @@ export const PHONE_HTML = `<!doctype html>
 </nav>
 <div id="sheet" class="sheet" hidden><div class="scrim" data-close="1"></div><div class="panel glass" role="dialog" aria-modal="true"><div class="grab" data-close="1"></div><div id="sheet-body"></div></div></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<input id="pick-photo" type="file" accept="image/*" multiple hidden>
+<input id="pick-file" type="file" multiple hidden>
 <script src="/m/app.js"></script>
 </body>
 </html>
@@ -235,6 +238,20 @@ main { padding: 14px 16px calc(100px + var(--safe-b)); max-width: 680px; margin:
 .reply { margin-top: 10px; background: rgba(0,0,0,.3); border: 1px solid var(--glass-line); border-radius: 14px; padding: 12px 14px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 42vh; overflow: auto; color: #d4d4d4; }
 .label { color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-top: 16px; }
 .note { color: var(--muted); font-size: 13px; margin-top: 12px; }
+.iconbtn { flex: none; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--fill); border: 1px solid var(--glass-line); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+.iconbtn:disabled { opacity: .45; }
+.chips { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.chips:empty { display: none; }
+.chip { display: flex; align-items: center; gap: 10px; padding: 6px 4px 6px 8px; border-radius: 14px; background: rgba(0,0,0,.3); border: 1px solid var(--glass-line); }
+.chip.failed { border-color: rgba(255,101,104,.45); }
+.chip .thumb { width: 40px; height: 40px; border-radius: 10px; flex: none; object-fit: cover; display: grid; place-items: center; background: var(--fill); color: var(--muted); }
+.chip .cb { flex: 1; min-width: 0; }
+.chip .cn { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip .cs { font-size: 12px; color: var(--muted); }
+.chip.failed .cs { color: var(--danger); }
+.chip .bar { height: 3px; border-radius: 3px; background: var(--fill2); margin-top: 5px; overflow: hidden; }
+.chip .bar i { display: block; height: 100%; width: 0; background: var(--primary); transition: width .2s; }
+.chip .iconbtn { width: 44px; height: 44px; background: none; border: 0; box-shadow: none; color: var(--muted); }
 @keyframes up { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes fade { from { opacity: 0; } }
 
@@ -266,6 +283,10 @@ var SVG = 'http://www.w3.org/2000/svg'
 var state = { tab: 'board', board: null, json: '', sheet: null, showIdle: false, report: null, seenNeeds: -1, view: readView() }
 var drafts = {}
 var notes = {}
+/* per card, like drafts: the files picked for its next message, each uploaded at once */
+var attachments = {}
+var MAX_UPLOAD = ${PHONE_LIMITS.uploadBytes}
+var MAX_FILES = ${PHONE_LIMITS.uploadsPerMessage}
 
 function readView() { try { var v = localStorage.getItem(VIEW_KEY); return v === 'graph' || v === 'orbit' ? v : 'list' } catch (e) { return 'list' } }
 function token() { try { return localStorage.getItem(KEY) || '' } catch (e) { return '' } }
@@ -292,7 +313,11 @@ function api(method, path, body) {
       return r.text().then(function (s) {
         var j = {}
         try { j = s ? JSON.parse(s) : {} } catch (e) {}
-        if (!r.ok) throw new Error(j.error || (r.status === 403 || r.status === 421 ? 'The PC refused this phone (network or address changed in Settings)' : 'Error ' + r.status))
+        if (!r.ok) {
+          var err = new Error(j.error || (r.status === 403 || r.status === 421 ? 'The PC refused this phone (network or address changed in Settings)' : 'Error ' + r.status))
+          err.gone = j.gone
+          throw err
+        }
         return j
       })
     })
@@ -907,6 +932,123 @@ function drawReport(v) {
   v.appendChild(unpair)
 }
 
+/* ---------- attachments: a picked file goes to the PC at once; the message carries the ids the PC gave back ---------- */
+var PATHS = {
+  photo: ['M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z', 'M9 8.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z', 'M21 15l-5-5L5 19'],
+  file: ['M20.5 11.5l-8.2 8.2a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8'],
+  doc: ['M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M14 3v5h5'],
+  remove: ['M6 6l12 12', 'M18 6L6 18'],
+  retry: ['M20 12a8 8 0 1 1-2.3-5.7', 'M20 4v5h-5']
+}
+function icon(name) {
+  var s = sv('svg')
+  s.setAttribute('viewBox', '0 0 24 24')
+  s.setAttribute('aria-hidden', 'true')
+  PATHS[name].forEach(function (d) { var p = sv('path'); p.setAttribute('d', d); s.appendChild(p) })
+  return s
+}
+function iconButton(name, label, onTap) {
+  var b = el('button', 'iconbtn')
+  b.type = 'button'
+  b.setAttribute('aria-label', label)
+  b.appendChild(icon(name))
+  b.addEventListener('click', onTap)
+  return b
+}
+function size(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB' }
+function attached(id) { return attachments[id] || (attachments[id] = []) }
+function uploading(id) { return attached(id).some(function (a) { return a.state === 'up' }) }
+var pickFor = null
+var sendingTo = null
+/* the pickers live outside the sheet: a board redraw while the phone's picker is open must not lose the pick */
+function pick(id, input) { pickFor = id; input.value = ''; input.click() }
+function picked(e) {
+  var id = pickFor, over = false
+  if (!id) return
+  var list = attached(id)
+  Array.prototype.forEach.call(e.target.files || [], function (f) {
+    if (list.length >= MAX_FILES) { over = true; return }
+    var a = { file: f, name: f.name || 'file', size: f.size, state: 'up', progress: 0, id: null, xhr: null, error: '', thumb: '', ui: null }
+    if (/^image\\//.test(f.type)) { try { a.thumb = URL.createObjectURL(f) } catch (err) {} }
+    list.push(a)
+    upload(id, a)
+  })
+  e.target.value = ''
+  if (over) toast('At most ' + MAX_FILES + ' attachments in one message', true)
+  drawAttach(id)
+}
+function upload(id, a) {
+  a.id = null
+  a.error = ''
+  a.progress = 0
+  if (a.size > MAX_UPLOAD) { a.state = 'failed'; a.big = true; a.error = 'Too big: at most ' + size(MAX_UPLOAD); return }
+  a.state = 'up'
+  var x = new XMLHttpRequest()
+  a.xhr = x
+  x.open('POST', '/m/api/uploads')
+  x.setRequestHeader('content-type', 'application/octet-stream')
+  x.setRequestHeader('authorization', 'Bearer ' + token())
+  x.setRequestHeader('x-file-name', encodeURIComponent(a.name))
+  // progress moves the bar in place: rebuilding the chip would swallow a tap on its remove button
+  x.upload.onprogress = function (e) {
+    if (!e.lengthComputable) return
+    a.progress = e.loaded / e.total
+    if (a.ui) { a.ui.sub.textContent = size(a.size) + ' · ' + Math.round(a.progress * 100) + '%'; a.ui.fill.style.width = Math.round(a.progress * 100) + '%' }
+  }
+  x.onload = function () {
+    var j = {}
+    try { j = JSON.parse(x.responseText || '{}') } catch (err) {}
+    a.xhr = null
+    if (x.status === 200 && j.id) { a.id = j.id; a.state = 'done' } else { a.state = 'failed'; a.error = j.error || 'Upload failed (' + x.status + ')' }
+    if (x.status === 401) { setToken(''); state.board = null; closeSheet(); draw() }
+    drawAttach(id)
+  }
+  x.onerror = function () { a.xhr = null; a.state = 'failed'; a.error = 'Upload failed; check the connection and retry'; drawAttach(id) }
+  x.send(a.file)
+}
+function unattach(id, a) {
+  var list = attached(id), i = list.indexOf(a)
+  if (i >= 0) list.splice(i, 1)
+  if (a.xhr) a.xhr.abort()
+  // the PC drops a file this phone will not send (it counts toward the files a phone may have waiting)
+  if (a.id) api('DELETE', 'uploads/' + a.id).catch(function () {})
+  if (a.thumb) URL.revokeObjectURL(a.thumb)
+  drawAttach(id)
+}
+function chip(id, a) {
+  var row = el('div', 'chip' + (a.state === 'failed' ? ' failed' : ''))
+  var thumb
+  if (a.thumb) {
+    thumb = el('img', 'thumb')
+    thumb.alt = ''
+    thumb.src = a.thumb
+    // a photo the browser cannot draw (HEIC) shows the file icon instead
+    thumb.addEventListener('error', function () { var d = el('div', 'thumb'); d.appendChild(icon('doc')); if (thumb.parentNode) thumb.parentNode.replaceChild(d, thumb) })
+  } else { thumb = el('div', 'thumb'); thumb.appendChild(icon('doc')) }
+  row.appendChild(thumb)
+  var body = el('div', 'cb')
+  body.appendChild(el('div', 'cn', a.name))
+  var sub = el('div', 'cs', a.state === 'failed' ? a.error : a.state === 'up' ? size(a.size) + ' · ' + Math.round(a.progress * 100) + '%' : size(a.size))
+  body.appendChild(sub)
+  var fill = el('i')
+  if (a.state === 'up') { var bar = el('div', 'bar'); fill.style.width = Math.round(a.progress * 100) + '%'; bar.appendChild(fill); body.appendChild(bar) }
+  row.appendChild(body)
+  a.ui = { sub: sub, fill: fill }
+  if (a.state === 'failed' && !a.big) row.appendChild(iconButton('retry', 'Retry ' + a.name, function () { upload(id, a); drawAttach(id) }))
+  row.appendChild(iconButton('remove', 'Remove ' + a.name, function () { unattach(id, a) }))
+  return row
+}
+function fillChips(box, id) {
+  box.textContent = ''
+  attached(id).forEach(function (a) { box.appendChild(chip(id, a)) })
+}
+/* the open sheet's chips and Send, after an attachment changed */
+function drawAttach(id) {
+  if (!state.sheet || state.sheet.kind !== 'card' || state.sheet.id !== id || $('sheet').hidden || !$('chips')) return
+  fillChips($('chips'), id)
+  $('send').disabled = uploading(id) || sendingTo === id
+}
+
 /* ---------- sheets ---------- */
 function openSheet(fill) {
   var body = $('sheet-body')
@@ -966,18 +1108,47 @@ function drawCardSheet(fresh) {
       ta.value = drafts[c.id] || ''
       ta.addEventListener('input', function () { drafts[c.id] = ta.value })
       b.appendChild(ta)
+      var chips = el('div', 'chips')
+      chips.id = 'chips'
+      fillChips(chips, c.id)
+      b.appendChild(chips)
       var row = el('div', 'actions')
+      var photo = iconButton('photo', 'Attach a photo', function () { pick(c.id, $('pick-photo')) })
+      photo.id = 'attach-photo'
+      var file = iconButton('file', 'Attach a file', function () { pick(c.id, $('pick-file')) })
+      file.id = 'attach-file'
       var sendBtn = el('button', 'btn primary', 'Send')
       sendBtn.type = 'button'
+      sendBtn.id = 'send'
+      sendBtn.disabled = uploading(c.id) || sendingTo === c.id
       sendBtn.addEventListener('click', function () {
         var text = ta.value.trim()
-        if (!text) return
+        var list = attached(c.id)
+        if ((!text && !list.length) || uploading(c.id) || sendingTo === c.id) return
+        if (list.some(function (a) { return a.state !== 'done' })) { toast('An attachment did not upload: retry or remove it', true); return }
+        var ids = list.map(function (a) { return a.id })
+        sendingTo = c.id
         sendBtn.disabled = true
-        send('cards/' + encodeURIComponent(c.id) + '/prompt', { text: text }, (c.wakes ? 'Waking ' : 'Sent to ') + split(c.title).name).then(function (ok) {
-          sendBtn.disabled = false
-          if (ok) { drafts[c.id] = ''; ta.value = ''; ta.blur() }
-        })
+        api('POST', 'cards/' + encodeURIComponent(c.id) + '/prompt', ids.length ? { text: text, files: ids } : { text: text })
+          .then(function () {
+            toast((c.wakes ? 'Waking ' : 'Sent to ') + split(c.title).name)
+            tick()
+            list.forEach(function (a) { if (a.thumb) URL.revokeObjectURL(a.thumb) })
+            attachments[c.id] = []
+            drafts[c.id] = ''
+            // the sheet may have been drawn again meanwhile: clear the box on the page now
+            var box = $('composer')
+            if (box) { box.value = ''; box.blur() }
+          })
+          .catch(function (e) {
+            toast(e.message, true)
+            // files the PC no longer has (it restarted, or they waited too long) upload again from this phone
+            ;(e.gone || []).forEach(function (g) { list.forEach(function (a) { if (a.id === g) { a.id = null; a.state = 'failed'; a.error = 'Gone from the PC: tap retry' } }) })
+          })
+          .then(function () { sendingTo = null; drawAttach(c.id) })
       })
+      row.appendChild(photo)
+      row.appendChild(file)
       row.appendChild(sendBtn)
       b.appendChild(row)
     } else if (!c.permission) b.appendChild(el('div', 'note', c.refusal || 'This card cannot take a message now.'))
@@ -1074,6 +1245,8 @@ function tick() {
 }
 Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) { t.addEventListener('click', function () { go(t.getAttribute('data-tab')) }) })
 $('sheet').addEventListener('click', function (e) { if (e.target.getAttribute && e.target.getAttribute('data-close')) closeSheet() })
+$('pick-photo').addEventListener('change', picked)
+$('pick-file').addEventListener('change', picked)
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet() })
 pairFromHash().then(function () { draw(); tick(); setInterval(tick, 3000) })
 document.addEventListener('visibilitychange', function () { if (!document.hidden) tick() })

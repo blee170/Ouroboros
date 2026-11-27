@@ -13,7 +13,18 @@ export const PHONE_LIMITS = {
   promptChars: 16 * 1024,
   /** the last reply of a card, as the phone shows it */
   replyChars: 4096,
-  maxDevices: 10
+  maxDevices: 10,
+  /** a file sent from the phone, at most */
+  uploadBytes: 25 * 1024 * 1024,
+  uploadsPerMessage: 6,
+  /** files a phone uploaded and has not sent yet */
+  uploadsPending: 12,
+  /** an upload never sent is deleted after this long, every upload after uploadKeepMs */
+  uploadUnsentMs: 30 * 60_000,
+  uploadKeepMs: 7 * 24 * 60 * 60_000,
+  /** an upload may take minutes on mobile data; every other request is cut off after requestMs */
+  uploadMs: 10 * 60_000,
+  requestMs: 15_000
 } as const
 
 export const DEFAULT_PHONE_PORT = 47900
@@ -132,4 +143,36 @@ export function phoneSend(card: { status?: string; statusDetail?: string; asleep
 /** A device name as typed on the phone: one line, 40 characters. */
 export function cleanDeviceName(name: unknown): string {
   return (typeof name === 'string' ? name : '').replace(/[^\p{L}\p{N} ._'-]/gu, '').trim().slice(0, 40) || 'Phone'
+}
+
+/** Windows opens the device, not a file, for these names (with any extension) */
+const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(\.|$)/i
+
+/**
+ * Pure: a file name from the phone as a safe base name on this PC. Letters (Korean too), digits and a few marks are
+ * kept: no path, no control or bidi character, nothing Windows reserves, nothing a shell expands inside quotes ($ `
+ * ') or reads as a wildcard ([ ]) when a card pastes the path into a command. At most 80 characters, the extension
+ * (1 to 8 letters or digits) kept.
+ */
+export function cleanUploadName(name: unknown): string {
+  const base = (typeof name === 'string' ? name : '').split(/[\\/]/).pop() ?? ''
+  const kept = base.replace(/[^\p{L}\p{N}\p{M} ._()+,=@#&!~-]/gu, '').replace(/ +/g, ' ').replace(/[. ]+$/, '')
+  const dot = /\.([a-z0-9]{1,8})$/i.exec(kept)
+  const ext = dot ? dot[1].toLowerCase() : ''
+  let stem = Array.from((dot ? kept.slice(0, dot.index) : kept).replace(/^[. ]+/, ''))
+    .slice(0, 80 - (ext ? ext.length + 1 : 0))
+    .join('')
+    .replace(/[. ]+$/, '')
+  if (DEVICE_NAME.test(stem)) stem = `_${stem}`
+  return `${stem || 'file'}${ext ? `.${ext}` : ''}`
+}
+
+/** The line above the paths of the files a message from the phone carries. */
+export const PHONE_FILES_NOTE = "These files were attached from the owner's phone and are saved on this PC:"
+
+/** Pure: the prompt a message from the phone becomes, its text and then its files' paths, one per line. */
+export function withPhoneFiles(text: string, paths: readonly string[]): string {
+  if (!paths.length) return text
+  const note = [PHONE_FILES_NOTE, ...paths].join('\n')
+  return text ? `${text}\n\n${note}` : note
 }

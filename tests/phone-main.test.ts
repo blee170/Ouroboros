@@ -6,6 +6,7 @@ vi.mock('../src/main/diagnostics', async (importOriginal) => ({ ...(await import
 
 const { dropWake, phoneHandlers } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
+const { PHONE_FILES_NOTE } = await import('../src/shared/phone')
 
 interface PhoneCard {
   id: string
@@ -51,17 +52,17 @@ describe('a message from the phone, on the real board', () => {
   it('offers the message box to an asleep card and wakes it with the message', () => {
     const t = setup([{ id: 'zz', data: { status: 'ended', statusDetail: 'asleep', asleep: true } }], [])
     expect(t.card('zz')).toMatchObject({ promptable: true, wakes: true })
-    expect(t.h.prompt('zz', 'carry on')).toEqual({ ok: true })
+    expect(t.h.prompt('zz', 'carry on', [])).toEqual({ ok: true })
     expect(t.board.nodes.get('zz')?.data).toMatchObject({ asleep: false, status: 'starting', statusDetail: 'waking' })
     // still waking, no process yet: a second message waits with the first instead of being refused
     expect(t.card('zz')).toMatchObject({ promptable: true, wakes: false })
-    expect(t.h.prompt('zz', 'and this')).toEqual({ ok: true })
+    expect(t.h.prompt('zz', 'and this', [])).toEqual({ ok: true })
   })
 
   it('sends to a card whose turn failed, into Claude Code at its prompt', () => {
     const t = setup([{ id: 'ff', data: { status: 'needs-you', statusDetail: 'failed: API Error: Request rejected (429)' } }], ['ff'])
     expect(t.card('ff')).toMatchObject({ promptable: true, wakes: false })
-    expect(t.h.prompt('ff', 'try again')).toEqual({ ok: true })
+    expect(t.h.prompt('ff', 'try again', [])).toEqual({ ok: true })
     expect(t.writes.some(([id, d]) => id === 'ff' && d.includes('try again'))).toBe(true)
   })
 
@@ -77,10 +78,21 @@ describe('a message from the phone, on the real board', () => {
       const c = t.card(id)
       expect(c.promptable).toBe(false)
       expect(c.refusal).toBeTruthy()
-      expect(t.h.prompt(id, 'hello')).toEqual({ ok: false, error: c.refusal })
+      expect(t.h.prompt(id, 'hello', [])).toEqual({ ok: false, error: c.refusal })
     }
     expect(t.card('pp').refusal).toMatch(/answer/)
     expect(t.card('dd').refusal).toMatch(/Restart/)
     expect(t.writes).toEqual([])
+  })
+
+  it('puts the files after the text, one path per line under one line, the way the PC composer adds paths', () => {
+    const t = setup([{ id: 'ww', data: { status: 'idle' } }], ['ww'])
+    const files = [
+      { path: 'C:\\up\\2026-11-27\\a-1234abcd.png', name: 'a.png' },
+      { path: 'C:\\up\\2026-11-27\\회의 메모-5678abcd.pdf', name: '회의 메모.pdf' }
+    ]
+    expect(t.h.prompt('ww', 'see these', files)).toEqual({ ok: true })
+    const typed = t.writes.find(([id]) => id === 'ww')?.[1] ?? ''
+    expect(typed).toContain(`see these\n\n${PHONE_FILES_NOTE}\n${files[0].path}\n${files[1].path}`)
   })
 })

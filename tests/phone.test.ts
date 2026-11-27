@@ -142,7 +142,9 @@ describe('the phone server', () => {
     expect(r.headers['content-security-policy']).toContain("default-src 'self'")
     expect(r.text).toContain('<script src="/m/app.js">')
     expect(r.text).not.toMatch(/<script>/)
-    expect((await call('/m/app.js')).text).not.toContain('innerHTML')
+    const js = (await call('/m/app.js')).text
+    expect(js).not.toContain('innerHTML')
+    expect(() => new Function(js)).not.toThrow() // the template string still makes valid script
   })
 
   it('gives an automation key the notify route and nothing else', async () => {

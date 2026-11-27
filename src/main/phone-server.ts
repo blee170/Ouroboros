@@ -8,11 +8,13 @@ import { networkInterfaces } from 'node:os'
 import { ANSWER_KEYS, FailureLimiter, NOTIFY_EVENTS, PHONE_LIMITS, bindRefusal, type NotifyEvent, cleanDeviceName, pairingUrl, sourceAllowed, type PhoneDevice, type PhoneSettingsView } from '@shared/phone'
 import { PHONE_CSS, PHONE_HTML, PHONE_JS, PHONE_MANIFEST } from './phone-page'
 import { PHONE_ICON_PNG } from './phone-icon'
+import type { PhoneUploads } from './phone-uploads'
 
 /** What the phone sees and may do; injected so the server runs without Electron in tests. */
 export interface PhoneHandlers {
   board(): unknown
-  prompt(cardId: string, text: string): { ok: boolean; error?: string }
+  /** `files`: saved on this PC from the phone, attached to this message */
+  prompt(cardId: string, text: string, files: Array<{ path: string; name: string }>): { ok: boolean; error?: string }
   /** `promptAt` is the prompt the phone showed (the card's lastEventAt): a newer prompt is not answered blind */
   answer(cardId: string, key: string, promptAt: number): { ok: boolean; error?: string }
   resolveApproval(id: string, approve: boolean): { ok: boolean; error?: string }
@@ -38,7 +40,18 @@ export function isOwnAddress(ip: string): boolean {
 }
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex')
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+// blob: is the thumbnail of a photo picked on the phone, drawn from the phone's own copy
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
+/** The x-file-name header, URI-encoded by the page; one that does not decode is taken as it is. */
+function fileName(header: string | string[] | undefined): string {
+  const raw = typeof header === 'string' ? header : ''
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
 
 /** Paired devices, kept as token hashes in the app's data folder. */
 export class PhoneDevices {
@@ -111,6 +124,8 @@ export class PhoneDevices {
 
 function readBody(req: http.IncomingMessage, limit: number): Promise<unknown> {
   return new Promise((resolve) => {
+    // cut off (too slow): settled with nothing, its connection is gone
+    req.on('close', () => resolve(undefined))
     let size = 0
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => {
@@ -163,7 +178,9 @@ export class PhoneServer {
     private handlers: PhoneHandlers,
     private log: (line: string) => void = () => {},
     /** the network rules; tests swap in loopback */
-    private policy: { sourceAllowed: typeof sourceAllowed; bindRefusal: typeof bindRefusal; isLocal: (ip: string) => boolean } = { sourceAllowed, bindRefusal, isLocal: isOwnAddress }
+    private policy: { sourceAllowed: typeof sourceAllowed; bindRefusal: typeof bindRefusal; isLocal: (ip: string) => boolean } = { sourceAllowed, bindRefusal, isLocal: isOwnAddress },
+    /** `uploads`: where files from the phone go (no upload route without it); tests shorten the time bounds */
+    private options: { uploads?: PhoneUploads; requestMs?: number; uploadMs?: number } = {}
   ) {}
 
   get url(): string | undefined {
@@ -185,7 +202,8 @@ export class PhoneServer {
         if (!res.headersSent) json(res, 500, { error: 'internal error' })
       })
     })
-    server.requestTimeout = 15_000
+    // an upload's bound; every other request is cut off sooner, in handle()
+    server.requestTimeout = this.options.uploadMs ?? PHONE_LIMITS.uploadMs
     server.headersTimeout = 10_000
     const err = await new Promise<string | undefined>((resolve) => {
       server.once('error', (e) => resolve((e as Error).message))
@@ -242,6 +260,16 @@ export class PhoneServer {
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const method = req.method ?? 'GET'
+    const path = new URL(req.url ?? '/', 'http://phone').pathname
+    // an upload may take minutes on mobile data; every other request is cut off as before uploads
+    const upload = method === 'POST' && path === '/m/api/uploads'
+    // a refused upload is answered and its connection closed: the rest of its body is never read
+    if (upload) res.setHeader('connection', 'close')
+    else
+      setTimeout(() => {
+        if (!req.complete) req.destroy()
+      }, this.options.requestMs ?? PHONE_LIMITS.requestMs).unref()
     const ip = req.socket.remoteAddress ?? ''
     // only the interface's own network reaches it (Tailscale, or the home LAN when the owner allowed it)
     if (!this.policy.sourceAllowed(ip, this.view.allowLan)) return void res.writeHead(403).end()
@@ -251,8 +279,6 @@ export class PhoneServer {
     const self = `${this.view.host}:${this.boundPort}`
     if (req.headers.host !== self) return void res.writeHead(421).end()
     if (req.headers.origin !== undefined && req.headers.origin !== `http://${self}`) return void res.writeHead(403).end()
-    const path = new URL(req.url ?? '/', `http://${self}`).pathname
-    const method = req.method ?? 'GET'
     if (method === 'GET' && (path === '/m' || path === '/m/')) return this.asset(res, 'text/html; charset=utf-8', PHONE_HTML)
     if (method === 'GET' && path === '/m/app.js') return this.asset(res, 'text/javascript; charset=utf-8', PHONE_JS)
     if (method === 'GET' && path === '/m/app.css') return this.asset(res, 'text/css; charset=utf-8', PHONE_CSS)
@@ -267,10 +293,11 @@ export class PhoneServer {
     // not logged: the failures that led here were, and a blocked address must not fill the log
     if (this.failures.blocked(ip)) return json(res, 429, { error: 'too many failed attempts; wait a minute' })
     const type = req.headers['content-type'] ?? ''
+    const wanted = upload ? 'application/octet-stream' : 'application/json'
     // a failed attempt too: before any key is checked, so it must not log without limit
-    if (method === 'POST' && !type.startsWith('application/json')) {
+    if (method === 'POST' && !type.startsWith(wanted)) {
       this.failures.fail(ip)
-      return refuse(415, 'application/json only', `content type ${type ? `"${type.slice(0, 60)}"` : 'missing'}, needs application/json`)
+      return refuse(415, `${wanted} only`, `content type ${type ? `"${type.slice(0, 60)}"` : 'missing'}, needs ${wanted}`)
     }
 
     if (method === 'POST' && path === '/m/api/pair') {
@@ -317,15 +344,34 @@ export class PhoneServer {
     if (method === 'GET' && path === '/m/api/board') return json(res, 200, this.handlers.board())
     if (method === 'GET' && path === '/m/api/report/latest') return json(res, 200, { markdown: this.handlers.latestReport() ?? '' })
 
+    const uploads = this.options.uploads
+    if (upload && uploads) {
+      // a file over the limit is refused by its declared length, before a byte of it is read
+      const declared = req.headers['content-length']
+      if (declared !== undefined && !(Number(declared) <= uploads.maxBytes)) return refuse(413, `a file of at most ${+(uploads.maxBytes / 1048576).toFixed(2)} MB`, `declared ${declared.slice(0, 20)} bytes`)
+      const r = await uploads.save(device.id, fileName(req.headers['x-file-name']), req)
+      return 'error' in r ? refuse(r.status, r.error) : json(res, 200, r)
+    }
+    const unattach = /^\/m\/api\/uploads\/([0-9a-f]{16})$/.exec(path)
+    if (method === 'DELETE' && unattach && uploads) return uploads.discard(device.id, unattach[1]) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'no such attachment' })
+
     const card = /^\/m\/api\/cards\/([A-Za-z0-9_-]{1,64})\/(prompt|answer)$/.exec(path)
     if (method === 'POST' && card) {
-      const body = (await readBody(req, PHONE_LIMITS.bodyBytes)) as { text?: unknown; key?: unknown } | undefined
+      const body = (await readBody(req, PHONE_LIMITS.bodyBytes)) as { text?: unknown; key?: unknown; files?: unknown } | undefined
       if (!body) return json(res, 400, { error: 'bad request' })
       if (card[2] === 'prompt') {
         const text = typeof body.text === 'string' ? body.text.trim() : ''
-        if (!text || text.length > PHONE_LIMITS.promptChars) return json(res, 400, { error: `a message of 1 to ${PHONE_LIMITS.promptChars} characters` })
-        const r = this.handlers.prompt(card[1], text)
-        if (r.ok) this.handlers.note(`${from} → ${card[1]}: ${text.slice(0, 200)}`)
+        const ids = body.files === undefined ? [] : Array.isArray(body.files) && body.files.every((f) => typeof f === 'string') ? [...new Set(body.files as string[])] : undefined
+        if (!ids) return json(res, 400, { error: 'files must be a list of attachment ids' })
+        if (ids.length > PHONE_LIMITS.uploadsPerMessage) return json(res, 400, { error: `at most ${PHONE_LIMITS.uploadsPerMessage} attachments in one message` })
+        // a message of files alone is a message
+        if ((!text && !ids.length) || text.length > PHONE_LIMITS.promptChars) return json(res, 400, { error: `a message of 1 to ${PHONE_LIMITS.promptChars} characters` })
+        const att = !ids.length ? { files: [] } : (uploads?.attach(device.id, ids) ?? { gone: ids })
+        if ('gone' in att) return json(res, 400, { error: 'an attachment is gone; attach it again', gone: att.gone })
+        const r = this.handlers.prompt(card[1], text, att.files)
+        // a refused message leaves its files attachable, so sending it again works
+        if (r.ok) uploads?.sent(ids)
+        if (r.ok) this.handlers.note(`${from} → ${card[1]}: ${[text.slice(0, 200), att.files.length ? `(attached: ${att.files.map((f) => f.name).join(', ')})` : ''].filter(Boolean).join(' ')}`)
         return json(res, r.ok ? 200 : 409, r)
       }
       const key = typeof body.key === 'string' && Object.hasOwn(ANSWER_KEYS, body.key) ? body.key : undefined

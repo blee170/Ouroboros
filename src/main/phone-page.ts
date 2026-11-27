@@ -1243,15 +1243,17 @@ function drawCardSheet(fresh) {
         var list = attached(c.id)
         if ((!text && !list.length) || uploading(c.id) || sendingTo === c.id) return
         if (list.some(function (a) { return a.state !== 'done' })) { toast('An attachment did not upload: retry or remove it', true); return }
-        var ids = list.map(function (a) { return a.id })
+        var sent = list.slice()
+        var ids = sent.map(function (a) { return a.id })
         sendingTo = c.id
         sendBtn.disabled = true
         api('POST', 'cards/' + encodeURIComponent(c.id) + '/prompt', ids.length ? { text: text, files: ids } : { text: text })
           .then(function () {
             toast((c.wakes ? 'Waking ' : 'Sent to ') + split(c.title).name)
             tick()
-            list.forEach(function (a) { if (a.thumb) URL.revokeObjectURL(a.thumb) })
-            attachments[c.id] = []
+            // only the files this message carried: one picked while it was on its way waits for the next message
+            sent.forEach(function (a) { if (a.thumb) URL.revokeObjectURL(a.thumb) })
+            attachments[c.id] = attached(c.id).filter(function (a) { return sent.indexOf(a) < 0 })
             drafts[c.id] = ''
             // the sheet may have been drawn again meanwhile: clear the box on the page now
             var box = $('composer')
@@ -1285,7 +1287,7 @@ function restartRow(c) {
   b.id = 'restart'
   b.addEventListener('click', function () {
     var name = split(c.title).name
-    confirmSheet('Restart ' + name + '?', RELAUNCH[c.relaunch] || RELAUNCH.new, 'Restart', function () {
+    confirmSheet('Restart ' + name + '?', (c.resumeFailed ? 'Its last restart resumed its conversation and did not come up. ' : '') + (RELAUNCH[c.relaunch] || RELAUNCH.new), 'Restart', function () {
       api('POST', 'cards/' + encodeURIComponent(c.id) + '/restart', { promptAt: c.promptAt || 0 })
         .then(function () { toast('Restarting ' + name); tick() })
         .catch(function (e) { toast(e.message, true); tick() })

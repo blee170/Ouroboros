@@ -34,7 +34,7 @@ vi.mock('../src/main/claude-inbox', async (importOriginal) => {
   return { ...real, deliverInbox: (...a: Parameters<typeof real.deliverInbox>) => (failingInboxes.has(a[0].socket) ? Promise.resolve('failed' as const) : real.deliverInbox(...a)) }
 })
 
-const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt, routeHook } = await import('../src/main/ipc')
+const { registerIpc, createApiHandlers, wakeCard, registerInbox, sendPrompt, routeHook, phoneHandlers } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
 const { IPC } = await import('../src/shared/protocol')
 const { log } = await import('../src/main/diagnostics')
@@ -61,6 +61,8 @@ const ptys = Object.assign(new EventEmitter(), {
 let crashed = false
 const sent: Array<[string, unknown]> = []
 let held: unknown[] = []
+/** cards whose board entry was changed outside the app: their launch is refused */
+const heldCards = new Set<string>()
 const board = new Board()
 const s = {
   id: 1,
@@ -71,8 +73,8 @@ const s = {
   ledger: { flush: vi.fn(), load: vi.fn(), cardStopped: vi.fn(), release: vi.fn(), data: { tasks: [] } },
   mail: { load: vi.fn(), hasUndelivered: () => false },
   routines: { load: vi.fn(), list: () => [] },
-  gate: { load: vi.fn() },
-  decisions: { load: vi.fn(() => []), withdraw: () => [] },
+  gate: { load: vi.fn(), pending: () => [] },
+  decisions: { load: vi.fn(() => []), withdraw: () => [], pending: () => [] },
   autonomy: { on: false, noteDecision: vi.fn(), permissionMode: (m: unknown) => m, settingsFragment: () => undefined, storedPermissionMode: (m: unknown) => m, dispatchRefusal: () => undefined, countDispatch: vi.fn(), promptRefusal: () => undefined },
   taskSync: undefined
 }
@@ -91,7 +93,7 @@ const ctx = {
   cliWatch: { on: vi.fn() },
   updater: { on: vi.fn() },
   store: { getSettings: () => ({}), getRecent: () => [], pushRecent: vi.fn() },
-  boardTrust: { isHeld: () => false, heldNow: () => held, check: () => [] },
+  boardTrust: { isHeld: (_root: string, id: string) => heldCards.has(id), heldNow: () => held, check: () => [] },
   hookServer: { baseUrl: 'http://127.0.0.1:9', port: 9, hookToken: () => 'h', apiToken: () => 'a', mailToken: () => 'm' },
   browsers: { has: () => true, get: () => undefined },
   tmpDir: tmpdir(),
@@ -252,6 +254,86 @@ describe("a Claude card's settings", () => {
     const uploads = join(app.getPath('userData'), 'phone-uploads')
     expect(allowed('rd1')).toEqual([phoneFilesReadRule(join(uploads, 'rd1'))])
     expect(allowed('rd2')).toEqual([phoneFilesReadRule(join(uploads, 'rd2'))])
+  })
+})
+
+describe('a Claude card launched for the phone', () => {
+  interface PhoneCard { id: string; status: string; promptable: boolean; refusal?: string; promptAt?: number; restartable: boolean; relaunch?: string; resumeFailed?: boolean }
+  const phone = phoneHandlers(ctx as never)
+  const view = (id: string): PhoneCard => (phone.board() as { cards: PhoneCard[] }).cards.find((c) => c.id === id)!
+  /** the page's launch of the card, with the card's own launch options */
+  const launch = (id: string, claude: Record<string, unknown> = {}) => call<Promise<{ ok: boolean; error?: string }>>(IPC.claudeLaunch, { nodeId: id, cwd: ROOT, shell: 'cmd', cols: 80, rows: 24, kind: 'claude', engine: 'claude', claude, title: id })
+  /** the options the card's latest launch was prepared with */
+  const launched = (id: string) => (launches.filter((l) => l.nodeId === id).at(-1) as unknown as { claude: { resume?: string; continue?: boolean; model?: string } }).claude
+  const exited = (id: string): void => {
+    alive.delete(id)
+    ptys.emit('exit', id, 1)
+  }
+
+  it('says why the PC refused its launch and offers the Restart again; a second refusal says so again', async () => {
+    boardWith([card('rf1', 'claude', { asleep: true, sessionId: 'sess-rf1' })])
+    heldCards.add('rf1')
+    try {
+      expect(phone.prompt('rf1', 'carry on', [])).toEqual({ ok: true }) // it wakes: the page launches it
+      expect(await launch('rf1')).toMatchObject({ ok: false, error: expect.stringMatching(/^held:/) })
+      const c = view('rf1')
+      expect(c).toMatchObject({ status: 'starting', promptable: false, restartable: true })
+      expect(c.refusal).toMatch(/^The PC did not start it: held:/)
+      expect(phone.prompt('rf1', 'hello', [])).toEqual({ ok: false, error: c.refusal })
+      expect(phone.restart('rf1', c.promptAt ?? 0)).toEqual({ ok: true })
+      expect(view('rf1').restartable).toBe(false) // asked for, until its launch
+      expect(await launch('rf1')).toMatchObject({ ok: false })
+      expect(view('rf1')).toMatchObject({ restartable: true, refusal: c.refusal })
+    } finally {
+      heldCards.delete('rf1')
+    }
+    expect(await launch('rf1')).toEqual({ ok: true })
+    expect(view('rf1')).toMatchObject({ status: 'starting', restartable: false })
+    expect(view('rf1').refusal).toBeUndefined()
+  })
+
+  it('resumes the session main knows for the one launch the phone asked for; the card’s own options stay as they are', async () => {
+    const own = { continue: true, model: 'opus' }
+    boardWith([card('pr1', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr1', claude: own })])
+    expect(view('pr1')).toMatchObject({ restartable: true, relaunch: 'resume' })
+    expect(phone.restart('pr1', view('pr1').promptAt ?? 0)).toEqual({ ok: true })
+    expect(sent.filter(([ch]) => ch === IPC.boardUpdateNode).map(([, p]) => p)).toEqual([{ nodeId: 'pr1', data: {}, restart: true }])
+    expect(await launch('pr1', own)).toEqual({ ok: true })
+    expect(launched('pr1')).toMatchObject({ resume: 'sess-pr1', model: 'opus' })
+    expect(launched('pr1').continue).toBeFalsy()
+    expect(board.nodes.get('pr1')?.data.claude).toEqual(own)
+    // the launch after it (the PC's Restart) is the card's own again
+    expect(await launch('pr1', own)).toEqual({ ok: true })
+    expect(launched('pr1')).toMatchObject({ continue: true, model: 'opus' })
+    expect(launched('pr1').resume).toBeUndefined()
+  })
+
+  it('after a resume that did not come up, restarts as the card’s own options say and says so, until its CLI reports', async () => {
+    boardWith([card('pr2', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr2', claude: { continue: true } })])
+    expect(phone.restart('pr2', view('pr2').promptAt ?? 0)).toEqual({ ok: true })
+    await launch('pr2', { continue: true })
+    expect(launched('pr2').resume).toBe('sess-pr2')
+    exited('pr2') // the session could not be resumed
+    const c = view('pr2')
+    expect(c).toMatchObject({ restartable: true, relaunch: 'continue', resumeFailed: true })
+    expect(phone.restart('pr2', c.promptAt ?? 0)).toEqual({ ok: true })
+    await launch('pr2', { continue: true })
+    expect(launched('pr2')).toMatchObject({ continue: true })
+    expect(launched('pr2').resume).toBeUndefined()
+    // its CLI is up and reports: the next Restart from the phone resumes again
+    routeHook(ctx as never, 'pr2', { hook_event_name: 'UserPromptSubmit', session_id: 'sess-pr2', prompt: 'hi' })
+    exited('pr2')
+    expect(view('pr2')).toMatchObject({ restartable: true, relaunch: 'resume' })
+    expect(view('pr2').resumeFailed).toBeUndefined()
+  })
+
+  it('a removed card forgets the resume it was owed', async () => {
+    boardWith([card('pr3', 'claude', { status: 'ended', statusDetail: 'exited (1)', sessionId: 'sess-pr3' })])
+    expect(phone.restart('pr3', view('pr3').promptAt ?? 0)).toEqual({ ok: true })
+    await createApiHandlers(ctx as never, s as never).removeAgent('pr3')
+    boardWith([card('pr3', 'claude', { sessionId: 'sess-other' })]) // another card under the same id
+    await launch('pr3')
+    expect(launched('pr3').resume).toBeUndefined()
   })
 })
 

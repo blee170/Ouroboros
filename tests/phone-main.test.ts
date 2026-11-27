@@ -34,14 +34,14 @@ function setup(nodes: Array<{ id: string; data: Record<string, unknown> }>, aliv
     board,
     ledger: new Ledger(() => {}),
     mail: { send: vi.fn((_m: { to: string; body: string }) => ({ ok: true })) },
-    autonomy: { on: false, promptRefusal: () => null, notePhone: () => {}, noteDecision: () => {}, public: () => ({}) },
+    autonomy: { on: false, promptRefusal: (_n: unknown): string | null => null, notePhone: () => {}, noteDecision: () => {}, public: () => ({}) },
     gate: { pending: () => [] },
     decisions: { pending: () => [] },
     win: { isDestroyed: () => false, isFocused: () => false, webContents: { isCrashed: () => false, send: (channel: string, payload: unknown) => void sent.push([channel, payload]) } }
   }
   const ctx = {
     ptys: { isAlive: (id: string) => live.has(id), write: (id: string, data: string) => void writes.push([id, data]), kill: () => {} },
-    store: { getSettings: () => ({}) },
+    store: { getSettings: (): { maxWorkersPerLead?: number } => ({}) },
     usage: { forgetCard: () => {} },
     windows: { current: () => s, forNode: () => s, all: (): Array<typeof s> => [s] }
   }
@@ -99,6 +99,43 @@ describe('a message from the phone, on the real board', () => {
     expect(t.h.prompt('ww', 'see these', paths)).toEqual({ ok: true })
     const typed = t.writes.find(([id]) => id === 'ww')?.[1] ?? ''
     expect(typed).toContain(`see these\n\n${PHONE_FILES_NOTE}\n${paths[0]}\n${paths[1]}`)
+  })
+
+  it('offers a Restart, not the message box, once a card’s CLI ended inside its shell (/exit)', () => {
+    const t = setup([{ id: 'ex', data: { status: 'idle', statusDetail: 'ready' } }], ['ex'])
+    t.board.applyHook('ex', { hook_event_name: 'SessionEnd', reason: 'prompt_input_exit', session_id: 'sess-ex' })
+    const c = t.card('ex')
+    expect(c).toMatchObject({ status: 'ended', promptable: false, restartable: true, relaunch: 'resume' })
+    expect(c.refusal).toMatch(/Restart it/)
+    expect(t.h.prompt('ex', 'hello', [])).toEqual({ ok: false, error: c.refusal })
+    expect(t.h.restart('ex', c.promptAt ?? 0)).toEqual({ ok: true })
+    expect(t.writes).toEqual([])
+  })
+
+  it('leaves an asleep card asleep while its lead is at its live-card cap, and says so on the screen and in the answer', () => {
+    const t = setup(
+      [
+        { id: 'lead', data: { kind: 'conductor', status: 'idle' } },
+        { id: 'w1', data: { status: 'working', parentId: 'lead' } },
+        { id: 'zw', data: { status: 'ended', statusDetail: 'asleep', asleep: true, parentId: 'lead' } }
+      ],
+      ['lead', 'w1']
+    )
+    t.ctx.store.getSettings = () => ({ maxWorkersPerLead: 1 })
+    const c = t.card('zw')
+    expect(c).toMatchObject({ promptable: false, wakes: false })
+    expect(c.refusal).toMatch(/lead/)
+    expect(t.h.prompt('zw', 'carry on', [])).toEqual({ ok: false, error: c.refusal })
+    expect(t.board.nodes.get('zw')?.data.asleep).toBe(true)
+  })
+
+  it('leaves an asleep card asleep when the Autonomous run refuses the prompt, with the run’s reason', () => {
+    const t = setup([{ id: 'zr', data: { status: 'ended', statusDetail: 'asleep', asleep: true } }], [])
+    t.s.autonomy.on = true
+    t.s.autonomy.promptRefusal = () => 'Autonomous mode: not this card'
+    expect(t.card('zr')).toMatchObject({ promptable: false, wakes: false, refusal: 'Autonomous mode: not this card' })
+    expect(t.h.prompt('zr', 'carry on', [])).toEqual({ ok: false, error: 'Autonomous mode: not this card' })
+    expect(t.board.nodes.get('zr')?.data.asleep).toBe(true)
   })
 })
 
@@ -176,8 +213,9 @@ describe('a Restart from the phone, on the real board', () => {
     expect(t.h.restart('rx', c.promptAt! - 1)).toEqual({ ok: false, error: 'the card has moved on since this screen was loaded; look again' })
     expect(restarts(t.sent)).toEqual([])
     expect(t.h.restart('rx', c.promptAt!)).toEqual({ ok: true })
-    // it keeps its conversation: the session the app knows goes into its launch options
-    expect(restarts(t.sent)).toEqual([{ nodeId: 'rx', data: { claude: { resume: 'sess-rx' } }, restart: true }])
+    // the page is asked for the PC's Restart; the session it resumes is main's, for that launch only (reattach-main.test.ts)
+    expect(restarts(t.sent)).toEqual([{ nodeId: 'rx', data: {}, restart: true }])
+    expect(t.board.nodes.get('rx')?.data.claude).toBeUndefined()
     // a double tap, or a second phone: the restart already asked for is not asked again
     expect(t.h.restart('rx', c.promptAt!)).toEqual({ ok: false, error: 'It is restarting already.' })
     expect(t.card('rx').restartable).toBe(false)
@@ -198,10 +236,12 @@ describe('a Restart from the phone, on the real board', () => {
     expect(t.h.restart('r2', t.card('r2').promptAt ?? 0)).toEqual({ ok: true })
     // no session known: the card's launch options are left as they are, the page relaunches it as the PC's Restart would
     expect(restarts(t.sent)).toEqual([{ nodeId: 'r2', data: {}, restart: true }])
-    // a known session replaces --continue (the latest conversation in the folder may be another card's), the rest stays
+    // a known session beats --continue (the latest conversation in the folder may be another card's), and the card's
+    // own options stay as the owner set them: every later Restart on the PC still continues
     expect(t.card('r3')).toMatchObject({ restartable: true, relaunch: 'resume' })
     expect(t.h.restart('r3', t.card('r3').promptAt ?? 0)).toEqual({ ok: true })
-    expect(restarts(t.sent)[1]).toEqual({ nodeId: 'r3', data: { claude: { resume: 'sess-r3', continue: undefined, model: 'opus' } }, restart: true })
+    expect(restarts(t.sent)[1]).toEqual({ nodeId: 'r3', data: {}, restart: true })
+    expect(t.board.nodes.get('r3')?.data.claude).toEqual({ continue: true, model: 'opus' })
   })
 
   it('is not offered to a running, asleep, waking or starting card', () => {

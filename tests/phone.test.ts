@@ -70,7 +70,9 @@ describe('what a message from the phone does to a card', () => {
     ['a card whose CLI never started', { status: 'needs-you', statusDetail: 'failed: claude is not installed or not on PATH.', alive: true, launchFailed: true }],
     // the same "failed:" words, but text typed there would run in a shell
     ['a card where only its shell runs', { status: 'needs-you', statusDetail: 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.', alive: true, launchFailed: true }],
-    ['a failed turn whose process is gone', { status: 'needs-you', statusDetail: 'failed: API Error', alive: false, launchFailed: false }]
+    ['a failed turn whose process is gone', { status: 'needs-you', statusDetail: 'failed: API Error', alive: false, launchFailed: false }],
+    // /exit: SessionEnd ends the CLI, its shell stays alive (an inbox push would come back gone and drop the message)
+    ['a card whose CLI ended inside its shell', { status: 'ended', statusDetail: 'session ended', alive: true, launchFailed: false }]
   ])('refuses %s: it needs a Restart', (_name, card) => {
     const r = phoneSend(card)
     expect(r).not.toHaveProperty('how')
@@ -89,6 +91,20 @@ describe('what a message from the phone does to a card', () => {
     expect(r).not.toHaveProperty('how')
     expect((r as { refusal: string }).refusal).toMatch(/answer/)
   })
+
+  it('leaves an asleep card asleep when it cannot wake, and says why', () => {
+    const asleep = { status: 'ended', statusDetail: 'asleep', asleep: true, alive: false, launchFailed: false }
+    const capped = phoneSend({ ...asleep, leadFull: true })
+    expect(capped).not.toHaveProperty('how')
+    expect((capped as { refusal: string }).refusal).toMatch(/lead/)
+    // the run's own words, as sendPrompt would refuse it
+    expect(phoneSend({ ...asleep, runRefusal: 'Autonomous mode: not this card' })).toEqual({ refusal: 'Autonomous mode: not this card' })
+  })
+
+  it('says why the PC did not start a card, instead of "not running"', () => {
+    const held = 'held: the board file was changed outside Ouroboros.'
+    expect(phoneSend({ status: 'starting', statusDetail: 'waking', alive: false, launchFailed: false, launchRefused: held })).toEqual({ refusal: `The PC did not start it: ${held}` })
+  })
 })
 
 describe('what a Restart from the phone does to a card', () => {
@@ -97,7 +113,10 @@ describe('what a Restart from the phone does to a card', () => {
     ['a card whose CLI never came up', { status: 'needs-you', statusDetail: 'failed: claude is not installed or not on PATH.', ...down, alive: true, launchFailed: true }],
     ['a card where only its shell runs', { status: 'needs-you', statusDetail: 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.', ...down, alive: true, launchFailed: true }],
     ['a card whose process exited', { status: 'ended', statusDetail: 'exited (0)', ...down }],
-    ['a failed turn whose process is gone', { status: 'needs-you', statusDetail: 'failed: API Error', ...down }]
+    ['a failed turn whose process is gone', { status: 'needs-you', statusDetail: 'failed: API Error', ...down }],
+    ['a card whose CLI ended inside its shell', { status: 'ended', statusDetail: 'session ended', ...down, alive: true }],
+    // a refused launch leaves main's status as it was (starting, for a woken card), with no process
+    ['a card whose launch the PC refused', { status: 'starting', statusDetail: 'waking', ...down, launchRefused: 'held: the board file was changed outside Ouroboros.' }]
   ])('restarts %s', (_name, card) => {
     expect(phoneRestart(card)).toHaveProperty('how')
   })
@@ -127,6 +146,13 @@ describe('what a Restart from the phone does to a card', () => {
     // the session the app knows wins: a card that was launched plain keeps its conversation too
     expect(phoneRestart({ ...gone, sessionId: 'sess-9' })).toEqual({ how: 'resume' })
     expect(phoneRestart({ ...gone, sessionId: 'sess-9', claude: { continue: true } })).toEqual({ how: 'resume' })
+  })
+
+  it('after a resume from the phone that did not come up, relaunches as the card’s own options say, and says so', () => {
+    const tried = { status: 'ended', ...down, sessionId: 'sess-9', resumeTried: true }
+    expect(phoneRestart({ ...tried, claude: { continue: true } })).toEqual({ how: 'continue', resumeFailed: true })
+    expect(phoneRestart({ ...tried, claude: { resume: 'sess-own' } })).toEqual({ how: 'resume', resumeFailed: true })
+    expect(phoneRestart(tried)).toEqual({ how: 'new', resumeFailed: true })
   })
 })
 

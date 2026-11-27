@@ -435,6 +435,22 @@ const wakePrompts = new Map<string, string[]>()
  */
 const restartsOwed = new Set<string>()
 
+/**
+ * Cards whose latest launch the PC refused (a held board file, an Autonomous run, a failed WSL check), with why. A
+ * refused launch reports no exit and leaves main's status as it was (a woken card stays starting): the phone says why
+ * and offers the Restart again. Cleared by the card's next launch, its sleep and its removal.
+ */
+const launchRefused = new Map<string, string>()
+
+/**
+ * A phone's Restart resumes the session main knows for one launch, and writes nothing into the card's options (they
+ * stay the owner's: --continue, its own resume or none). 'next': the next launch resumes it. 'tried': that launch ran;
+ * until the card's CLI reports (a hook other than SessionEnd, which an ending CLI sends) the phone restarts it with its
+ * own options, so a session that can no longer be resumed is not tried again and again. Forgotten when the card is
+ * removed.
+ */
+const resumeOnce = new Map<string, 'next' | 'tried'>()
+
 /** A woken card that will not come up: what it was woken with is dropped, not typed in at some later start. */
 export function dropWake(id: string, why: string): void {
   if (wakePrompts.delete(id)) log(`sleep: ${id} ${why}; the prompt it was woken with is dropped`)
@@ -472,6 +488,7 @@ function putToSleep(ctx: MainContext, s: WindowSession, id: string): void {
   transcripts.delete(id)
   launchOut.delete(id)
   launchFailed.delete(id)
+  launchRefused.delete(id)
   trustAsked.delete(id)
   launchCommands.delete(id)
   clearTimeout(exitChecks.get(id))
@@ -642,6 +659,8 @@ function removeCard(ctx: MainContext, s: WindowSession, id: string): void {
   running.delete(id)
   wakePrompts.delete(id)
   restartsOwed.delete(id)
+  launchRefused.delete(id)
+  resumeOnce.delete(id)
   lastInputAt.delete(id)
   ctx.usage.forgetCard(id)
   forgetMail(id)
@@ -1302,18 +1321,27 @@ export function createPhone(ctx: MainContext): PhoneServer {
 export function phoneHandlers(ctx: MainContext): PhoneHandlers {
   const win = (): WindowSession | undefined => ctx.windows.current()
   // a card still waking has no process yet, and takes a prompt (it waits with the one it was woken with)
-  const sendFor = (n: { id: string; data: { status?: string; statusDetail?: string; asleep?: boolean } }): PhoneSend =>
-    phoneSend({ status: n.data.status, statusDetail: n.data.statusDetail, asleep: n.data.asleep, alive: ctx.ptys.isAlive(n.id) || wakePrompts.has(n.id), launchFailed: launchFailed.has(n.id) })
-  const sendView = (n: Parameters<typeof sendFor>[0]): { promptable: boolean; wakes: boolean; refusal?: string } => {
-    const r = sendFor(n)
+  const sendFor = (s: WindowSession, n: { id: string; data: NodeData }): PhoneSend =>
+    phoneSend({
+      status: n.data.status,
+      statusDetail: n.data.statusDetail,
+      asleep: n.data.asleep,
+      alive: ctx.ptys.isAlive(n.id) || wakePrompts.has(n.id),
+      launchFailed: launchFailed.has(n.id),
+      launchRefused: launchRefused.get(n.id),
+      runRefusal: (s.autonomy.on && s.autonomy.promptRefusal(n.data)) || undefined,
+      leadFull: Boolean(n.data.asleep && wakeRefusal(ctx, s, n.data.parentId))
+    })
+  const sendView = (s: WindowSession, n: Parameters<typeof sendFor>[1]): { promptable: boolean; wakes: boolean; refusal?: string } => {
+    const r = sendFor(s, n)
     return 'refusal' in r ? { promptable: false, wakes: false, refusal: r.refusal } : { promptable: true, wakes: r.how === 'wake' }
   }
   // a restart asked for (restartsOwed) runs until the page's launch starts, then the launch itself (spawning)
   const restartFor = (n: { id: string; data: { status?: string; asleep?: boolean; sessionId?: string; claude?: ClaudeOptions } }): PhoneRestart =>
-    phoneRestart({ status: n.data.status, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), sessionId: n.data.sessionId, claude: n.data.claude })
-  const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new' } => {
+    phoneRestart({ status: n.data.status, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), launchRefused: launchRefused.get(n.id), sessionId: n.data.sessionId, resumeTried: resumeOnce.get(n.id) === 'tried', claude: n.data.claude })
+  const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new'; resumeFailed?: boolean } => {
     const r = restartFor(n)
-    return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how }
+    return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how, resumeFailed: r.resumeFailed }
   }
   // a waiting task as the board carries it: what the Inbox shows; its long parts wait for the task route
   const taskItem = (w: WindowSession, t: Task, need: NonNullable<ReturnType<typeof ownerNeed>>) => {
@@ -1338,7 +1366,7 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
           // the trust dialog takes arrow keys, not the phone's 1 / 3 / Esc: it is answered in the card
           permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission') && !trustAsked.has(n.id),
           promptAt: n.data.lastEventAt,
-          ...sendView(n),
+          ...sendView(s, n),
           ...restartView(n),
           // where it sits on the canvas, for the phone's map
           x: n.pos?.x,
@@ -1366,7 +1394,7 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       const s = ctx.windows.forNode(id)
       const n = s?.board.nodes.get(id)
       if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
-      const how = sendFor(n)
+      const how = sendFor(s, n)
       if ('refusal' in how) return { ok: false, error: how.refusal }
       // files go in as their paths after the text, as the PC composer types a file's path
       const prompt = withPhoneFiles(text, paths)
@@ -1394,14 +1422,13 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       if ('refusal' in r) return { ok: false, error: r.refusal }
       // a card that never had an event has no time on the phone's screen: the page sends 0
       if ((n.data.lastEventAt ?? 0) !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
-      // a relaunch keeps the conversation: it resumes the session we know, as a wake and updateAgent do. (The PC's own
-      // Restart button launches with the card's options as they are.)
-      const claude = n.data.sessionId ? { ...n.data.claude, resume: n.data.sessionId, continue: undefined } : undefined
-      if (claude) n.data.claude = claude
+      // a relaunch keeps the conversation: its next launch resumes the session we know, that launch only (the PC's own
+      // Restart button keeps launching with the card's options as they are), and not after a resume that did not come up
+      if (n.data.sessionId && resumeOnce.get(id) !== 'tried') resumeOnce.set(id, 'next')
       // the page kills the process and launches the card again. Owed until that launch, so a page that is dead or
       // reloading launches it instead of taking the old shell back
       restartsOwed.add(id)
-      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: claude ? { claude } : {}, restart: true })
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: {}, restart: true })
       return { ok: true }
     },
     answerDecision: (scoped, answer, note, device) => {
@@ -2525,7 +2552,10 @@ export function routeHook(ctx: MainContext, nodeId: string, event: HookEvent): H
   if (launchFailed.delete(nodeId)) log(`launch: ${nodeId} sent ${event.hook_event_name}; no longer marked failed`)
   // and so was a latch read from its output, though not what the terminal shows now: a hook can land after its CLI exited
   // (Codex starts its notify and does not wait). Not after SessionEnd: the CLI is ending, its prompt may already show
-  if (event.hook_event_name !== 'SessionEnd') cliReported(shellWatch.get(nodeId))
+  if (event.hook_event_name !== 'SessionEnd') {
+    cliReported(shellWatch.get(nodeId))
+    resumeOnce.delete(nodeId) // its CLI is up: a resume from the phone came up
+  }
   trustAsked.delete(nodeId) // its hooks run: the trust question was answered
   if ((event.hook_event_name === 'PostToolUse' || event.hook_event_name === 'PostToolUseFailure') && event.tool_name === ASK_TOOL && !event.agent_id) {
     clearTimeout(handedAnswers.get(nodeId))
@@ -3047,13 +3077,17 @@ export function registerIpc(ctx: MainContext): void {
   ipcMain.handle(IPC.claudeLaunch, async (e, opts: ClaudeLaunchOptions) => {
     const r = await claudeLaunch(e, opts)
     // a refused launch reports no exit: a card woken for it never comes up
-    if (!r.ok) dropWake(opts.nodeId, `launch refused (${r.error})`)
+    if (!r.ok) {
+      dropWake(opts.nodeId, `launch refused (${r.error})`)
+      launchRefused.set(opts.nodeId, r.error ?? 'unknown error')
+    }
     return r
   })
   const claudeLaunch = async (e: IpcMainInvokeEvent, opts: ClaudeLaunchOptions): Promise<{ ok: boolean; error?: string }> => {
     const s = sessionOf(e)
     if (!s) return { ok: false, error: 'no window' }
     restartsOwed.delete(opts.nodeId)
+    launchRefused.delete(opts.nodeId)
     if (ctx.boardTrust.isHeld(s.board.projectRoot, opts.nodeId)) return { ok: false, error: HELD_ERROR }
     // from here, before the WSL check: a reload during either wait finds the card starting
     const done = startSpawn(opts.nodeId)
@@ -3073,6 +3107,9 @@ export function registerIpc(ctx: MainContext): void {
       }
       // only a Claude card can be a phone card: the other engines have no deny rules to hold the rest back
       const phone = isPhoneCard({ engine, claude: opts.claude })
+      // a Restart from the phone: this launch alone resumes the session main knows (resumeOnce)
+      const resume = resumeOnce.get(opts.nodeId) === 'next' ? s.board.nodes.get(opts.nodeId)?.data.sessionId : undefined
+      if (resume) resumeOnce.set(opts.nodeId, 'tried')
       const prepared = prepareLaunch({
         nodeId: opts.nodeId,
         kind: opts.kind,
@@ -3080,6 +3117,7 @@ export function registerIpc(ctx: MainContext): void {
         // during an autonomous run every Claude launch is auto mode (plan stays plan), the owner's own cards included
         claude: {
           ...opts.claude,
+          ...(resume ? { resume, continue: undefined } : {}),
           permissionMode: s.autonomy.permissionMode(opts.claude.permissionMode) as ClaudeOptions['permissionMode'],
           // a card shown as a chat is told what the chat can draw (fixed text, Claude cards only)
           // a phone card carries the phone rules (fixed text); a card shown as a chat is told what the chat can draw (fixed text, Claude cards only)

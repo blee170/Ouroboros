@@ -95,13 +95,10 @@ describe('a message from the phone, on the real board', () => {
 
   it('puts the files after the text, one path per line under one line, the way the PC composer adds paths', () => {
     const t = setup([{ id: 'ww', data: { status: 'idle' } }], ['ww'])
-    const files = [
-      { path: 'C:\\up\\2026-11-27\\a-1234abcd.png', name: 'a.png' },
-      { path: 'C:\\up\\2026-11-27\\회의 메모-5678abcd.pdf', name: '회의 메모.pdf' }
-    ]
-    expect(t.h.prompt('ww', 'see these', files)).toEqual({ ok: true })
+    const paths = ['C:\\up\\ww\\0123456789abcdef.png', 'C:\\up\\ww\\fedcba9876543210.pdf']
+    expect(t.h.prompt('ww', 'see these', paths)).toEqual({ ok: true })
     const typed = t.writes.find(([id]) => id === 'ww')?.[1] ?? ''
-    expect(typed).toContain(`see these\n\n${PHONE_FILES_NOTE}\n${files[0].path}\n${files[1].path}`)
+    expect(typed).toContain(`see these\n\n${PHONE_FILES_NOTE}\n${paths[0]}\n${paths[1]}`)
   })
 })
 

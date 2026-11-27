@@ -1,7 +1,7 @@
 import http from 'node:http'
 import net from 'node:net'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { Readable } from 'node:stream'
@@ -66,41 +66,44 @@ describe('the uploads folder', () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
   const body = (s: string): Readable => Readable.from([Buffer.from(s)])
 
-  it('sweeps by the clock: unsent files after 30 minutes, every file after 7 days, an earlier run left over by its age on disk', async () => {
+  it("sweeps by the clock: unsent files after 30 minutes, a card's files after 7 days, an earlier run's by their age on disk", async () => {
     let clock = Date.now()
-    const u = new PhoneUploads(dir, { now: () => clock })
-    // an earlier run's files: one past the keep time, one still young
-    mkdirSync(join(dir, '2020-01-01'), { recursive: true })
-    const old = join(dir, '2020-01-01', 'old-1234abcd.txt')
-    const young = join(dir, '2020-01-01', 'young-1234abcd.txt')
-    writeFileSync(old, 'old')
-    writeFileSync(young, 'young')
-    const longAgo = (clock - PHONE_LIMITS.uploadKeepMs - 60_000) / 1000
-    utimesSync(old, longAgo, longAgo)
+    const root = join(dir, 'sweep')
+    const u = new PhoneUploads(root, { now: () => clock })
+    const ago = (ms: number): number => (clock - ms - 60_000) / 1000
+    // an earlier run's: an unsent upload, one still arriving (recent, not in the index), a file a card took long ago
+    mkdirSync(join(root, '.pending'), { recursive: true })
+    mkdirSync(join(root, 'old-card'))
+    const stale = join(root, '.pending', '00000000000000aa.txt')
+    const arriving = join(root, '.pending', '00000000000000bb.txt')
+    const oldSent = join(root, 'old-card', '00000000000000cc.png')
+    for (const f of [stale, arriving, oldSent]) writeFileSync(f, 'x')
+    utimesSync(stale, ago(PHONE_LIMITS.uploadUnsentMs), ago(PHONE_LIMITS.uploadUnsentMs))
+    utimesSync(oldSent, ago(PHONE_LIMITS.uploadKeepMs), ago(PHONE_LIMITS.uploadKeepMs))
 
     const kept = await u.save('d1', 'kept.txt', body('kept'))
     const unsent = await u.save('d1', 'unsent.txt', body('unsent'))
     if ('error' in kept || 'error' in unsent) throw new Error('not saved')
-    expect(existsSync(old)).toBe(false)
-    expect(existsSync(young)).toBe(true)
-    const att = u.attach('d1', [kept.id])
-    if ('gone' in att) throw new Error('gone')
-    u.sent([kept.id])
-    const unsentPath = filesIn(dir).find((f) => f.includes('unsent-'))!
-    expect(unsentPath).toBeTruthy()
+    expect([existsSync(stale), existsSync(arriving), existsSync(oldSent), existsSync(join(root, 'old-card'))]).toEqual([false, true, false, false])
+    const sent = u.deliver('d1', 'c1', [kept.id], () => ({ ok: true }))
+    if (!('result' in sent)) throw new Error('not sent')
+    const keptPath = join(root, 'c1', `${kept.id}.txt`)
+    const unsentPath = join(root, '.pending', `${unsent.id}.txt`)
 
     clock += PHONE_LIMITS.uploadUnsentMs - 1000
-    expect(u.attach('d1', [unsent.id])).toHaveProperty('files')
+    expect(u.deliver('d1', 'c1', ['nothing'], () => ({ ok: true }))).toEqual({ gone: ['nothing'] })
+    expect(existsSync(unsentPath)).toBe(true)
     clock += 2000
-    expect(u.attach('d1', [unsent.id])).toEqual({ gone: [unsent.id] })
-    expect(existsSync(join(dir, unsentPath))).toBe(false)
-    expect(existsSync(att.files[0].path)).toBe(true) // sent: the card may read it later
+    expect(u.deliver('d1', 'c1', [unsent.id], () => ({ ok: true }))).toEqual({ gone: [unsent.id] })
+    expect(existsSync(unsentPath)).toBe(false)
+    expect(existsSync(arriving)).toBe(false)
+    expect(existsSync(keptPath)).toBe(true) // sent: the card may read it later
 
     clock += PHONE_LIMITS.uploadKeepMs
-    expect(u.attach('d1', ['nothing'])).toEqual({ gone: ['nothing'] })
-    expect(existsSync(att.files[0].path)).toBe(false)
-    expect(existsSync(young)).toBe(false)
-    expect(filesIn(dir)).toEqual([])
+    expect(u.discard('d1', 'nothing')).toBe(false)
+    expect(existsSync(keptPath)).toBe(false)
+    expect(existsSync(join(root, 'c1'))).toBe(false)
+    expect(filesIn(root)).toEqual([])
   })
 
   it('caps the files one phone has waiting, and frees a slot when one is removed', async () => {
@@ -115,19 +118,64 @@ describe('the uploads folder', () => {
     expect(await u.save('d2', 'other-phone.txt', body('x'))).toHaveProperty('id')
     expect(u.discard('d2', ids[0])).toBe(false) // another phone's
     expect(u.discard('d1', ids[0])).toBe(true)
-    expect(u.attach('d1', [ids[0]])).toEqual({ gone: [ids[0]] })
+    expect(u.deliver('d1', 'c1', [ids[0]], () => ({ ok: true }))).toEqual({ gone: [ids[0]] })
     expect(await u.save('d1', 'one-more.txt', body('x'))).toHaveProperty('id')
+  })
+
+  /** A folder outside the uploads with one file in it, old enough for any sweep to take. */
+  function elsewhere(name: string): string {
+    const target = join(dir, name)
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'precious.txt'), "not the phone's")
+    const longAgo = (Date.now() - PHONE_LIMITS.uploadKeepMs - 60_000) / 1000
+    utimesSync(join(target, 'precious.txt'), longAgo, longAgo)
+    return target
+  }
+
+  it('never saves through a junction: an uploads folder or a .pending that is one refuses the upload, its target gets nothing', async () => {
+    const target = elsewhere('j-save-target')
+    const root = join(dir, 'j-save')
+    mkdirSync(root)
+    // what a card with a shell can make: mklink /J
+    symlinkSync(target, join(root, '.pending'), 'junction')
+    symlinkSync(target, join(dir, 'j-save-root'), 'junction')
+    for (const at of [root, join(dir, 'j-save-root')]) {
+      const logs: string[] = []
+      const u = new PhoneUploads(at, { log: (l) => logs.push(l) })
+      expect(await u.save('d1', 'a.txt', body('a'))).toMatchObject({ status: 500 })
+      expect(logs.join('\n')).toMatch(/not a real folder/)
+    }
+    expect(readdirSync(target)).toEqual(['precious.txt'])
+  })
+
+  it('never sweeps through a junction: one shaped like a card folder, a stray one, one inside a folder it sweeps', async () => {
+    const target = elsewhere('j-sweep-target')
+    const root = join(dir, 'j-sweep')
+    mkdirSync(root)
+    symlinkSync(target, join(root, '2020-01-01'), 'junction')
+    symlinkSync(target, join(root, 'not.a.card'), 'junction')
+    let clock = Date.now()
+    const u = new PhoneUploads(root, { now: () => clock })
+    expect(await u.save('d1', 'a.txt', body('a'))).toHaveProperty('id')
+    expect(readdirSync(target)).toEqual(['precious.txt'])
+    mkdirSync(join(root, 'c1'))
+    symlinkSync(target, join(root, 'c1', 'inner'), 'junction')
+    symlinkSync(target, join(root, '.pending', 'inner'), 'junction')
+    clock += PHONE_LIMITS.uploadKeepMs + 60_000
+    expect(await u.save('d1', 'b.txt', body('b'))).toHaveProperty('id')
+    expect(readdirSync(target)).toEqual(['precious.txt'])
+    for (const link of ['2020-01-01', 'not.a.card', 'c1/inner', '.pending/inner']) expect(lstatSync(join(root, link)).isSymbolicLink()).toBe(true)
   })
 })
 
 describe('uploads over HTTP', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ob-phone-up-'))
-  const prompts: Array<{ id: string; text: string; files: Array<{ path: string; name: string }> }> = []
+  const prompts: Array<{ id: string; text: string; paths: string[] }> = []
   const notes: string[] = []
   const handlers: PhoneHandlers = {
     board: () => ({ cards: [] }),
     // the "busy" card refuses, as a card the run does not allow
-    prompt: (id, text, files) => (id === 'busy' ? { ok: false, error: 'not delivered' } : (prompts.push({ id, text, files }), { ok: true })),
+    prompt: (id, text, paths) => (id === 'busy' ? { ok: false, error: 'not delivered' } : (prompts.push({ id, text, paths }), { ok: true })),
     answer: () => ({ ok: true }),
     restart: () => ({ ok: true }),
     resolveApproval: () => ({ ok: true }),
@@ -141,10 +189,10 @@ describe('uploads over HTTP', () => {
   const loopback = { sourceAllowed: (ip: string | undefined) => ip === '127.0.0.1' || ip === '::ffff:127.0.0.1', bindRefusal: () => undefined, isLocal: () => false }
 
   /** A server of its own (a failed attempt counts against the address per server), with a phone and a notify key paired. */
-  async function start(name: string, opts: { maxBytes?: number; requestMs?: number } = {}) {
+  async function start(name: string, opts: { maxBytes?: number; requestMs?: number; dailyBytes?: number; now?: () => number } = {}) {
     const upDir = join(dir, name, 'uploads')
     const devices = new PhoneDevices(join(dir, name, 'devices.json'))
-    const uploads = new PhoneUploads(upDir, { maxBytes: opts.maxBytes })
+    const uploads = new PhoneUploads(upDir, { maxBytes: opts.maxBytes, dailyBytes: opts.dailyBytes, now: opts.now })
     const server = new PhoneServer(devices, handlers, () => {}, loopback, { uploads, requestMs: opts.requestMs })
     expect(await server.apply({ enabled: true, host: '127.0.0.1', port: 0, allowLan: false })).toBeUndefined()
     const port = Number(new URL(server.url!).port)
@@ -199,18 +247,17 @@ describe('uploads over HTTP', () => {
     expect(r.status).toBe(200)
     const got = prompts.at(-1)!
     expect(got).toMatchObject({ id: 'c1', text: 'look' })
-    expect(got.files.map((f) => f.name)).toEqual(['회의 사진.jpg', 'report.pdf'])
-    expect(readFileSync(got.files[0].path).equals(photo)).toBe(true)
-    expect(readFileSync(got.files[1].path, 'utf8')).toBe('%PDF-1.4')
-    // <dir>/<yyyy-mm-dd>/<clean base>-<short id>.<ext>
-    expect(relative(t.upDir, got.files[0].path)).toMatch(/^\d{4}-\d{2}-\d{2}[\\/]회의 사진-[0-9a-f]{8}\.jpg$/)
+    expect(readFileSync(got.paths[0]).equals(photo)).toBe(true)
+    expect(readFileSync(got.paths[1], 'utf8')).toBe('%PDF-1.4')
+    expect(got.paths.map((p) => relative(t.upDir, p))).toEqual([join('c1', `${up.body.id}.jpg`), join('c1', `${pdf.body.id}.pdf`)])
     expect(notes.at(-1)).toMatch(/Pixel → c1: look .*회의 사진\.jpg, report\.pdf/)
   })
 
   it('takes a message of files alone, and refuses one with neither text nor files', async () => {
     const up = await upload(t.port, t.phone, 'a.png', Buffer.from('png'))
     expect((await call(t.port, '/m/api/cards/c1/prompt', { token: t.phone, body: { text: '  ', files: [up.body.id] } })).status).toBe(200)
-    expect(prompts.at(-1)).toMatchObject({ text: '', files: [{ name: 'a.png' }] })
+    expect(prompts.at(-1)).toMatchObject({ text: '' })
+    expect(prompts.at(-1)!.paths).toHaveLength(1)
     expect((await call(t.port, '/m/api/cards/c1/prompt', { token: t.phone, body: { text: ' ', files: [] } })).status).toBe(400)
     expect((await call(t.port, '/m/api/cards/c1/prompt', { token: t.phone, body: { text: 'x', files: 'a.png' } })).status).toBe(400)
   })
@@ -240,10 +287,87 @@ describe('uploads over HTTP', () => {
     expect((await call(t.port, '/m/api/cards/c1/prompt', { token: t.phone, body: { text: 'x', files: ids.slice(6) } })).status).toBe(200)
   })
 
-  it('leaves the files attachable when the card refuses the message, so a retry works', async () => {
+  it.each([
+    ['x&calc&y.png', '.png'],
+    ['x & calc & y.png', '.png'],
+    ['quarterly budget meeting notes.PDF', '.pdf'],
+    ['README', '']
+  ])('gives the card a path with no part of the name %j in it', async (name, ext) => {
+    const up = await upload(t.port, t.phone, name, Buffer.from('bytes'))
+    // the phone's chip still shows the name
+    expect(up.body.name).toBe(cleanUploadName(name))
+    expect((await call(t.port, '/m/api/cards/c1/prompt', { token: t.phone, body: { text: 'see', files: [up.body.id] } })).status).toBe(200)
+    const path = prompts.at(-1)!.paths[0]
+    expect(readFileSync(path, 'utf8')).toBe('bytes')
+    // <dir>/<card id>/<upload id>.<ext>
+    const under = relative(t.upDir, path)
+    expect(under).toBe(join('c1', `${up.body.id}${ext}`))
+    expect(path).toMatch(/[\\/][0-9a-f]{16}(\.[a-z0-9]{1,8})?$/)
+    for (const word of name.split(/[^A-Za-z]+/).filter((w) => w.length > 2 && `.${w.toLowerCase()}` !== ext)) expect(under).not.toContain(word)
+    expect(under).not.toMatch(/[& ]/)
+  })
+
+  it('moves a file into the folder of the card that took it; a refused message puts it back, attachable to another card', async () => {
     const up = await upload(t.port, t.phone, 'retry.txt', Buffer.from('r'))
+    const file = `${up.body.id}.txt`
+    expect(filesIn(t.upDir)).toContain(join('.pending', file))
     expect((await call(t.port, '/m/api/cards/busy/prompt', { token: t.phone, body: { text: 'x', files: [up.body.id] } })).status).toBe(409)
-    expect((await call(t.port, '/m/api/cards/c1/prompt', { token: t.phone, body: { text: 'x', files: [up.body.id] } })).status).toBe(200)
+    expect(filesIn(t.upDir)).toContain(join('.pending', file))
+    expect((await call(t.port, '/m/api/cards/c2/prompt', { token: t.phone, body: { text: 'x', files: [up.body.id] } })).status).toBe(200)
+    expect(prompts.at(-1)!.paths).toEqual([join(t.upDir, 'c2', file)])
+    expect(filesIn(t.upDir)).not.toContain(join('.pending', file))
+    expect(readFileSync(join(t.upDir, 'c2', file), 'utf8')).toBe('r')
+  })
+
+  it('sends nothing when a file cannot be moved to the card, and leaves the others attachable', async () => {
+    const a = await upload(t.port, t.phone, 'a.txt', Buffer.from('a'))
+    const b = await upload(t.port, t.phone, 'b.txt', Buffer.from('b'))
+    // gone from under the store (the owner, or a card's shell, deleted it)
+    rmSync(join(t.upDir, '.pending', `${b.body.id}.txt`))
+    const before = prompts.length
+    const r = await call(t.port, '/m/api/cards/c3/prompt', { token: t.phone, body: { text: 'x', files: [a.body.id, b.body.id] } })
+    expect(r.status).toBe(500)
+    expect(String(r.body.error)).toMatch(/nothing was sent/)
+    expect(prompts.length).toBe(before)
+    expect(filesIn(t.upDir)).toContain(join('.pending', `${a.body.id}.txt`))
+    expect((await call(t.port, '/m/api/cards/c3/prompt', { token: t.phone, body: { text: 'x', files: [a.body.id] } })).status).toBe(200)
+  })
+
+  it('never hands files to a card whose folder is a junction: nothing sent, its target gets nothing, the files stay attachable', async () => {
+    const s = await start('j-card')
+    servers.push(s.server)
+    const target = join(dir, 'j-card-target')
+    mkdirSync(target)
+    writeFileSync(join(target, 'precious.txt'), "not the phone's")
+    mkdirSync(s.upDir, { recursive: true })
+    symlinkSync(target, join(s.upDir, 'cj'), 'junction')
+    const up = await upload(s.port, s.phone, 'a.txt', Buffer.from('a'))
+    const before = prompts.length
+    const r = await call(s.port, '/m/api/cards/cj/prompt', { token: s.phone, body: { text: 'x', files: [up.body.id] } })
+    expect(r.status).toBe(500)
+    expect(String(r.body.error)).toMatch(/nothing was sent/)
+    expect(prompts.length).toBe(before)
+    expect(readdirSync(target)).toEqual(['precious.txt'])
+    expect((await call(s.port, '/m/api/cards/c1/prompt', { token: s.phone, body: { text: 'x', files: [up.body.id] } })).status).toBe(200)
+  })
+
+  it('bounds what one phone uploads in 24 hours, sent files counted, in words the page can show', async () => {
+    let clock = Date.now()
+    const s = await start('daily', { dailyBytes: 10, now: () => clock })
+    servers.push(s.server)
+    const a = await upload(s.port, s.phone, 'a.txt', Buffer.alloc(6))
+    expect(a.status).toBe(200)
+    expect((await call(s.port, '/m/api/cards/c1/prompt', { token: s.phone, body: { text: 'x', files: [a.body.id] } })).status).toBe(200)
+    const over = await upload(s.port, s.phone, 'b.txt', Buffer.alloc(5))
+    expect(over.status).toBe(429)
+    expect(String(over.body.error)).toMatch(/24 hours/)
+    expect(filesIn(s.upDir)).toHaveLength(1)
+    // exactly what is left, and another phone has a bound of its own
+    expect((await upload(s.port, s.phone, 'c.txt', Buffer.alloc(4))).status).toBe(200)
+    expect((await upload(s.port, s.other, 'd.txt', Buffer.alloc(6))).status).toBe(200)
+    expect((await upload(s.port, s.phone, 'e.txt', Buffer.alloc(1))).status).toBe(429)
+    clock += 24 * 60 * 60_000 + 1000
+    expect((await upload(s.port, s.phone, 'f.txt', Buffer.alloc(6))).status).toBe(200)
   })
 
   it('removes an attachment the phone will not send, only for that phone', async () => {

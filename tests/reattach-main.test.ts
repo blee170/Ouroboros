@@ -23,7 +23,8 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../src/main/diagnostics', async (importOriginal) => ({ ...(await importOriginal<object>()), log: vi.fn() }))
 // the launch line itself is not what these tests are about (and a role card's launch carries its role as the first message)
-vi.mock('../src/main/claude-launcher', async (importOriginal) => ({ ...(await importOriginal<object>()), prepareLaunch: () => ({ command: 'claude', initialPrompt: 'ROLE: you are the tester' }) }))
+const launches = vi.hoisted(() => [] as Array<{ nodeId: string; settingsExtra?: unknown }>)
+vi.mock('../src/main/claude-launcher', async (importOriginal) => ({ ...(await importOriginal<object>()), prepareLaunch: (p: { nodeId: string; settingsExtra?: unknown }) => (launches.push(p), { command: 'claude', initialPrompt: 'ROLE: you are the tester' }) }))
 // never read the owner's Claude sign-in files from a test
 vi.mock('../src/main/engines', async (importOriginal) => ({ ...(await importOriginal<object>()), claudeLoginFromFiles: () => false }))
 // an inbox that fails without being gone (too slow, an error after it opened): a real pipe on Windows always reports ok
@@ -38,6 +39,8 @@ const { Board } = await import('../src/main/board')
 const { IPC } = await import('../src/shared/protocol')
 const { log } = await import('../src/main/diagnostics')
 const { mapCodexNotify } = await import('../src/main/agent-hook')
+const { phoneFilesReadRule } = await import('../src/shared/phone')
+const { app } = await import('electron')
 
 const ROOT = join(tmpdir(), `ouro-reattach-none-${process.pid}`) // never created: no board file, readWorkspace gives null
 const OTHER = join(tmpdir(), `ouro-reattach-other-${process.pid}`)
@@ -238,6 +241,17 @@ describe('what main sends the page while it is dead is kept in main', () => {
     crashed = true
     const { id } = await createApiHandlers(ctx as never, s as never).browser.create({ title: 'Docs', url: 'https://example.com/docs' })
     expect(board.nodes.get(id)?.data).toMatchObject({ kind: 'browser', title: 'Docs', url: 'https://example.com/docs' })
+  })
+})
+
+describe("a Claude card's settings", () => {
+  it('let it read the files a phone sent to it, and no other card\'s', async () => {
+    boardWith([card('rd1', 'claude'), card('rd2', 'claude')])
+    for (const id of ['rd1', 'rd2']) expect(await call(IPC.claudeLaunch, { nodeId: id, cwd: ROOT, shell: 'cmd', cols: 80, rows: 24, kind: 'claude', engine: 'claude', claude: {}, title: id })).toEqual({ ok: true })
+    const allowed = (id: string): string[] | undefined => (launches.filter((l) => l.nodeId === id).at(-1)?.settingsExtra as { permissions: { allow?: string[] } }).permissions.allow
+    const uploads = join(app.getPath('userData'), 'phone-uploads')
+    expect(allowed('rd1')).toEqual([phoneFilesReadRule(join(uploads, 'rd1'))])
+    expect(allowed('rd2')).toEqual([phoneFilesReadRule(join(uploads, 'rd2'))])
   })
 })
 

@@ -17,8 +17,8 @@ export type TaskChoice = (typeof TASK_CHOICES)[number]
 /** What the phone sees and may do; injected so the server runs without Electron in tests. */
 export interface PhoneHandlers {
   board(): unknown
-  /** `files`: saved on this PC from the phone, attached to this message */
-  prompt(cardId: string, text: string, files: Array<{ path: string; name: string }>): { ok: boolean; error?: string }
+  /** `paths`: the files attached to this message, saved on this PC from the phone (never their names from the phone) */
+  prompt(cardId: string, text: string, paths: string[]): { ok: boolean; error?: string }
   /** `promptAt` is the prompt the phone showed (the card's lastEventAt): a newer prompt is not answered blind */
   answer(cardId: string, key: string, promptAt: number): { ok: boolean; error?: string }
   /** start a card's CLI again as the PC's Restart does, from the screen the phone showed (`promptAt`, as for answer) */
@@ -377,12 +377,13 @@ export class PhoneServer {
         if (ids.length > PHONE_LIMITS.uploadsPerMessage) return json(res, 400, { error: `at most ${PHONE_LIMITS.uploadsPerMessage} attachments in one message` })
         // a message of files alone is a message
         if ((!text && !ids.length) || text.length > PHONE_LIMITS.promptChars) return json(res, 400, { error: `a message of 1 to ${PHONE_LIMITS.promptChars} characters` })
-        const att = !ids.length ? { files: [] } : (uploads?.attach(device.id, ids) ?? { gone: ids })
-        if ('gone' in att) return json(res, 400, { error: 'an attachment is gone; attach it again', gone: att.gone })
-        const r = this.handlers.prompt(card[1], text, att.files)
-        // a refused message leaves its files attachable, so sending it again works
-        if (r.ok) uploads?.sent(ids)
-        if (r.ok) this.handlers.note(`${from} → ${card[1]}: ${[text.slice(0, 200), att.files.length ? `(attached: ${att.files.map((f) => f.name).join(', ')})` : ''].filter(Boolean).join(' ')}`)
+        const send = (paths: string[]): { ok: boolean; error?: string } => this.handlers.prompt(card[1], text, paths)
+        // the files move into the card's own folder with the message; a refused message leaves them attachable
+        const d = !ids.length ? { result: send([]), names: [] } : (uploads?.deliver(device.id, card[1], ids, send) ?? { gone: ids })
+        if ('gone' in d) return json(res, 400, { error: 'an attachment is gone; attach it again', gone: d.gone })
+        if ('status' in d) return json(res, d.status, { error: d.error })
+        const r = d.result
+        if (r.ok) this.handlers.note(`${from} → ${card[1]}: ${[text.slice(0, 200), d.names.length ? `(attached: ${d.names.join(', ')})` : ''].filter(Boolean).join(' ')}`)
         return json(res, r.ok ? 200 : 409, r)
       }
       if (card[2] === 'restart') {

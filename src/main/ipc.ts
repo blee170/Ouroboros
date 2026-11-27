@@ -1289,7 +1289,7 @@ function ownerAnswerTask(s: WindowSession, id: string, choice: unknown, text: un
   return m.ok ? { ok: true } : { ok: true, warning: `Saved, but the card was not told: ${m.error}` }
 }
 
-/** Where the files a paired phone sends are saved; every Claude card may read it (phoneFilesReadRule). */
+/** Where the files a paired phone sends are saved; each Claude card may read its own folder in it, <dir>/<card id> (phoneFilesReadRule). */
 const phoneUploadsDir = (): string => join(app.getPath('userData'), 'phone-uploads')
 
 /** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
@@ -1362,14 +1362,14 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       ]
       return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, edges, approvals, decisions, tasks }
     },
-    prompt: (id, text, files) => {
+    prompt: (id, text, paths) => {
       const s = ctx.windows.forNode(id)
       const n = s?.board.nodes.get(id)
       if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
       const how = sendFor(n)
       if ('refusal' in how) return { ok: false, error: how.refusal }
       // files go in as their paths after the text, as the PC composer types a file's path
-      const prompt = withPhoneFiles(text, files.map((f) => f.path))
+      const prompt = withPhoneFiles(text, paths)
       // the owner wrote it on their paired phone: their own words once the card submits it (the prompt as composed)
       ownerWords.sent(id, prompt, 'phone')
       return sendPrompt(ctx, s, id, prompt) ? { ok: true } : { ok: false, error: 'not delivered (the card is not running, or the run does not allow it)' }
@@ -3096,7 +3096,7 @@ export function registerIpc(ctx: MainContext): void {
         mcpScriptPath: ctx.mcpScriptPath,
         hookScriptPath: resolveHookScriptPath(),
         title: opts.title,
-        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))), phoneDenyRules(phone), [phoneFilesReadRule(phoneUploadsDir())]),
+        settingsExtra: cardSettingsExtra(s.autonomy.settingsFragment(gateCommandFor(hookServer.baseUrl, opts.nodeId, Boolean(wsl))), phoneDenyRules(phone), [phoneFilesReadRule(join(phoneUploadsDir(), opts.nodeId))]),
         autonomous: s.autonomy.on,
         wsl
       })

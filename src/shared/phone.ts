@@ -19,6 +19,8 @@ export const PHONE_LIMITS = {
   uploadsPerMessage: 6,
   /** files a phone uploaded and has not sent yet */
   uploadsPending: 12,
+  /** what one phone may upload in a rolling 24 hours, sent files counted (they stay uploadKeepMs) */
+  uploadDailyBytes: 2 * 1024 * 1024 * 1024,
   /** an upload never sent is deleted after this long, every upload after uploadKeepMs */
   uploadUnsentMs: 30 * 60_000,
   uploadKeepMs: 7 * 24 * 60 * 60_000,
@@ -171,10 +173,10 @@ export function cleanDeviceName(name: unknown): string {
 const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(\.|$)/i
 
 /**
- * Pure: a file name from the phone as a safe base name on this PC. Letters (Korean too), digits and a few marks are
+ * Pure: a file name from the phone, clean to show on the phone's chip and in the log line; only its extension (1 to 8
+ * letters or digits, lower case) ever goes into a path on this PC. Letters (Korean too), digits and a few marks are
  * kept: no path, no control or bidi character, nothing Windows reserves, nothing a shell expands inside quotes ($ `
- * ') or reads as a wildcard ([ ]) when a card pastes the path into a command. At most 80 characters, the extension
- * (1 to 8 letters or digits) kept.
+ * ') or reads as a wildcard ([ ]). At most 80 characters.
  */
 export function cleanUploadName(name: unknown): string {
   const base = (typeof name === 'string' ? name : '').split(/[\\/]/).pop() ?? ''
@@ -190,9 +192,10 @@ export function cleanUploadName(name: unknown): string {
 }
 
 /**
- * Pure: the Claude Code permission rule that lets a card read the files a phone sent. The folder is outside every
- * project, so without the rule a card stops on a permission prompt at the first attached file (checked on 2.1.332:
- * no rule asks, `Read(//c/…/**)` reads). `//` starts an absolute path in a rule; a Windows drive goes in as `//c/`.
+ * Pure: the Claude Code permission rule that lets a card read the files in a folder: the card's own folder of the files
+ * a phone sent to it, never the folder of them all. The folder is outside every project, so without the rule a card
+ * stops on a permission prompt at the first attached file (checked on 2.1.332: no rule asks, `Read(//c/…/**)` reads).
+ * `//` starts an absolute path in a rule; a Windows drive goes in as `//c/`.
  */
 export function phoneFilesReadRule(dir: string): string {
   const p = dir.replace(/\\/g, '/').replace(/\/+$/, '')

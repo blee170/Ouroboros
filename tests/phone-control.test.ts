@@ -33,7 +33,7 @@ describe('phone deny rules', () => {
     for (const r of PHONE_DENY_RULES) expect(phone.permissions.deny).not.toContain(r)
   })
 
-  it('let every card read the files a paired phone sent, in a run or not, and nothing else', () => {
+  it('let a card read a folder of the files a paired phone sent, in a run or not, and nothing else', () => {
     // the spelling a real Claude Code 2.1.332 took for a folder outside the project (it asks without the rule)
     const rule = phoneFilesReadRule('C:\\Users\\b\\AppData\\Roaming\\Ouroboros\\phone-uploads')
     expect(rule).toBe('Read(//c/Users/b/AppData/Roaming/Ouroboros/phone-uploads/**)')

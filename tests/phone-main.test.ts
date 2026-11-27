@@ -173,32 +173,38 @@ describe('a Restart from the phone, on the real board', () => {
     expect(t.h.prompt('rx', 'hello', [])).toEqual({ ok: true })
     await new Promise((r) => setTimeout(r, 400))
     const c = t.card('rx')
-    expect(c).toMatchObject({ status: 'needs-you', promptable: false, restartable: true, relaunch: 'new' })
+    expect(c).toMatchObject({ status: 'needs-you', promptable: false, restartable: true, relaunch: 'resume' })
     expect(c.refusal).toMatch(/Restart it/)
     expect(t.writes).toEqual([])
     expect(t.h.restart('rx', c.promptAt! - 1)).toEqual({ ok: false, error: 'the card has moved on since this screen was loaded; look again' })
     expect(restarts(t.sent)).toEqual([])
     expect(t.h.restart('rx', c.promptAt!)).toEqual({ ok: true })
-    expect(restarts(t.sent)).toEqual([{ nodeId: 'rx', data: {}, restart: true }])
+    // it keeps its conversation: the session the app knows goes into its launch options
+    expect(restarts(t.sent)).toEqual([{ nodeId: 'rx', data: { claude: { resume: 'sess-rx' } }, restart: true }])
     // a double tap, or a second phone: the restart already asked for is not asked again
     expect(t.h.restart('rx', c.promptAt!)).toEqual({ ok: false, error: 'It is restarting already.' })
     expect(t.card('rx').restartable).toBe(false)
     expect(restarts(t.sent)).toHaveLength(1)
   })
 
-  it('says what the restart does to the conversation, from the card’s launch options as the PC’s Restart uses them', () => {
+  it('says what the restart does to the conversation: resumed when the app knows the session, else as the launch options say', () => {
     const t = setup(
       [
         { id: 'r1', data: { status: 'ended', statusDetail: 'exited (0)', claude: { resume: 'sess-r1' } } },
-        { id: 'r2', data: { status: 'ended', statusDetail: 'exited (1)' } }
+        { id: 'r2', data: { status: 'ended', statusDetail: 'exited (1)', sessionId: undefined } },
+        { id: 'r3', data: { status: 'ended', statusDetail: 'exited (1)', claude: { continue: true, model: 'opus' } } }
       ],
       []
     )
     expect(t.card('r1')).toMatchObject({ restartable: true, relaunch: 'resume' })
     expect(t.card('r2')).toMatchObject({ restartable: true, relaunch: 'new' })
     expect(t.h.restart('r2', t.card('r2').promptAt ?? 0)).toEqual({ ok: true })
-    // the card's launch options are left as they are: the page relaunches it as the PC's Restart would
+    // no session known: the card's launch options are left as they are, the page relaunches it as the PC's Restart would
     expect(restarts(t.sent)).toEqual([{ nodeId: 'r2', data: {}, restart: true }])
+    // a known session replaces --continue (the latest conversation in the folder may be another card's), the rest stays
+    expect(t.card('r3')).toMatchObject({ restartable: true, relaunch: 'resume' })
+    expect(t.h.restart('r3', t.card('r3').promptAt ?? 0)).toEqual({ ok: true })
+    expect(restarts(t.sent)[1]).toEqual({ nodeId: 'r3', data: { claude: { resume: 'sess-r3', continue: undefined, model: 'opus' } }, restart: true })
   })
 
   it('is not offered to a running, asleep, waking or starting card', () => {

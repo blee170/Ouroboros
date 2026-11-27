@@ -1309,8 +1309,8 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
     return 'refusal' in r ? { promptable: false, wakes: false, refusal: r.refusal } : { promptable: true, wakes: r.how === 'wake' }
   }
   // a restart asked for (restartsOwed) runs until the page's launch starts, then the launch itself (spawning)
-  const restartFor = (n: { id: string; data: { status?: string; asleep?: boolean; claude?: ClaudeOptions } }): PhoneRestart =>
-    phoneRestart({ status: n.data.status, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), claude: n.data.claude })
+  const restartFor = (n: { id: string; data: { status?: string; asleep?: boolean; sessionId?: string; claude?: ClaudeOptions } }): PhoneRestart =>
+    phoneRestart({ status: n.data.status, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), sessionId: n.data.sessionId, claude: n.data.claude })
   const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new' } => {
     const r = restartFor(n)
     return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how }
@@ -1394,10 +1394,14 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       if ('refusal' in r) return { ok: false, error: r.refusal }
       // a card that never had an event has no time on the phone's screen: the page sends 0
       if ((n.data.lastEventAt ?? 0) !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
-      // the PC's Restart: the page kills the process and launches the card again with its own launch options. Owed
-      // until that launch, so a page that is dead or reloading launches it instead of taking the old shell back
+      // a relaunch keeps the conversation: it resumes the session we know, as a wake and updateAgent do. (The PC's own
+      // Restart button launches with the card's options as they are.)
+      const claude = n.data.sessionId ? { ...n.data.claude, resume: n.data.sessionId, continue: undefined } : undefined
+      if (claude) n.data.claude = claude
+      // the page kills the process and launches the card again. Owed until that launch, so a page that is dead or
+      // reloading launches it instead of taking the old shell back
       restartsOwed.add(id)
-      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: {}, restart: true })
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: claude ? { claude } : {}, restart: true })
       return { ok: true }
     },
     answerDecision: (scoped, answer, note, device) => {

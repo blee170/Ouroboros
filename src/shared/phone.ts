@@ -147,10 +147,11 @@ export type PhoneRestart = { how: 'resume' | 'continue' | 'new' } | { refusal: s
  * Pure: whether the phone may restart a card. Only one whose CLI is not running: it never came up or exited
  * (`launchFailed`: the live process is its shell), or its process is gone. A running card is never cut off from a
  * phone, an asleep or waking card wakes on a message, a starting one is left to come up. `restarting`: a restart was
- * asked for and its launch has not run, so a second tap asks for nothing. The relaunch is the PC's Restart, with the
- * card's own launch options: its conversation resumes only when they carry a session (`claude.resume`).
+ * asked for and its launch has not run, so a second tap asks for nothing. The relaunch keeps the conversation when
+ * the app knows the card's session (`sessionId`), as a wake does; without one it is the PC's Restart, with the card's
+ * own launch options.
  */
-export function phoneRestart(card: { status?: string; asleep?: boolean; waking: boolean; restarting: boolean; alive: boolean; launchFailed: boolean; claude?: { resume?: string; continue?: boolean } }): PhoneRestart {
+export function phoneRestart(card: { status?: string; asleep?: boolean; waking: boolean; restarting: boolean; alive: boolean; launchFailed: boolean; sessionId?: string; claude?: { resume?: string; continue?: boolean } }): PhoneRestart {
   if (card.asleep) return { refusal: 'It is asleep: a message wakes it on its conversation.' }
   if (card.waking) return { refusal: 'It is waking up; wait a moment.' }
   if (card.restarting) return { refusal: 'It is restarting already.' }
@@ -158,7 +159,7 @@ export function phoneRestart(card: { status?: string; asleep?: boolean; waking: 
     if (card.status === 'starting') return { refusal: 'It is starting; wait for it to come up.' }
     if (card.alive) return { refusal: 'It is running: only a card whose CLI stopped is restarted from the phone.' }
   }
-  return { how: card.claude?.resume ? 'resume' : card.claude?.continue ? 'continue' : 'new' }
+  return { how: card.sessionId || card.claude?.resume ? 'resume' : card.claude?.continue ? 'continue' : 'new' }
 }
 
 /** A device name as typed on the phone: one line, 40 characters. */

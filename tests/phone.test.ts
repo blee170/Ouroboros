@@ -124,6 +124,9 @@ describe('what a Restart from the phone does to a card', () => {
     expect(phoneRestart({ ...gone, claude: { continue: true } })).toEqual({ how: 'continue' })
     expect(phoneRestart({ ...gone, claude: {} })).toEqual({ how: 'new' })
     expect(phoneRestart(gone)).toEqual({ how: 'new' })
+    // the session the app knows wins: a card that was launched plain keeps its conversation too
+    expect(phoneRestart({ ...gone, sessionId: 'sess-9' })).toEqual({ how: 'resume' })
+    expect(phoneRestart({ ...gone, sessionId: 'sess-9', claude: { continue: true } })).toEqual({ how: 'resume' })
   })
 })
 

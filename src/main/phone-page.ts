@@ -1272,9 +1272,9 @@ function drawCardSheet(fresh) {
     if (c.restartable) b.appendChild(restartRow(c))
   })
 }
-/* what the PC's Restart does to the conversation: it relaunches with the card's own launch options */
+/* what the restart does to the conversation: resumed when the PC knows the card's session, else as its launch options say */
 var RELAUNCH = {
-  resume: 'Its CLI starts again and resumes the conversation it was launched with.',
+  resume: 'Its CLI starts again and resumes its conversation.',
   continue: 'Its CLI starts again with --continue: the latest conversation in its folder.',
   new: 'Its CLI starts again with a new conversation; the earlier one is not resumed.'
 }

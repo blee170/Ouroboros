@@ -3,6 +3,7 @@
  * Off by default; bound to one interface (Tailscale by default), never 0.0.0.0; a phone is paired once with a
  * one-use code shown as a QR and then holds a device token the app keeps only as a hash.
  */
+import type { AgentEngine } from './types'
 
 export const PHONE_LIMITS = {
   /** a pairing code is good once, for this long */
@@ -130,19 +131,28 @@ export const ANSWER_KEYS: Record<string, string> = { '1': '1', '3': '3', esc: '\
 export type PhoneSend = { how: 'send' | 'wake' } | { refusal: string }
 
 /**
+ * `ended` on a Claude Code card that is not asleep is its CLI stopped (/exit; /clear and /resume leave it idle): with
+ * its process live, the CLI ended inside its shell. The other engines' SessionEnd carries no reason, so theirs may be a
+ * cleared conversation in a CLI that still runs.
+ */
+function cliEnded(card: { status?: string; engine?: AgentEngine }): boolean {
+  return card.status === 'ended' && (card.engine ?? 'claude') === 'claude'
+}
+
+/**
  * Pure: what a message from the phone would do to a card, from its facts. The board's message box and the prompt
  * route both ask this, so the page never offers what the server refuses. `alive`: its process runs (or it is waking);
- * `launchFailed`: its CLI never came up or has exited, so the live process is a shell. `ended` on a live card that
- * is not asleep is a CLI that ended inside its shell (/exit): its inbox would come back gone and drop the message.
+ * `launchFailed`: its CLI never came up or has exited, so the live process is a shell. A CLI that ended inside its
+ * shell (cliEnded) takes no message either: its inbox would come back gone and drop it.
  * `runRefusal`: why an Autonomous run refuses a prompt to it (sendPrompt asks the run first); `leadFull`: its lead is
  * at its live-card cap, so a wake would be refused (the owner's Wake on the PC is not capped). `launchRefused`: why
  * the PC refused the card's latest launch (it has no process, and its status may still say starting).
  */
-export function phoneSend(card: { status?: string; statusDetail?: string; asleep?: boolean; alive: boolean; launchFailed: boolean; launchRefused?: string; runRefusal?: string; leadFull?: boolean }): PhoneSend {
+export function phoneSend(card: { status?: string; statusDetail?: string; engine?: AgentEngine; asleep?: boolean; alive: boolean; launchFailed: boolean; launchRefused?: string; runRefusal?: string; leadFull?: boolean }): PhoneSend {
   if (card.runRefusal) return { refusal: card.runRefusal }
   if (card.asleep) return card.leadFull ? { refusal: "It stays asleep: its lead already has as many live cards as it may. Wake it on the PC, or close one of the lead's cards." } : { how: 'wake' }
   if (card.launchRefused) return { refusal: `The PC did not start it: ${card.launchRefused}` }
-  if (!card.alive || card.launchFailed || card.status === 'ended') return { refusal: 'This card is not running, so it cannot take a message; Restart it first.' }
+  if (!card.alive || card.launchFailed || cliEnded(card)) return { refusal: 'This card is not running, so it cannot take a message; Restart it first.' }
   // a failed turn leaves Claude Code at its prompt: a message starts a new turn
   if (card.status === 'needs-you' && !(card.statusDetail ?? '').startsWith('failed:')) return { refusal: 'It waits on a prompt in its terminal; answer that first.' }
   return { how: 'send' }
@@ -153,7 +163,7 @@ export type PhoneRestart = { how: 'resume' | 'continue' | 'new'; resumeFailed?: 
 
 /**
  * Pure: whether the phone may restart a card. Only one whose CLI is not running: it never came up or exited
- * (`launchFailed`: the live process is its shell), it ended inside its shell (`ended`), the PC refused its launch
+ * (`launchFailed`: the live process is its shell), it ended inside its shell (cliEnded), the PC refused its launch
  * (`launchRefused`: not starting, whatever its status says), or its process is gone. A running card is never cut off
  * from a phone, an asleep or waking card wakes on a message, a starting one is left to come up. `restarting`: a
  * restart was asked for and its launch has not run, so a second tap asks for nothing. The relaunch keeps the
@@ -161,11 +171,11 @@ export type PhoneRestart = { how: 'resume' | 'continue' | 'new'; resumeFailed?: 
  * Restart, with the card's own launch options. After such a resume that did not come up (`resumeTried`) it is the PC's
  * Restart too: the session is not tried again, and the phone says so (`resumeFailed`).
  */
-export function phoneRestart(card: { status?: string; asleep?: boolean; waking: boolean; restarting: boolean; alive: boolean; launchFailed: boolean; launchRefused?: string; sessionId?: string; resumeTried?: boolean; claude?: { resume?: string; continue?: boolean } }): PhoneRestart {
+export function phoneRestart(card: { status?: string; engine?: AgentEngine; asleep?: boolean; waking: boolean; restarting: boolean; alive: boolean; launchFailed: boolean; launchRefused?: string; sessionId?: string; resumeTried?: boolean; claude?: { resume?: string; continue?: boolean } }): PhoneRestart {
   if (card.asleep) return { refusal: 'It is asleep: a message wakes it on its conversation.' }
   if (card.waking) return { refusal: 'It is waking up; wait a moment.' }
   if (card.restarting) return { refusal: 'It is restarting already.' }
-  if (!card.launchFailed && !card.launchRefused && card.status !== 'ended') {
+  if (!card.launchFailed && !card.launchRefused && !cliEnded(card)) {
     if (card.status === 'starting') return { refusal: 'It is starting; wait for it to come up.' }
     if (card.alive) return { refusal: 'It is running: only a card whose CLI stopped is restarted from the phone.' }
   }

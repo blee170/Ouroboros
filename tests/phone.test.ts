@@ -61,6 +61,10 @@ describe('what a message from the phone does to a card', () => {
     expect(phoneSend(card)).toEqual({ how: 'send' })
   })
 
+  it.each(['codex', 'gemini', 'grok'] as const)('sends to a %s card that is ended with a live process: its SessionEnd carries no reason, it may be a cleared conversation', (engine) => {
+    expect(phoneSend({ engine, status: 'ended', statusDetail: 'session ended', ...up })).toEqual({ how: 'send' })
+  })
+
   it('wakes an asleep card, which has no process', () => {
     expect(phoneSend({ status: 'ended', statusDetail: 'asleep', asleep: true, alive: false, launchFailed: false })).toEqual({ how: 'wake' })
   })
@@ -135,6 +139,10 @@ describe('what a Restart from the phone does to a card', () => {
     const r = phoneRestart(card)
     expect(r).not.toHaveProperty('how')
     expect((r as { refusal: string }).refusal).toMatch(why)
+  })
+
+  it.each(['codex', 'gemini', 'grok'] as const)('refuses a %s card that is ended with a live process: it may be running a cleared conversation', (engine) => {
+    expect(phoneRestart({ engine, status: 'ended', ...down, alive: true })).toEqual({ refusal: expect.stringMatching(/running/) })
   })
 
   it('relaunches as the PC does: the conversation resumes only when the launch options carry a session', () => {

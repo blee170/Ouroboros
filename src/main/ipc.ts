@@ -1325,6 +1325,7 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
     phoneSend({
       status: n.data.status,
       statusDetail: n.data.statusDetail,
+      engine: n.data.engine,
       asleep: n.data.asleep,
       alive: ctx.ptys.isAlive(n.id) || wakePrompts.has(n.id),
       launchFailed: launchFailed.has(n.id),
@@ -1337,8 +1338,8 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
     return 'refusal' in r ? { promptable: false, wakes: false, refusal: r.refusal } : { promptable: true, wakes: r.how === 'wake' }
   }
   // a restart asked for (restartsOwed) runs until the page's launch starts, then the launch itself (spawning)
-  const restartFor = (n: { id: string; data: { status?: string; asleep?: boolean; sessionId?: string; claude?: ClaudeOptions } }): PhoneRestart =>
-    phoneRestart({ status: n.data.status, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), launchRefused: launchRefused.get(n.id), sessionId: n.data.sessionId, resumeTried: resumeOnce.get(n.id) === 'tried', claude: n.data.claude })
+  const restartFor = (n: { id: string; data: NodeData }): PhoneRestart =>
+    phoneRestart({ status: n.data.status, engine: n.data.engine, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), launchRefused: launchRefused.get(n.id), sessionId: n.data.sessionId, resumeTried: resumeOnce.get(n.id) === 'tried', claude: n.data.claude })
   const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new'; resumeFailed?: boolean } => {
     const r = restartFor(n)
     return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how, resumeFailed: r.resumeFailed }

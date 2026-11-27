@@ -101,15 +101,32 @@ describe('a message from the phone, on the real board', () => {
     expect(typed).toContain(`see these\n\n${PHONE_FILES_NOTE}\n${paths[0]}\n${paths[1]}`)
   })
 
-  it('offers a Restart, not the message box, once a card’s CLI ended inside its shell (/exit)', () => {
-    const t = setup([{ id: 'ex', data: { status: 'idle', statusDetail: 'ready' } }], ['ex'])
-    t.board.applyHook('ex', { hook_event_name: 'SessionEnd', reason: 'prompt_input_exit', session_id: 'sess-ex' })
-    const c = t.card('ex')
+  it.each(['prompt_input_exit', 'other'])('offers a Restart, not the message box, once a Claude card’s CLI ended inside its shell (SessionEnd %s)', (reason) => {
+    const id = `ex-${reason}`
+    const t = setup([{ id, data: { status: 'idle', statusDetail: 'ready' } }], [id])
+    t.board.applyHook(id, { hook_event_name: 'SessionEnd', reason, session_id: `sess-${id}` })
+    const c = t.card(id)
     expect(c).toMatchObject({ status: 'ended', promptable: false, restartable: true, relaunch: 'resume' })
     expect(c.refusal).toMatch(/Restart it/)
-    expect(t.h.prompt('ex', 'hello', [])).toEqual({ ok: false, error: c.refusal })
-    expect(t.h.restart('ex', c.promptAt ?? 0)).toEqual({ ok: true })
+    expect(t.h.prompt(id, 'hello', [])).toEqual({ ok: false, error: c.refusal })
+    expect(t.h.restart(id, c.promptAt ?? 0)).toEqual({ ok: true })
     expect(t.writes).toEqual([])
+  })
+
+  it('keeps the message box, and offers no Restart, after the owner ran /resume in a card: its CLI is still up', () => {
+    const t = setup([{ id: 'rsm', data: { status: 'idle', statusDetail: 'ready' } }], ['rsm'])
+    t.board.applyHook('rsm', { hook_event_name: 'SessionEnd', reason: 'resume', session_id: 'sess-rsm' })
+    expect(t.card('rsm')).toMatchObject({ status: 'idle', promptable: true, restartable: false })
+    expect(t.h.restart('rsm', t.card('rsm').promptAt ?? 0)).toMatchObject({ ok: false, error: expect.stringMatching(/running/) })
+    expect(t.h.prompt('rsm', 'carry on', [])).toEqual({ ok: true })
+  })
+
+  it.each(['codex', 'gemini'])('lets a %s card that is ended with a live process take a message, and does not restart it: its SessionEnd carries no reason', (engine) => {
+    const id = `en-${engine}`
+    const t = setup([{ id, data: { engine, status: 'ended', statusDetail: 'session ended' } }], [id])
+    expect(t.card(id)).toMatchObject({ status: 'ended', promptable: true, restartable: false })
+    expect(t.h.restart(id, t.card(id).promptAt ?? 0)).toMatchObject({ ok: false, error: expect.stringMatching(/running/) })
+    expect(t.h.prompt(id, 'carry on', [])).toEqual({ ok: true })
   })
 
   it('leaves an asleep card asleep while its lead is at its live-card cap, and says so on the screen and in the answer', () => {

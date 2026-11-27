@@ -12,6 +12,10 @@ describe('reduceHook', () => {
     expect(reduceHook('done', { hook_event_name: 'SessionEnd', reason: 'clear' })).toMatchObject({ status: 'idle', statusDetail: 'cleared' })
     expect(reduceHook('idle', { hook_event_name: 'SessionEnd', reason: 'logout' })?.status).toBe('ended')
   })
+  it('keeps a card idle after /resume: its CLI stays open, on the conversation picked', () => {
+    expect(reduceHook('done', { hook_event_name: 'SessionEnd', reason: 'resume', session_id: 's1' })).toEqual({ status: 'idle', statusDetail: 'resumed', sessionId: 's1' })
+    for (const reason of ['prompt_input_exit', 'other']) expect(reduceHook('idle', { hook_event_name: 'SessionEnd', reason })?.status).toBe('ended')
+  })
   it('turns permission/idle notifications into needs-you and ignores others', () => {
     expect(reduceHook('working', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Allow Bash?' })).toMatchObject({ status: 'needs-you', statusDetail: 'permission: Allow Bash?' })
     expect(reduceHook('working', { hook_event_name: 'Notification', notification_type: 'auth_success' })).toBeNull()

@@ -1308,10 +1308,16 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
     const r = sendFor(n)
     return 'refusal' in r ? { promptable: false, wakes: false, refusal: r.refusal } : { promptable: true, wakes: r.how === 'wake' }
   }
+  // a waiting task as the board carries it: what the Inbox shows; its long parts wait for the task route
+  const taskItem = (w: WindowSession, t: Task, need: NonNullable<ReturnType<typeof ownerNeed>>) => {
+    const asker = t.ownerAction ? t.ownerAction.by : t.updatedBy
+    const by = asker && asker !== OWNER ? w.board.nodes.get(asker)?.data.title : undefined
+    return { id: `${w.id}-${t.id}`, title: t.title, kind: need.kind, ask: need.ask, ...(need.limit ? { limit: need.limit } : {}), ...(by ? { by } : {}), updatedAt: t.updatedAt, project: basename(w.board.projectRoot || '') }
+  }
   return {
     board: () => {
       const s = win()
-      if (!s) return { project: '', autonomous: false, cards: [], approvals: [], decisions: [] }
+      if (!s) return { project: '', autonomous: false, cards: [], approvals: [], decisions: [], tasks: [] }
       const rank = (st: string | undefined): number => (st === 'needs-you' ? 0 : st === 'working' ? 1 : 2)
       const cards = [...s.board.nodes.values()]
         .filter((n) => n.data.kind === 'claude' || n.data.kind === 'conductor')
@@ -1334,13 +1340,19 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       // every window's requests, each id scoped to its window (each window counts A1, A2 … on its own)
       const approvals = ctx.windows.all().flatMap((w) => w.gate.pending().map((a) => ({ id: `${w.id}-${a.id}`, title: a.title, command: a.command, createdAt: a.createdAt, project: basename(w.board.projectRoot || '') })))
       const decisions = ctx.windows.all().flatMap((w) => w.decisions.pending().map((d) => ({ id: `${w.id}-${d.id}`, title: d.title, question: d.question, answers: answersOf(d), createdAt: d.createdAt, project: basename(w.board.projectRoot || '') })))
+      const tasks = ctx.windows.all().flatMap((w) =>
+        w.ledger.data.tasks.flatMap((t) => {
+          const need = ownerNeed(t)
+          return need ? [taskItem(w, t, need)] : []
+        })
+      )
       // how the agent cards are connected: handoff lines, and the card that dispatched each one
       const shown = new Set(cards.map((c) => c.id))
       const edges = [
         ...s.board.edges.filter((e) => shown.has(e.source) && shown.has(e.target)).map((e) => ({ from: e.source, to: e.target, kind: 'handoff', firedAt: e.data.lastFiredAt })),
         ...[...s.board.nodes.values()].filter((n) => n.data.parentId && shown.has(n.id) && shown.has(n.data.parentId)).map((n) => ({ from: n.data.parentId as string, to: n.id, kind: 'dispatch' }))
       ]
-      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, edges, approvals, decisions }
+      return { project: basename(s.board.projectRoot || ''), autonomous: s.autonomy.on, cards, edges, approvals, decisions, tasks }
     },
     prompt: (id, text, files) => {
       const s = ctx.windows.forNode(id)
@@ -1375,6 +1387,16 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       const m = /^(\d+)-(A\d+)$/.exec(scoped)
       const s = m ? ctx.windows.all().find((w) => String(w.id) === m[1]) : undefined
       return s && m ? resolveApproval(s, m[2], approve) : { ok: false, error: 'that request is gone (its window was closed)' }
+    },
+    task: (scoped) => {
+      const w = needWindow(ctx, scoped)
+      const t = w?.s.ledger.data.tasks.find((x) => x.id === w.id)
+      const need = t && ownerNeed(t)
+      return w && t && need ? { ...taskItem(w.s, t, need), steps: need.steps, copy: need.copy, ...(need.check ? { check: need.check } : {}) } : undefined
+    },
+    answerTask: (scoped, choice, text, shownAt) => {
+      const w = needWindow(ctx, scoped)
+      return w ? ownerAnswerTask(w.s, w.id, choice, text, shownAt) : { ok: false, error: 'that task is gone (its window was closed)' }
     },
     notify: (event) => {
       // the only event so far: the phone joined the car; Ouro says ready once Discord will push it to the phone

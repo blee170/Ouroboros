@@ -6,6 +6,7 @@
  * a bottom sheet per card with its last reply and a message box.
  */
 import { PHONE_LIMITS } from '@shared/phone'
+import { OWNER_ACTION_LIMITS } from '@shared/owner-action'
 
 const ICONS = {
   board: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>',
@@ -192,8 +193,17 @@ main { padding: 14px 16px calc(100px + var(--safe-b)); max-width: 680px; margin:
 .item { border-radius: var(--r); padding: 16px; margin-bottom: 12px; }
 .kind { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .kind::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--needs); }
-.item .q { font-size: 16px; font-weight: 600; margin: 8px 0 4px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
-.item .from { color: var(--muted); font-size: 13px; }
+.item .q, .tsheet .q { font-size: 16px; font-weight: 600; margin: 8px 0 4px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+.item .from, .tsheet .from { color: var(--muted); font-size: 13px; }
+button.item { display: block; width: 100%; text-align: left; }
+.tsteps { margin: 8px 0 0; padding-left: 22px; color: #d4d4d4; }
+.tsteps li { margin: 6px 0; word-break: break-word; }
+.ttext { margin-top: 6px; color: #d4d4d4; word-break: break-word; }
+.copyhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.copyhead .label { margin-top: 0; }
+.btn.copy { flex: none; min-height: 44px; }
+/* the text to copy stays selectable: plain http often has no clipboard API */
+.copytext { margin-top: 8px; max-height: 40vh; overflow: auto; user-select: text; -webkit-user-select: text; }
 .cmd { font: 13px/1.5 'D2Coding', ui-monospace, 'SF Mono', Consolas, monospace; background: rgba(0,0,0,.35); border: 1px solid var(--glass-line); border-radius: 12px; padding: 10px 12px; margin: 10px 0 2px; white-space: pre-wrap; word-break: break-all; }
 .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .btn { flex: 1 1 0; min-height: 48px; padding: 0 16px; border-radius: 14px; background: var(--fill); border: 1px solid var(--glass-line); font-weight: 600; box-shadow: inset 0 1px 0 rgba(255,255,255,.06); transition: transform .1s, background .2s; }
@@ -287,6 +297,8 @@ var notes = {}
 var attachments = {}
 var MAX_UPLOAD = ${PHONE_LIMITS.uploadBytes}
 var MAX_FILES = ${PHONE_LIMITS.uploadsPerMessage}
+var NOTE_CHARS = ${OWNER_ACTION_LIMITS.noteChars}
+var PASTE_CHARS = ${OWNER_ACTION_LIMITS.pasteChars}
 
 function readView() { try { var v = localStorage.getItem(VIEW_KEY); return v === 'graph' || v === 'orbit' ? v : 'list' } catch (e) { return 'list' } }
 function token() { try { return localStorage.getItem(KEY) || '' } catch (e) { return '' } }
@@ -362,7 +374,7 @@ function avatar(c) {
 }
 function needs(b) {
   if (!b) return 0
-  return (b.decisions || []).length + (b.approvals || []).length + b.cards.filter(function (c) { return c.permission }).length
+  return (b.decisions || []).length + (b.tasks || []).length + (b.approvals || []).length + b.cards.filter(function (c) { return c.permission }).length
 }
 
 /* ---------- board: list ---------- */
@@ -885,12 +897,117 @@ function drawPermission(c) {
   box.appendChild(permissionButtons(c))
   return box
 }
+/* a task that waits on the owner: the Inbox shows its ask; its steps, text to copy and check come once it is opened */
+var HEAD = { approve: 'Needs your OK', do: 'Only you can do this', unknown: 'Needs your decision' }
+var ANSWERED = { approve: 'Approved', hold: 'Put on hold', did: 'Marked done' }
+function drawTask(t) {
+  var box = glass('button', 'item')
+  box.type = 'button'
+  box.id = 'task-' + t.id
+  box.appendChild(kind('Task'))
+  box.appendChild(el('div', 'q', t.ask))
+  box.appendChild(el('div', 'from', t.title + (t.project ? ' · ' + t.project : '')))
+  box.appendChild(el('div', 'from', (HEAD[t.kind] || HEAD.unknown) + (t.limit ? ' · may spend: ' + t.limit : '') + (t.by ? ' · asked by ' + split(t.by).name : '')))
+  box.addEventListener('click', function () { openTask(t.id) })
+  return box
+}
+function onTask(id) { return state.sheet && state.sheet.kind === 'task' && state.sheet.id === id && !$('sheet').hidden }
+/* quiet: after a refused answer, whose error is on screen already; a task that waits no more just closes */
+function openTask(id, quiet) {
+  state.sheet = { kind: 'task', id: id, task: null }
+  drawTaskSheet()
+  api('GET', 'tasks/' + encodeURIComponent(id))
+    .then(function (t) { if (onTask(id)) { state.sheet.task = t; drawTaskSheet() } })
+    .catch(function (e) { if (!onTask(id)) return; closeSheet(); if (!quiet) toast(e.message, true); tick() })
+}
+/* plain http (Tailscale) has no clipboard API: the text is always selectable, a Copy button only where the phone has one */
+function copyBlock(c, i) {
+  var frag = document.createDocumentFragment()
+  var head = el('div', 'copyhead')
+  head.appendChild(el('div', 'label', c.label + ' · ' + c.text.split('\\n').length + ' lines'))
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    var b = el('button', 'btn copy', 'Copy')
+    b.type = 'button'
+    b.id = 'copy-' + i
+    b.setAttribute('aria-label', 'Copy ' + c.label)
+    b.addEventListener('click', function () {
+      navigator.clipboard.writeText(c.text).then(function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy' }, 1500) }, function () { toast('Could not copy: press and hold the text to select it', true) })
+    })
+    head.appendChild(b)
+  }
+  frag.appendChild(head)
+  frag.appendChild(el('pre', 'cmd copytext', c.text))
+  return frag
+}
+/* the Tasks tab's box: the same words, and the same buttons for each kind */
+function drawTaskSheet() {
+  var t = state.sheet.task
+  openSheet(function (b) {
+    var box = el('div', 'tsheet')
+    b.appendChild(box)
+    if (!t) { box.appendChild(el('div', 'skeleton')); box.appendChild(el('div', 'skeleton')); return }
+    var doIt = t.kind === 'do'
+    box.appendChild(kind('Task · ' + (HEAD[t.kind] || HEAD.unknown)))
+    box.appendChild(el('div', 'q', t.ask))
+    box.appendChild(el('div', 'from', t.title + (t.project ? ' · ' + t.project : '') + (t.by ? ' · asked by ' + split(t.by).name : '')))
+    // the limit is in the card's words ("up to 63 images, about $5")
+    if (t.limit) { box.appendChild(el('div', 'label', 'Approving also allows spending')); box.appendChild(el('div', 'ttext', t.limit)) }
+    if (t.steps.length) {
+      box.appendChild(el('div', 'label', doIt ? 'What to do' : 'What happens once you approve'))
+      var ol = el('ol', 'tsteps')
+      t.steps.forEach(function (s) { ol.appendChild(el('li', '', s)) })
+      box.appendChild(ol)
+    }
+    t.copy.forEach(function (c, i) { box.appendChild(copyBlock(c, i)) })
+    if (t.check) { box.appendChild(el('div', 'label', 'How to check it worked')); box.appendChild(el('div', 'ttext', t.check)) }
+    var note = el('textarea', 'field')
+    note.id = 'task-note'
+    note.rows = 2
+    note.maxLength = doIt ? PASTE_CHARS : NOTE_CHARS
+    note.placeholder = doIt ? 'Paste what you saw (optional): the card checks it' : t.kind === 'unknown' ? 'Note, or what you saw if you did it (optional)' : 'Note for the card (optional)'
+    note.setAttribute('aria-label', 'Note for ' + t.title)
+    note.value = notes[t.id] || ''
+    note.addEventListener('input', function () { notes[t.id] = note.value })
+    box.appendChild(note)
+    var row = el('div', 'actions')
+    row.appendChild(taskButton(t, row, 'hold', 'Not now', 'btn'))
+    if (t.kind !== 'approve') row.appendChild(taskButton(t, row, 'did', doIt ? 'Done, I did it' : 'I did it myself', doIt ? 'btn primary' : 'btn'))
+    if (t.kind !== 'do') row.appendChild(taskButton(t, row, 'approve', 'Approve', 'btn primary'))
+    box.appendChild(row)
+  })
+}
+function taskButton(t, row, choice, label, cls) {
+  var b = el('button', cls, label)
+  b.type = 'button'
+  b.id = 'task-' + choice
+  b.addEventListener('click', function () {
+    var text = $('task-note') ? $('task-note').value : ''
+    // spending is approved on a screen of its own, with the limit in front of the owner
+    if (choice === 'approve' && t.limit) { confirmSheet('Approve, with spending?', 'This also allows spending: ' + t.limit, 'Approve', function () { answerTask(t, choice, text) }); return }
+    lock(row)
+    answerTask(t, choice, text)
+  })
+  return b
+}
+function answerTask(t, choice, text) {
+  api('POST', 'tasks/' + encodeURIComponent(t.id), { choice: choice, text: text.trim() || undefined, shownAt: t.updatedAt })
+    .then(function (r) {
+      delete notes[t.id]
+      if (onTask(t.id)) closeSheet()
+      toast(r.warning || ANSWERED[choice], !!r.warning)
+      tick()
+    })
+    // answered on the PC meanwhile, or changed since it was read: the server's words, then the task as it is now
+    .catch(function (e) { toast(e.message, true); tick(); openTask(t.id, true) })
+}
 function drawInbox(v, b) {
   var qs = b.decisions || []
+  var ts = b.tasks || []
   var as = b.approvals || []
   var ps = b.cards.filter(function (c) { return c.permission })
-  if (!qs.length && !as.length && !ps.length) { v.appendChild(empty('All clear', 'Nothing waits on you right now.', true)); return }
+  if (!qs.length && !ts.length && !as.length && !ps.length) { v.appendChild(empty('All clear', 'Nothing waits on you right now.', true)); return }
   qs.forEach(function (q) { v.appendChild(drawQuestion(q)) })
+  ts.forEach(function (t) { v.appendChild(drawTask(t)) })
   as.forEach(function (a) { v.appendChild(drawApproval(a)) })
   ps.forEach(function (c) { v.appendChild(drawPermission(c)) })
 }

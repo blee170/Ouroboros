@@ -10,6 +10,10 @@ import { PHONE_CSS, PHONE_HTML, PHONE_JS, PHONE_MANIFEST } from './phone-page'
 import { PHONE_ICON_PNG } from './phone-icon'
 import type { PhoneUploads } from './phone-uploads'
 
+/** The owner's answers to a task that waits on them, as the Tasks tab gives them. */
+const TASK_CHOICES = ['approve', 'hold', 'did'] as const
+export type TaskChoice = (typeof TASK_CHOICES)[number]
+
 /** What the phone sees and may do; injected so the server runs without Electron in tests. */
 export interface PhoneHandlers {
   board(): unknown
@@ -20,6 +24,10 @@ export interface PhoneHandlers {
   resolveApproval(id: string, approve: boolean): { ok: boolean; error?: string }
   /** a card's question (ask_owner), answered from the phone; `device` is the paired phone's name */
   answerDecision(id: string, answer: unknown, note: unknown, device: string): { ok: boolean; error?: string }
+  /** a task that waits on the owner, with its long parts (steps, text to copy, check); undefined once it waits no more */
+  task(id: string): unknown
+  /** the owner's answer to such a task; `shownAt` is the task's updatedAt as the phone read it */
+  answerTask(id: string, choice: TaskChoice, text: string | undefined, shownAt: number): { ok: boolean; error?: string; warning?: string }
   latestReport(): string | undefined
   /** an automation app on the phone reports an event (the car connected) */
   notify(event: NotifyEvent): { ok: boolean; error?: string; queued?: boolean }
@@ -398,6 +406,22 @@ export class PhoneServer {
       if (typeof body?.answer !== 'string' || (body.note !== undefined && typeof body.note !== 'string')) return json(res, 400, { error: 'answer must be one of the offered answers' })
       const r = this.handlers.answerDecision(dec[1], body.answer, body.note, device.name)
       if (r.ok) this.handlers.note(`${from} answered ${dec[1]}: ${body.answer.slice(0, 80)}`)
+      return json(res, r.ok ? 200 : 409, r)
+    }
+    const task = /^\/m\/api\/tasks\/(\d{1,9}-T\d{1,9})$/.exec(path)
+    if (method === 'GET' && task) {
+      const t = this.handlers.task(task[1])
+      return t ? json(res, 200, t) : json(res, 404, { error: 'that task no longer waits on you' })
+    }
+    if (method === 'POST' && task) {
+      const body = (await readBody(req, PHONE_LIMITS.bodyBytes)) as { choice?: unknown; text?: unknown; shownAt?: unknown } | undefined
+      const choice = TASK_CHOICES.find((c) => c === body?.choice)
+      if (!body || !choice) return json(res, 400, { error: 'choice must be approve, hold or did' })
+      if (body.text !== undefined && typeof body.text !== 'string') return json(res, 400, { error: 'text must be a string' })
+      if (typeof body.shownAt !== 'number') return json(res, 400, { error: 'shownAt must be the task as you read it' })
+      const r = this.handlers.answerTask(task[1], choice, body.text, body.shownAt)
+      // what the owner pasted back may hold output they would not want in a log: the line names only the answer
+      if (r.ok) this.handlers.note(`${from} answered task ${task[1]}: ${choice}`)
       return json(res, r.ok ? 200 : 409, r)
     }
     return json(res, 404, { error: 'not found' })

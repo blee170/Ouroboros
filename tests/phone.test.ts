@@ -95,12 +95,19 @@ describe('the phone server', () => {
   const prompts: Array<[string, string]> = []
   const answers: Array<[string, string]> = []
   const events: string[] = []
+  const taskAnswers: unknown[][] = []
   const handlers: PhoneHandlers = {
     board: () => ({ project: 'p', autonomous: false, cards: [{ id: 'c1', title: 'Chief' }], approvals: [] }),
     prompt: (id, text) => (prompts.push([id, text]), { ok: true }),
     answer: (id, key) => (answers.push([id, key]), { ok: true }),
     resolveApproval: (id) => (id === '1-A1' ? { ok: true } : { ok: false, error: 'no approval' }),
     answerDecision: (id, answer, _note, device) => (id === '1-D1' && answer === 'Approve' && device ? { ok: true } : { ok: false, error: 'no such question' }),
+    task: (id) => (id === '1-T1' ? { id, kind: 'do', ask: 'Run the migration', steps: ['Open the dashboard'], updatedAt: 5 } : undefined),
+    // as the app answers: the answer is to the task as the phone read it (updatedAt 5)
+    answerTask: (id, choice, text, shownAt) => (
+      taskAnswers.push([id, choice, text, shownAt]),
+      id !== '1-T1' ? { ok: false, error: `${id.slice(2)} is not waiting on you` } : shownAt !== 5 ? { ok: false, error: 'T1 changed since you read it. Read it again before you answer.' } : choice === 'hold' ? { ok: true, warning: 'Saved, but the card was not told: no route' } : { ok: true }
+    ),
     latestReport: () => '# report',
     notify: (e) => (events.push(e), { ok: true, queued: true }),
     note: (l) => notes.push(l)
@@ -199,6 +206,44 @@ describe('the phone server', () => {
     // revoked: refused
     devices.revoke(devices.list[0].id)
     expect((await call('/m/api/board', { token })).status).toBe(401)
+  })
+
+  it('opens and answers a task that waits on the owner, and never logs what was pasted', async () => {
+    // its own server: the refusals below count against this address
+    const s = new PhoneServer(new PhoneDevices(join(dir, 'd5.json')), handlers, () => {}, { sourceAllowed: () => true, bindRefusal: () => undefined, isLocal: () => false })
+    await s.apply({ enabled: true, host: '127.0.0.1', port: 0, allowLan: false })
+    const save = base
+    base = s.url!.replace(/\/m$/, '')
+    try {
+      const { token } = s.devices.add('Pixel')
+      const key = s.devices.add('MacroDroid', Date.now(), 'notify').token
+      expect((await call('/m/api/tasks/1-T1')).status).toBe(401)
+      expect((await call('/m/api/tasks/1-T1', { token: key })).status).toBe(403)
+      expect((await call('/m/api/tasks/1-T1', { token: key, body: { choice: 'hold', shownAt: 5 } })).status).toBe(403)
+      // the long parts the board leaves out come with the task, when the owner opens it
+      const open = await call('/m/api/tasks/1-T1', { token })
+      expect(open.status).toBe(200)
+      expect(open.body).toMatchObject({ id: '1-T1', steps: ['Open the dashboard'], updatedAt: 5 })
+      expect((await call('/m/api/tasks/1-T9', { token })).status).toBe(404)
+      expect((await call('/m/api/tasks/T1', { token })).status).toBe(404)
+      // refused before the app sees it
+      expect((await call('/m/api/tasks/1-T1', { token, body: { choice: 'yes', shownAt: 5 } })).status).toBe(400)
+      expect((await call('/m/api/tasks/1-T1', { token, body: { choice: 'did', text: 7, shownAt: 5 } })).status).toBe(400)
+      expect((await call('/m/api/tasks/1-T1', { token, body: { choice: 'did' } })).status).toBe(400)
+      expect(taskAnswers).toEqual([])
+      // the app's own refusals and its warning reach the phone as they are
+      expect(await call('/m/api/tasks/1-T1', { token, body: { choice: 'did', text: 'x', shownAt: 4 } })).toMatchObject({ status: 409, body: { error: 'T1 changed since you read it. Read it again before you answer.' } })
+      expect(await call('/m/api/tasks/1-T9', { token, body: { choice: 'hold', shownAt: 5 } })).toMatchObject({ status: 409, body: { error: 'T9 is not waiting on you' } })
+      expect(await call('/m/api/tasks/1-T1', { token, body: { choice: 'hold', shownAt: 5 } })).toMatchObject({ status: 200, body: { ok: true, warning: 'Saved, but the card was not told: no route' } })
+      expect((await call('/m/api/tasks/1-T1', { token, body: { choice: 'did', text: 'SECRET-PASTE 42 rows', shownAt: 5 } })).status).toBe(200)
+      expect(taskAnswers.at(-1)).toEqual(['1-T1', 'did', 'SECRET-PASTE 42 rows', 5])
+      // the log and the run's report name the phone, the answer and the task, never the pasted text
+      expect(notes.filter((n) => n.includes('task'))).toEqual(['phone Pixel answered task 1-T1: hold', 'phone Pixel answered task 1-T1: did'])
+      expect(notes.join('\n')).not.toContain('SECRET-PASTE')
+    } finally {
+      s.stop()
+      base = save
+    }
   })
 
   it('refuses a foreign Host or Origin, non-JSON posts, and the card API', async () => {

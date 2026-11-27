@@ -962,7 +962,7 @@ function drawCardSheet(fresh) {
       var ta = el('textarea', 'field')
       ta.id = 'composer'
       ta.rows = 2
-      ta.placeholder = 'Message ' + split(c.title).name
+      ta.placeholder = 'Message ' + split(c.title).name + (c.wakes ? ' (it is asleep; this wakes it)' : '')
       ta.value = drafts[c.id] || ''
       ta.addEventListener('input', function () { drafts[c.id] = ta.value })
       b.appendChild(ta)
@@ -973,14 +973,14 @@ function drawCardSheet(fresh) {
         var text = ta.value.trim()
         if (!text) return
         sendBtn.disabled = true
-        send('cards/' + encodeURIComponent(c.id) + '/prompt', { text: text }, 'Sent to ' + split(c.title).name).then(function (ok) {
+        send('cards/' + encodeURIComponent(c.id) + '/prompt', { text: text }, (c.wakes ? 'Waking ' : 'Sent to ') + split(c.title).name).then(function (ok) {
           sendBtn.disabled = false
           if (ok) { drafts[c.id] = ''; ta.value = ''; ta.blur() }
         })
       })
       row.appendChild(sendBtn)
       b.appendChild(row)
-    } else if (!c.permission) b.appendChild(el('div', 'note', c.status === 'needs-you' ? 'It waits on a prompt; answer that first.' : 'This card is not running, so it cannot take a message.'))
+    } else if (!c.permission) b.appendChild(el('div', 'note', c.refusal || 'This card cannot take a message now.'))
   })
 }
 function lock(row) { row.querySelectorAll('button').forEach(function (x) { x.disabled = true }) }

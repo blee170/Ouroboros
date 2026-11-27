@@ -113,6 +113,22 @@ export type NotifyEvent = (typeof NOTIFY_EVENTS)[number]
 // no "2" ("Yes, and don't ask again"): it writes a lasting allow rule, and the option set differs between prompts
 export const ANSWER_KEYS: Record<string, string> = { '1': '1', '3': '3', esc: '\x1b' }
 
+/** What a message from the phone does to a card, or why it is refused. */
+export type PhoneSend = { how: 'send' | 'wake' } | { refusal: string }
+
+/**
+ * Pure: what a message from the phone would do to a card, from its facts. The board's message box and the prompt
+ * route both ask this, so the page never offers what the server refuses. `alive`: its process runs (or it is waking);
+ * `launchFailed`: its CLI never came up or has exited, so the live process is a shell.
+ */
+export function phoneSend(card: { status?: string; statusDetail?: string; asleep?: boolean; alive: boolean; launchFailed: boolean }): PhoneSend {
+  if (card.asleep) return { how: 'wake' }
+  if (!card.alive || card.launchFailed) return { refusal: 'This card is not running, so it cannot take a message; Restart it on the PC.' }
+  // a failed turn leaves Claude Code at its prompt: a message starts a new turn
+  if (card.status === 'needs-you' && !(card.statusDetail ?? '').startsWith('failed:')) return { refusal: 'It waits on a prompt in its terminal; answer that first.' }
+  return { how: 'send' }
+}
+
 /** A device name as typed on the phone: one line, 40 characters. */
 export function cleanDeviceName(name: unknown): string {
   return (typeof name === 'string' ? name : '').replace(/[^\p{L}\p{N} ._'-]/gu, '').trim().slice(0, 40) || 'Phone'

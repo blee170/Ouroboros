@@ -36,7 +36,7 @@ import { GateKeeper, auditFile } from './gate'
 import { DecisionDesk } from './decisions'
 import { answersOf, askInput, decisionForMessage, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
 import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
-import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
+import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneSend, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -1290,8 +1290,20 @@ function ownerAnswerTask(s: WindowSession, id: string, choice: unknown, text: un
 
 /** The phone companion: its server, with handlers on the current window. Off until the owner turns it on. */
 export function createPhone(ctx: MainContext): PhoneServer {
+  return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), phoneHandlers(ctx), log)
+}
+
+/** What the phone sees and may do, on the current window. */
+export function phoneHandlers(ctx: MainContext): PhoneHandlers {
   const win = (): WindowSession | undefined => ctx.windows.current()
-  const handlers: PhoneHandlers = {
+  // a card still waking has no process yet, and takes a prompt (it waits with the one it was woken with)
+  const sendFor = (n: { id: string; data: { status?: string; statusDetail?: string; asleep?: boolean } }): PhoneSend =>
+    phoneSend({ status: n.data.status, statusDetail: n.data.statusDetail, asleep: n.data.asleep, alive: ctx.ptys.isAlive(n.id) || wakePrompts.has(n.id), launchFailed: launchFailed.has(n.id) })
+  const sendView = (n: Parameters<typeof sendFor>[0]): { promptable: boolean; wakes: boolean; refusal?: string } => {
+    const r = sendFor(n)
+    return 'refusal' in r ? { promptable: false, wakes: false, refusal: r.refusal } : { promptable: true, wakes: r.how === 'wake' }
+  }
+  return {
     board: () => {
       const s = win()
       if (!s) return { project: '', autonomous: false, cards: [], approvals: [], decisions: [] }
@@ -1308,7 +1320,7 @@ export function createPhone(ctx: MainContext): PhoneServer {
           // the trust dialog takes arrow keys, not the phone's 1 / 3 / Esc: it is answered in the card
           permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission') && !trustAsked.has(n.id),
           promptAt: n.data.lastEventAt,
-          promptable: n.data.status !== 'needs-you' && ctx.ptys.isAlive(n.id) && !launchFailed.has(n.id),
+          ...sendView(n),
           // where it sits on the canvas, for the phone's map
           x: n.pos?.x,
           y: n.pos?.y
@@ -1329,7 +1341,8 @@ export function createPhone(ctx: MainContext): PhoneServer {
       const s = ctx.windows.forNode(id)
       const n = s?.board.nodes.get(id)
       if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
-      if (n.data.status === 'needs-you') return { ok: false, error: 'the card is waiting on a prompt: answer it first' }
+      const how = sendFor(n)
+      if ('refusal' in how) return { ok: false, error: how.refusal }
       // the owner wrote it on their paired phone: their own words once the card submits it
       if (typeof text === 'string') ownerWords.sent(id, text, 'phone')
       return sendPrompt(ctx, s, id, text) ? { ok: true } : { ok: false, error: 'not delivered (the card is not running, or the run does not allow it)' }
@@ -1376,7 +1389,6 @@ export function createPhone(ctx: MainContext): PhoneServer {
       win()?.autonomy.notePhone(line)
     }
   }
-  return new PhoneServer(new PhoneDevices(join(app.getPath('userData'), 'phone-devices.json'), log), handlers, log)
 }
 
 /** Put one Grok Bot reply in front of the card that asked (or the Conductor when that card is gone). False: no one to tell yet. */

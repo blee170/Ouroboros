@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { FailureLimiter, bindRefusal, cleanDeviceName, isPrivateLan, isTailscale, pairingUrl, sourceAllowed } from '../src/shared/phone'
+import { FailureLimiter, bindRefusal, cleanDeviceName, isPrivateLan, isTailscale, pairingUrl, phoneSend, sourceAllowed } from '../src/shared/phone'
 import { PhoneDevices, PhoneServer, authRefusal, type PhoneHandlers } from '../src/main/phone-server'
 import net from 'node:net'
 
@@ -46,6 +46,46 @@ describe('network rules', () => {
     expect(cleanDeviceName('Pixel <script>\n9')).toBe('Pixel script9')
     expect(cleanDeviceName('')).toBe('Phone')
     expect(cleanDeviceName('김의 폰')).toBe('김의 폰')
+  })
+})
+
+describe('what a message from the phone does to a card', () => {
+  const up = { alive: true, launchFailed: false }
+  it.each([
+    ['an idle card', { status: 'idle', ...up }],
+    ['a working card', { status: 'working', ...up }],
+    ['a finished card', { status: 'done', statusDetail: 'finished', ...up }],
+    // Claude Code is alive at its prompt after a StopFailure: a message starts a new turn
+    ['a card whose turn failed', { status: 'needs-you', statusDetail: 'failed: API Error: Request rejected (429)', ...up }]
+  ])('sends to %s', (_name, card) => {
+    expect(phoneSend(card)).toEqual({ how: 'send' })
+  })
+
+  it('wakes an asleep card, which has no process', () => {
+    expect(phoneSend({ status: 'ended', statusDetail: 'asleep', asleep: true, alive: false, launchFailed: false })).toEqual({ how: 'wake' })
+  })
+
+  it.each([
+    ['an ended card', { status: 'ended', alive: false, launchFailed: false }],
+    ['a card whose CLI never started', { status: 'needs-you', statusDetail: 'failed: claude is not installed or not on PATH.', alive: true, launchFailed: true }],
+    // the same "failed:" words, but text typed there would run in a shell
+    ['a card where only its shell runs', { status: 'needs-you', statusDetail: 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.', alive: true, launchFailed: true }],
+    ['a failed turn whose process is gone', { status: 'needs-you', statusDetail: 'failed: API Error', alive: false, launchFailed: false }]
+  ])('refuses %s: it needs a Restart', (_name, card) => {
+    const r = phoneSend(card)
+    expect(r).not.toHaveProperty('how')
+    expect((r as { refusal: string }).refusal).toMatch(/not running/)
+    expect((r as { refusal: string }).refusal).toMatch(/Restart/)
+  })
+
+  it.each([
+    ['a permission prompt', { status: 'needs-you', statusDetail: 'permission: Bash', alive: true, launchFailed: false }],
+    ['the folder-trust question', { status: 'needs-you', statusDetail: 'trust this folder?', alive: true, launchFailed: false }],
+    ['a needs-you with no detail', { status: 'needs-you', alive: true, launchFailed: false }]
+  ])('refuses %s: answer it first', (_name, card) => {
+    const r = phoneSend(card)
+    expect(r).not.toHaveProperty('how')
+    expect((r as { refusal: string }).refusal).toMatch(/answer/)
   })
 })
 

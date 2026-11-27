@@ -21,6 +21,8 @@ export interface PhoneHandlers {
   prompt(cardId: string, text: string, files: Array<{ path: string; name: string }>): { ok: boolean; error?: string }
   /** `promptAt` is the prompt the phone showed (the card's lastEventAt): a newer prompt is not answered blind */
   answer(cardId: string, key: string, promptAt: number): { ok: boolean; error?: string }
+  /** start a card's CLI again as the PC's Restart does, from the screen the phone showed (`promptAt`, as for answer) */
+  restart(cardId: string, promptAt: number): { ok: boolean; error?: string }
   resolveApproval(id: string, approve: boolean): { ok: boolean; error?: string }
   /** a card's question (ask_owner), answered from the phone; `device` is the paired phone's name */
   answerDecision(id: string, answer: unknown, note: unknown, device: string): { ok: boolean; error?: string }
@@ -363,10 +365,11 @@ export class PhoneServer {
     const unattach = /^\/m\/api\/uploads\/([0-9a-f]{16})$/.exec(path)
     if (method === 'DELETE' && unattach && uploads) return uploads.discard(device.id, unattach[1]) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'no such attachment' })
 
-    const card = /^\/m\/api\/cards\/([A-Za-z0-9_-]{1,64})\/(prompt|answer)$/.exec(path)
+    const card = /^\/m\/api\/cards\/([A-Za-z0-9_-]{1,64})\/(prompt|answer|restart)$/.exec(path)
     if (method === 'POST' && card) {
-      const body = (await readBody(req, PHONE_LIMITS.bodyBytes)) as { text?: unknown; key?: unknown; files?: unknown } | undefined
+      const body = (await readBody(req, PHONE_LIMITS.bodyBytes)) as { text?: unknown; key?: unknown; files?: unknown; promptAt?: unknown } | undefined
       if (!body) return json(res, 400, { error: 'bad request' })
+      const promptAt = typeof body.promptAt === 'number' ? body.promptAt : NaN
       if (card[2] === 'prompt') {
         const text = typeof body.text === 'string' ? body.text.trim() : ''
         const ids = body.files === undefined ? [] : Array.isArray(body.files) && body.files.every((f) => typeof f === 'string') ? [...new Set(body.files as string[])] : undefined
@@ -382,9 +385,14 @@ export class PhoneServer {
         if (r.ok) this.handlers.note(`${from} → ${card[1]}: ${[text.slice(0, 200), att.files.length ? `(attached: ${att.files.map((f) => f.name).join(', ')})` : ''].filter(Boolean).join(' ')}`)
         return json(res, r.ok ? 200 : 409, r)
       }
+      if (card[2] === 'restart') {
+        // a second tap is refused by the app: the restart it asked for has not launched yet
+        const r = this.handlers.restart(card[1], promptAt)
+        if (r.ok) this.handlers.note(`${from} restarted ${card[1]}`)
+        return json(res, r.ok ? 200 : 409, r)
+      }
       const key = typeof body.key === 'string' && Object.hasOwn(ANSWER_KEYS, body.key) ? body.key : undefined
       if (!key) return json(res, 400, { error: 'key must be 1, 3 or esc' })
-      const promptAt = typeof (body as { promptAt?: unknown }).promptAt === 'number' ? (body as { promptAt: number }).promptAt : NaN
       if (Date.now() - (this.lastAnswer.get(card[1]) ?? 0) < 2500) return json(res, 409, { ok: false, error: 'already answered; wait for the card to move on' })
       const r = this.handlers.answer(card[1], key, promptAt)
       if (r.ok) this.lastAnswer.set(card[1], Date.now())

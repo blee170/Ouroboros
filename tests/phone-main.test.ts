@@ -4,10 +4,11 @@ vi.mock('electron', () => ({ app: { getPath: () => '' }, ipcMain: {}, BrowserWin
 
 vi.mock('../src/main/diagnostics', async (importOriginal) => ({ ...(await importOriginal<object>()), log: vi.fn() }))
 
-const { dropWake, phoneHandlers } = await import('../src/main/ipc')
+const { dropWake, phoneHandlers, registerInbox } = await import('../src/main/ipc')
 const { Board } = await import('../src/main/board')
 const { Ledger } = await import('../src/main/ledger')
 const { PHONE_FILES_NOTE } = await import('../src/shared/phone')
+const { IPC } = await import('../src/shared/protocol')
 
 interface PhoneCard {
   id: string
@@ -15,6 +16,9 @@ interface PhoneCard {
   promptable: boolean
   wakes?: boolean
   refusal?: string
+  promptAt?: number
+  restartable: boolean
+  relaunch?: string
 }
 
 /** A window with these agent cards; `alive` are the ones with a live process. */
@@ -153,5 +157,69 @@ describe('tasks that wait on the owner, on the phone', () => {
     expect(tasks(t.h).map((x) => x.id)).toEqual(['2-T1'])
     // answered meanwhile (on the PC): the phone gets the app's own words
     expect(t.h.answerTask('1-T1', 'hold', undefined, at)).toEqual({ ok: false, error: 'T1 is not waiting on you' })
+  })
+})
+
+describe('a Restart from the phone, on the real board', () => {
+  // a pipe name Claude Code could have made, with nothing listening on it: its Claude Code has exited
+  const pipe = (id: string): string => (process.platform === 'win32' ? `\\\\.\\pipe\\LOCAL\\cc-msg-phonerestart-${id}-${process.pid}` : `/tmp/cc-msg-phonerestart-${id}-${process.pid}`)
+  const restarts = (sent: Array<[string, unknown]>): unknown[] => sent.filter(([ch]) => ch === IPC.boardUpdateNode).map(([, p]) => p)
+
+  it('is offered once a card’s CLI exits inside its shell, and asks the page for the PC’s Restart once', async () => {
+    const t = setup([{ id: 'rx', data: { status: 'idle', statusDetail: 'ready' } }], ['rx'])
+    expect(t.card('rx').restartable).toBe(false)
+    expect(registerInbox(t.s as never, 'rx', pipe('rx'), undefined).ok).toBe(true)
+    // the next message finds only the shell: nothing is typed, the card asks for a Restart
+    expect(t.h.prompt('rx', 'hello', [])).toEqual({ ok: true })
+    await new Promise((r) => setTimeout(r, 400))
+    const c = t.card('rx')
+    expect(c).toMatchObject({ status: 'needs-you', promptable: false, restartable: true, relaunch: 'new' })
+    expect(c.refusal).toMatch(/Restart it/)
+    expect(t.writes).toEqual([])
+    expect(t.h.restart('rx', c.promptAt! - 1)).toEqual({ ok: false, error: 'the card has moved on since this screen was loaded; look again' })
+    expect(restarts(t.sent)).toEqual([])
+    expect(t.h.restart('rx', c.promptAt!)).toEqual({ ok: true })
+    expect(restarts(t.sent)).toEqual([{ nodeId: 'rx', data: {}, restart: true }])
+    // a double tap, or a second phone: the restart already asked for is not asked again
+    expect(t.h.restart('rx', c.promptAt!)).toEqual({ ok: false, error: 'It is restarting already.' })
+    expect(t.card('rx').restartable).toBe(false)
+    expect(restarts(t.sent)).toHaveLength(1)
+  })
+
+  it('says what the restart does to the conversation, from the card’s launch options as the PC’s Restart uses them', () => {
+    const t = setup(
+      [
+        { id: 'r1', data: { status: 'ended', statusDetail: 'exited (0)', claude: { resume: 'sess-r1' } } },
+        { id: 'r2', data: { status: 'ended', statusDetail: 'exited (1)' } }
+      ],
+      []
+    )
+    expect(t.card('r1')).toMatchObject({ restartable: true, relaunch: 'resume' })
+    expect(t.card('r2')).toMatchObject({ restartable: true, relaunch: 'new' })
+    expect(t.h.restart('r2', t.card('r2').promptAt ?? 0)).toEqual({ ok: true })
+    // the card's launch options are left as they are: the page relaunches it as the PC's Restart would
+    expect(restarts(t.sent)).toEqual([{ nodeId: 'r2', data: {}, restart: true }])
+  })
+
+  it('is not offered to a running, asleep, waking or starting card', () => {
+    const t = setup(
+      [
+        { id: 'run', data: { status: 'working' } },
+        { id: 'perm', data: { status: 'needs-you', statusDetail: 'permission: Bash' } },
+        { id: 'zzz', data: { status: 'ended', statusDetail: 'asleep', asleep: true } },
+        { id: 'st', data: { status: 'starting', statusDetail: 'launching claude' } }
+      ],
+      ['run', 'perm', 'st']
+    )
+    for (const id of ['run', 'perm', 'zzz', 'st']) {
+      expect(t.card(id).restartable).toBe(false)
+      expect(t.h.restart(id, t.card(id).promptAt ?? 0)).toMatchObject({ ok: false })
+    }
+    expect(restarts(t.sent)).toEqual([])
+    // a message wakes the asleep one; while it wakes, the phone does not restart it either
+    expect(t.h.prompt('zzz', 'carry on', [])).toEqual({ ok: true })
+    expect(t.card('zzz').restartable).toBe(false)
+    expect(t.h.restart('zzz', t.card('zzz').promptAt ?? 0)).toMatchObject({ ok: false, error: expect.stringMatching(/waking/) })
+    dropWake('zzz', 'test over')
   })
 })

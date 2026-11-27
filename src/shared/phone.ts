@@ -134,10 +134,31 @@ export type PhoneSend = { how: 'send' | 'wake' } | { refusal: string }
  */
 export function phoneSend(card: { status?: string; statusDetail?: string; asleep?: boolean; alive: boolean; launchFailed: boolean }): PhoneSend {
   if (card.asleep) return { how: 'wake' }
-  if (!card.alive || card.launchFailed) return { refusal: 'This card is not running, so it cannot take a message; Restart it on the PC.' }
+  if (!card.alive || card.launchFailed) return { refusal: 'This card is not running, so it cannot take a message; Restart it first.' }
   // a failed turn leaves Claude Code at its prompt: a message starts a new turn
   if (card.status === 'needs-you' && !(card.statusDetail ?? '').startsWith('failed:')) return { refusal: 'It waits on a prompt in its terminal; answer that first.' }
   return { how: 'send' }
+}
+
+/** What a Restart from the phone does to a card's conversation, or why it is refused. */
+export type PhoneRestart = { how: 'resume' | 'continue' | 'new' } | { refusal: string }
+
+/**
+ * Pure: whether the phone may restart a card. Only one whose CLI is not running: it never came up or exited
+ * (`launchFailed`: the live process is its shell), or its process is gone. A running card is never cut off from a
+ * phone, an asleep or waking card wakes on a message, a starting one is left to come up. `restarting`: a restart was
+ * asked for and its launch has not run, so a second tap asks for nothing. The relaunch is the PC's Restart, with the
+ * card's own launch options: its conversation resumes only when they carry a session (`claude.resume`).
+ */
+export function phoneRestart(card: { status?: string; asleep?: boolean; waking: boolean; restarting: boolean; alive: boolean; launchFailed: boolean; claude?: { resume?: string; continue?: boolean } }): PhoneRestart {
+  if (card.asleep) return { refusal: 'It is asleep: a message wakes it on its conversation.' }
+  if (card.waking) return { refusal: 'It is waking up; wait a moment.' }
+  if (card.restarting) return { refusal: 'It is restarting already.' }
+  if (!card.launchFailed) {
+    if (card.status === 'starting') return { refusal: 'It is starting; wait for it to come up.' }
+    if (card.alive) return { refusal: 'It is running: only a card whose CLI stopped is restarted from the phone.' }
+  }
+  return { how: card.claude?.resume ? 'resume' : card.claude?.continue ? 'continue' : 'new' }
 }
 
 /** A device name as typed on the phone: one line, 40 characters. */

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { FailureLimiter, bindRefusal, cleanDeviceName, isPrivateLan, isTailscale, pairingUrl, phoneSend, sourceAllowed } from '../src/shared/phone'
+import { FailureLimiter, bindRefusal, cleanDeviceName, isPrivateLan, isTailscale, pairingUrl, phoneRestart, phoneSend, sourceAllowed } from '../src/shared/phone'
 import { PhoneDevices, PhoneServer, authRefusal, type PhoneHandlers } from '../src/main/phone-server'
 import net from 'node:net'
 
@@ -76,6 +76,8 @@ describe('what a message from the phone does to a card', () => {
     expect(r).not.toHaveProperty('how')
     expect((r as { refusal: string }).refusal).toMatch(/not running/)
     expect((r as { refusal: string }).refusal).toMatch(/Restart/)
+    // the phone restarts it now: no walk to the PC
+    expect((r as { refusal: string }).refusal).not.toMatch(/PC/)
   })
 
   it.each([
@@ -89,6 +91,42 @@ describe('what a message from the phone does to a card', () => {
   })
 })
 
+describe('what a Restart from the phone does to a card', () => {
+  const down = { waking: false, restarting: false, alive: false, launchFailed: false }
+  it.each([
+    ['a card whose CLI never came up', { status: 'needs-you', statusDetail: 'failed: claude is not installed or not on PATH.', ...down, alive: true, launchFailed: true }],
+    ['a card where only its shell runs', { status: 'needs-you', statusDetail: 'failed: Claude Code is no longer running in this card (only its shell is). Restart the card.', ...down, alive: true, launchFailed: true }],
+    ['a card whose process exited', { status: 'ended', statusDetail: 'exited (0)', ...down }],
+    ['a failed turn whose process is gone', { status: 'needs-you', statusDetail: 'failed: API Error', ...down }]
+  ])('restarts %s', (_name, card) => {
+    expect(phoneRestart(card)).toHaveProperty('how')
+  })
+
+  it.each([
+    ['a working card', { status: 'working', ...down, alive: true }, /running/],
+    ['a card at its prompt', { status: 'idle', ...down, alive: true }, /running/],
+    ['a card whose turn failed (Claude Code is at its prompt)', { status: 'needs-you', statusDetail: 'failed: API Error (429)', ...down, alive: true }, /running/],
+    ['a card on a permission prompt', { status: 'needs-you', statusDetail: 'permission: Bash', ...down, alive: true }, /running/],
+    ['an asleep card', { status: 'ended', statusDetail: 'asleep', asleep: true, ...down }, /asleep/],
+    ['a waking card', { status: 'starting', statusDetail: 'waking', ...down, waking: true, restarting: true }, /waking/],
+    ['a starting card', { status: 'starting', statusDetail: 'launching claude', ...down, alive: true }, /starting/],
+    ['a card its page has not launched yet', { status: 'starting', ...down }, /starting/],
+    ['a card restarting already', { status: 'needs-you', statusDetail: 'failed: x', ...down, launchFailed: true, restarting: true }, /already/]
+  ])('refuses %s', (_name, card, why) => {
+    const r = phoneRestart(card)
+    expect(r).not.toHaveProperty('how')
+    expect((r as { refusal: string }).refusal).toMatch(why)
+  })
+
+  it('relaunches as the PC does: the conversation resumes only when the launch options carry a session', () => {
+    const gone = { status: 'ended', ...down }
+    expect(phoneRestart({ ...gone, claude: { resume: 'sess-1' } })).toEqual({ how: 'resume' })
+    expect(phoneRestart({ ...gone, claude: { continue: true } })).toEqual({ how: 'continue' })
+    expect(phoneRestart({ ...gone, claude: {} })).toEqual({ how: 'new' })
+    expect(phoneRestart(gone)).toEqual({ how: 'new' })
+  })
+})
+
 describe('the phone server', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ob-phone-'))
   const notes: string[] = []
@@ -96,6 +134,7 @@ describe('the phone server', () => {
   const answers: Array<[string, string]> = []
   const events: string[] = []
   const taskAnswers: unknown[][] = []
+  const restarted = new Set<string>()
   const handlers: PhoneHandlers = {
     board: () => ({ project: 'p', autonomous: false, cards: [{ id: 'c1', title: 'Chief' }], approvals: [] }),
     prompt: (id, text) => (prompts.push([id, text]), { ok: true }),
@@ -108,6 +147,9 @@ describe('the phone server', () => {
       taskAnswers.push([id, choice, text, shownAt]),
       id !== '1-T1' ? { ok: false, error: `${id.slice(2)} is not waiting on you` } : shownAt !== 5 ? { ok: false, error: 'T1 changed since you read it. Read it again before you answer.' } : choice === 'hold' ? { ok: true, warning: 'Saved, but the card was not told: no route' } : { ok: true }
     ),
+    // as the app restarts: from the screen the phone showed (lastEventAt 5), a card that is not running, once
+    restart: (id, promptAt) =>
+      promptAt !== 5 ? { ok: false, error: 'the card has moved on since this screen was loaded; look again' } : id === 'run' ? { ok: false, error: 'It is running: only a card whose CLI stopped is restarted from the phone.' } : restarted.has(id) ? { ok: false, error: 'It is restarting already.' } : (restarted.add(id), { ok: true }),
     latestReport: () => '# report',
     notify: (e) => (events.push(e), { ok: true, queued: true }),
     note: (l) => notes.push(l)
@@ -240,6 +282,29 @@ describe('the phone server', () => {
       // the log and the run's report name the phone, the answer and the task, never the pasted text
       expect(notes.filter((n) => n.includes('task'))).toEqual(['phone Pixel answered task 1-T1: hold', 'phone Pixel answered task 1-T1: did'])
       expect(notes.join('\n')).not.toContain('SECRET-PASTE')
+    } finally {
+      s.stop()
+      base = save
+    }
+  })
+
+  it('restarts a card once, from the screen the phone showed', async () => {
+    const s = new PhoneServer(new PhoneDevices(join(dir, 'd6.json')), handlers, () => {}, { sourceAllowed: () => true, bindRefusal: () => undefined, isLocal: () => false })
+    await s.apply({ enabled: true, host: '127.0.0.1', port: 0, allowLan: false })
+    const save = base
+    base = s.url!.replace(/\/m$/, '')
+    try {
+      const { token } = s.devices.add('Pixel')
+      const key = s.devices.add('MacroDroid', Date.now(), 'notify').token
+      expect((await call('/m/api/cards/c9/restart', { body: { promptAt: 5 } })).status).toBe(401)
+      expect((await call('/m/api/cards/c9/restart', { token: key, body: { promptAt: 5 } })).status).toBe(403)
+      expect(await call('/m/api/cards/c9/restart', { token, body: { promptAt: 4 } })).toMatchObject({ status: 409, body: { error: 'the card has moved on since this screen was loaded; look again' } })
+      expect((await call('/m/api/cards/c9/restart', { token, body: {} })).status).toBe(409) // no screen, no restart
+      expect(await call('/m/api/cards/run/restart', { token, body: { promptAt: 5 } })).toMatchObject({ status: 409, body: { error: expect.stringMatching(/running/) } })
+      expect(await call('/m/api/cards/c9/restart', { token, body: { promptAt: 5 } })).toMatchObject({ status: 200, body: { ok: true } })
+      // a double tap reaches the app, which has a restart under way already
+      expect(await call('/m/api/cards/c9/restart', { token, body: { promptAt: 5 } })).toMatchObject({ status: 409, body: { error: 'It is restarting already.' } })
+      expect(notes.filter((n) => n.includes('restart'))).toEqual(['phone Pixel restarted c9'])
     } finally {
       s.stop()
       base = save

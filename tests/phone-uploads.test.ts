@@ -129,6 +129,7 @@ describe('uploads over HTTP', () => {
     // the "busy" card refuses, as a card the run does not allow
     prompt: (id, text, files) => (id === 'busy' ? { ok: false, error: 'not delivered' } : (prompts.push({ id, text, files }), { ok: true })),
     answer: () => ({ ok: true }),
+    restart: () => ({ ok: true }),
     resolveApproval: () => ({ ok: true }),
     answerDecision: () => ({ ok: true }),
     task: () => undefined,

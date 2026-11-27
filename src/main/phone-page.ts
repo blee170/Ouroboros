@@ -1269,7 +1269,30 @@ function drawCardSheet(fresh) {
       row.appendChild(sendBtn)
       b.appendChild(row)
     } else if (!c.permission) b.appendChild(el('div', 'note', c.refusal || 'This card cannot take a message now.'))
+    if (c.restartable) b.appendChild(restartRow(c))
   })
+}
+/* what the PC's Restart does to the conversation: it relaunches with the card's own launch options */
+var RELAUNCH = {
+  resume: 'Its CLI starts again and resumes the conversation it was launched with.',
+  continue: 'Its CLI starts again with --continue: the latest conversation in its folder.',
+  new: 'Its CLI starts again with a new conversation; the earlier one is not resumed.'
+}
+function restartRow(c) {
+  var row = el('div', 'actions')
+  var b = el('button', 'btn', 'Restart')
+  b.type = 'button'
+  b.id = 'restart'
+  b.addEventListener('click', function () {
+    var name = split(c.title).name
+    confirmSheet('Restart ' + name + '?', RELAUNCH[c.relaunch] || RELAUNCH.new, 'Restart', function () {
+      api('POST', 'cards/' + encodeURIComponent(c.id) + '/restart', { promptAt: c.promptAt || 0 })
+        .then(function () { toast('Restarting ' + name); tick() })
+        .catch(function (e) { toast(e.message, true); tick() })
+    })
+  })
+  row.appendChild(b)
+  return row
 }
 function lock(row) { row.querySelectorAll('button').forEach(function (x) { x.disabled = true }) }
 function empty(title, text, ok) {

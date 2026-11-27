@@ -37,7 +37,7 @@ import { DecisionDesk } from './decisions'
 import { answersOf, askInput, decisionForMessage, decisionMessage, pendingMessage, DECISION_LIMITS, type Decision } from '@shared/decisions'
 import { PhoneDevices, PhoneServer, type PhoneHandlers } from './phone-server'
 import { PhoneUploads } from './phone-uploads'
-import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneFilesReadRule, phoneSend, withPhoneFiles, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
+import { ANSWER_KEYS, DEFAULT_PHONE_PORT, PHONE_LIMITS, isPrivateLan, isTailscale, phoneFilesReadRule, phoneRestart, phoneSend, withPhoneFiles, type PhoneRestart, type PhoneSend, type PhoneSettingsView, type PhoneStatus } from '@shared/phone'
 import type { Approval } from '@shared/gate'
 import { ROLE_PROMPT_PREFIX, roleAsMessage } from './agent-launcher'
 import { setGlobalExternalHooks } from './external'
@@ -1308,6 +1308,13 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
     const r = sendFor(n)
     return 'refusal' in r ? { promptable: false, wakes: false, refusal: r.refusal } : { promptable: true, wakes: r.how === 'wake' }
   }
+  // a restart asked for (restartsOwed) runs until the page's launch starts, then the launch itself (spawning)
+  const restartFor = (n: { id: string; data: { status?: string; asleep?: boolean; claude?: ClaudeOptions } }): PhoneRestart =>
+    phoneRestart({ status: n.data.status, asleep: n.data.asleep, waking: wakePrompts.has(n.id), restarting: restartsOwed.has(n.id) || spawning.has(n.id), alive: ctx.ptys.isAlive(n.id), launchFailed: launchFailed.has(n.id), claude: n.data.claude })
+  const restartView = (n: Parameters<typeof restartFor>[0]): { restartable: boolean; relaunch?: 'resume' | 'continue' | 'new' } => {
+    const r = restartFor(n)
+    return 'refusal' in r ? { restartable: false } : { restartable: true, relaunch: r.how }
+  }
   // a waiting task as the board carries it: what the Inbox shows; its long parts wait for the task route
   const taskItem = (w: WindowSession, t: Task, need: NonNullable<ReturnType<typeof ownerNeed>>) => {
     const asker = t.ownerAction ? t.ownerAction.by : t.updatedBy
@@ -1332,6 +1339,7 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
           permission: n.data.status === 'needs-you' && (n.data.statusDetail ?? '').startsWith('permission') && !trustAsked.has(n.id),
           promptAt: n.data.lastEventAt,
           ...sendView(n),
+          ...restartView(n),
           // where it sits on the canvas, for the phone's map
           x: n.pos?.x,
           y: n.pos?.y
@@ -1376,6 +1384,20 @@ export function phoneHandlers(ctx: MainContext): PhoneHandlers {
       if (n.data.lastEventAt !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
       // a raw keystroke, not a bracketed paste: the permission dialog reads keys
       ctx.ptys.write(id, ANSWER_KEYS[key])
+      return { ok: true }
+    },
+    restart: (id, promptAt) => {
+      const s = ctx.windows.forNode(id)
+      const n = s?.board.nodes.get(id)
+      if (!s || !n || (n.data.kind !== 'claude' && n.data.kind !== 'conductor')) return { ok: false, error: 'no such agent card' }
+      const r = restartFor(n)
+      if ('refusal' in r) return { ok: false, error: r.refusal }
+      // a card that never had an event has no time on the phone's screen: the page sends 0
+      if ((n.data.lastEventAt ?? 0) !== promptAt) return { ok: false, error: 'the card has moved on since this screen was loaded; look again' }
+      // the PC's Restart: the page kills the process and launches the card again with its own launch options. Owed
+      // until that launch, so a page that is dead or reloading launches it instead of taking the old shell back
+      restartsOwed.add(id)
+      sendToRenderer(s, IPC.boardUpdateNode, { nodeId: id, data: {}, restart: true })
       return { ok: true }
     },
     answerDecision: (scoped, answer, note, device) => {

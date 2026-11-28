@@ -284,12 +284,53 @@ export interface PieceVoice<Clip> {
 }
 
 /**
- * Says `pieces` in order: piece N+1 is being made while piece N plays, and never more than one request is open, so
- * a local GPU is not asked for two clips at once. The first piece that cannot be made or played is said with every
- * piece after it through `fallback`, and its error is returned. Resolves when the last piece has been heard.
+ * How long the speaker may stay silent between two pieces before the rest is said another way. A cloud engine makes
+ * a piece in seconds, and main gives its request 20 s from when it was sent, while the piece before still played: for
+ * it this limit never comes first. A slow local voice ("Sohee": 0.65 to 1.58 s a character to make, 0.16 s to play,
+ * measured 2026-11-28) leaves about 0.49 to 1.42 s of silence a character of the next sentence: 20 s keeps her voice
+ * for sentences up to about 40 characters at her best, and ends minute-long gaps in a reading.
  */
-export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice<Clip>): Promise<{ error?: string }> {
-  if (!pieces.length) return {}
+export const SPEECH_SILENCE_MS = 20_000
+
+export interface PieceBounds {
+  /** once a piece has been heard, how long the next may take to be ready before every piece left goes to `fallback` */
+  silenceMs?: number
+  /** once aborted, nothing more is played or asked for: the open request is waited out, its clip never played */
+  signal?: AbortSignal
+}
+
+const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+const settled = (p: Promise<unknown>): Promise<void> => p.then(() => undefined, () => undefined)
+
+/** A request's clip or error, or 'quiet' when `ms` passes first (no `ms`: no limit). */
+async function ready<Clip>(request: Promise<Clip>, ms: number | undefined): Promise<{ clip: Clip } | { error: string } | 'quiet'> {
+  const outcome = request.then(
+    (clip) => ({ clip }),
+    (err: unknown) => ({ error: message(err) })
+  )
+  if (ms === undefined) return outcome
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const quiet = new Promise<'quiet'>((resolve) => {
+    timer = setTimeout(() => resolve('quiet'), ms)
+  })
+  try {
+    return await Promise.race([outcome, quiet])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Says `pieces` in order: piece N+1 is being made while piece N plays, and never more than one request is open, so
+ * a local GPU is not asked for two clips at once. The first piece that cannot be made or played, or that is not ready
+ * `silenceMs` after the piece before it was heard, is said with every piece after it through `fallback`, and why is
+ * returned. A request still open then is waited out, so whatever is said next does not ask for a second clip
+ * meanwhile; the same after `signal` aborts, which ends it after the piece playing. Resolves when the last piece has
+ * been heard, or once it has ended that way.
+ */
+export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice<Clip>, bounds: PieceBounds = {}): Promise<{ error?: string }> {
+  const stopped = (): boolean => bounds.signal?.aborted === true
+  if (!pieces.length || stopped()) return {}
   // a make that throws at once is a piece that failed, on its own turn
   const make = (i: number): Promise<Clip> => {
     const clip = new Promise<Clip>((resolve) => resolve(v.make(pieces[i])))
@@ -299,15 +340,27 @@ export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice
   }
   let next = make(0)
   for (let i = 0; i < pieces.length; i++) {
-    let ahead: Promise<Clip> | undefined
+    // the first piece has no piece before it to be silent after
+    const got = await ready(next, i > 0 ? bounds.silenceMs : undefined)
+    if (stopped()) {
+      await settled(next)
+      return {}
+    }
+    if (got === 'quiet') {
+      await Promise.all([v.fallback(i), settled(next)])
+      return { error: `the next piece was not ready ${(bounds.silenceMs ?? 0) / 1000} s after the last one was heard` }
+    }
+    if ('error' in got) {
+      await v.fallback(i)
+      return { error: got.error }
+    }
+    const ahead = i + 1 < pieces.length ? make(i + 1) : undefined
     try {
-      const clip = await next
-      ahead = i + 1 < pieces.length ? make(i + 1) : undefined
-      await v.play(clip)
+      await v.play(got.clip)
     } catch (err) {
-      // a request already sent is waited out too, so the next text does not ask the engine for a second clip meanwhile
-      await Promise.all([v.fallback(i), ahead?.catch(() => undefined)])
-      return { error: err instanceof Error ? err.message : String(err) }
+      const stop = stopped()
+      await Promise.all([stop ? undefined : v.fallback(i), ahead && settled(ahead)])
+      return stop ? {} : { error: message(err) }
     }
     if (ahead) next = ahead
   }

@@ -43,6 +43,11 @@ export function ttsKeyPatch(settings: AppSettings, engine: TtsKeyEngine, key: st
 export async function synthesize(settings: AppSettings, text: string): Promise<TtsResult> {
   const s = ttsSettings(settings)
   if (s.engine === 'windows') return { ok: false, error: 'Windows voice' }
+  // the renderer sends long text in pieces (speechPieces); a longer one is a bug, said by the Windows voice, never cut
+  if (text.length > MAX_TTS_CHARS) {
+    log(`tts ${s.engine}: ${text.length} characters in one request`)
+    return { ok: false, error: `${s.engine}: ${text.length} characters is more than one request carries (${MAX_TTS_CHARS})` }
+  }
   const local = s.engine === 'voicebox'
   const key = s.engine === 'voicebox' ? '' : ttsKeyFor(settings, s.engine)
   if (!local && !key) {
@@ -76,7 +81,7 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
         .then((j) => (voiceboxAutoplay(j) ? VOICEBOX_AUTOPLAY_NOTE : undefined))
         .catch(() => undefined)
     }
-    req = buildTtsRequest(s.engine, text.slice(0, MAX_TTS_CHARS), s, key ?? '', profile)
+    req = buildTtsRequest(s.engine, text, s, key ?? '', profile)
     step = 'the request'
     stepMs = timeoutMs
     // a local clip is free, and a profile re-recorded under the same name must not replay the old voice

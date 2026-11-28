@@ -171,7 +171,7 @@ export function geminiAudioData(json: unknown): string | undefined {
   return last?.data ?? (typeof j?.output_audio?.data === 'string' ? j.output_audio.data : undefined)
 }
 
-/** Announcements are one sentence; a runaway card title must not turn into a long, billed request. */
+/** The most one request carries: a runaway text must not turn into one long, billed request. Main refuses more rather than cut it. */
 export const MAX_TTS_CHARS = 300
 
 /**

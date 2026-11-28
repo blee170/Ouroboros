@@ -6,7 +6,7 @@ import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speakPieces, speechPieces } from '@sha
 const words = (s: string): string[] => s.split(/\s+/).filter(Boolean)
 const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
-/** What every split must keep: pieces in order, none empty or over the limit, every word of the text said once. */
+/** What every split must keep: pieces in order, none empty or over the limit, every character of the text said once. */
 function expectWhole(text: string, pieces: string[]): void {
   for (const p of pieces) {
     expect(p.length, p).toBeGreaterThan(0)
@@ -15,6 +15,8 @@ function expectWhole(text: string, pieces: string[]): void {
     expect(loneSurrogate.test(p), p).toBe(false)
   }
   expect(words(pieces.join(' '))).toEqual(words(text))
+  // only whitespace between pieces may go
+  expect(pieces.join('').replace(/\s+/g, '')).toBe(text.replace(/\s+/g, ''))
 }
 
 describe('speechPieces: long text in sentence pieces', () => {

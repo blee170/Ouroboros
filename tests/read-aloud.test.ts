@@ -66,4 +66,17 @@ describe('the read-aloud sentences', () => {
     expect(readAloudLine('gone', 'en', 'Design')).toBe('Design is gone; not sent.')
     expect(readAloudLine('busy', 'en', 'Design')).toContain('not sent')
   })
+
+  it('a runaway card title is cut in the gone and busy lines, the spoken answer never', () => {
+    const title = 'Marketing landing page copy reviewer for the spring campaign '.repeat(90).trim()
+    for (const step of ['gone', 'busy'] as const)
+      for (const lang of ['en', 'ko'] as const) {
+        const line = readAloudLine(step, lang, title)
+        expect(line.length, `${step} ${lang}`).toBeLessThan(140)
+        expect(line.startsWith('Marketing landing page'), `${step} ${lang}`).toBe(true)
+        expect(line, `${step} ${lang}`).toContain('…')
+      }
+    const answer = '크림슨으로 가되 '.repeat(40).trim()
+    expect(readAloudLine('confirm', 'ko', answer)).toBe(`"${answer}" 이렇게 보낼까요?`)
+  })
 })

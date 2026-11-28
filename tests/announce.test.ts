@@ -60,9 +60,11 @@ describe('phrase and language', () => {
           }
         }
     }
-    // never half an emoji: the title part is whole families
-    const fam = phrase({ kind: 'decision', title: FAMILY.repeat(500), lang: 'en' })
-    expect(fam.slice(0, fam.indexOf('…')).replaceAll(FAMILY, '')).toBe('')
+    // never half an emoji: the title part is whole families. One letter first, so a cut by code units (a family is
+    // 11 of them) would land inside a family
+    const fam = phrase({ kind: 'decision', title: `x${FAMILY.repeat(500)}`, lang: 'en' })
+    expect(fam[0]).toBe('x')
+    expect(fam.slice(1, fam.indexOf('…')).replaceAll(FAMILY, '')).toBe('')
   })
 })
 

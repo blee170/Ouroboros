@@ -36,6 +36,11 @@ describe('speechPieces: long text in sentence pieces', () => {
     expectWhole(text, pieces)
   })
 
+  it('a short last sentence that has no room beside the one before is still said, as its own piece', () => {
+    const long = 'word '.repeat(19) + 'end.'
+    expect(speechPieces(`${long} OK?`)).toEqual([long, 'OK?'])
+  })
+
   it('breaks English at sentence ends and keeps ellipsis runs, decimals and versions with their sentence', () => {
     const text = 'Design finished all 63 shots. QA got 1.5 times faster, and nothing regressed on v0.20.8! The release notes are ready... but the changelog still says 0.20.7. Ship crimson now, or keep cyan until Friday?'
     expect(text.length).toBeGreaterThan(SPEECH_PIECE_MAX)
@@ -92,7 +97,7 @@ describe('speechPieces: long text in sentence pieces', () => {
   })
 
   it('a sentence longer than a piece breaks at a comma, never inside a word', () => {
-    const text = '오늘 할 일은 서버 로그를 정리하고, 경고 메시지를 줄이고, 배포 스크립트의 오래된 경로를 고치고, 테스트 데이터베이스의 잠금 순서를 다시 확인하고, 마케팅 보고서의 수치 다섯 개를 원본과 대조하고, 디자인 팀이 보낸 착샷 예순세 장의 색감을 하나씩 검수하고, 마지막으로 릴리스 노트를 영어와 한국어로 정리하는 것입니다.'
+    const text = '오늘 할 일은 서버 로그를 정리하고, 경고 메시지를 줄이고, 배포 스크립트의 오래된 경로를 고치고, 테스트 데이터베이스의 잠금 순서를 다시 확인하고, 마케팅 보고서의 수치 다섯 개를 원본과 대조하고, 디자인 팀이 보낸 착샷 예순세 장의 색감을 하나씩 검수하고, 고객 문의 메일 열두 통에 답장을 쓰고, 다음 주 회의 일정을 팀원들과 맞추고, 마지막으로 릴리스 노트를 영어와 한국어로 정리하는 것입니다.'
     expect(text.length).toBeGreaterThan(SPEECH_PIECE_MAX * 2)
     const pieces = speechPieces(text)
     expectWhole(text, pieces)

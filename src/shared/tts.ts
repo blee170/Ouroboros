@@ -174,6 +174,86 @@ export function geminiAudioData(json: unknown): string | undefined {
 /** Announcements are one sentence; a runaway card title must not turn into a long, billed request. */
 export const MAX_TTS_CHARS = 300
 
+/**
+ * The most one spoken piece of a long text carries. A heavy local voice (Voicebox "Sohee", a qwen clone, on an
+ * RTX 4090) took 196 s for 300 characters, about 0.65 s a character, so 100 stays well inside main's 120 s per
+ * request; and its clip stays under the 30 s the renderer gives one clip to play.
+ */
+export const SPEECH_PIECE_MAX = 100
+/** A sentence shorter than this joins its neighbour: a lone "네." is not worth a request of its own. */
+const SPEECH_PIECE_MIN = 20
+/**
+ * Where a sentence ends: its marks (an ellipsis run whole, closing quotes and brackets with it) and the space after
+ * them unless a lowercase word follows ("e.g. this", "ready... but"); a CJK full stop, space or not; a line break.
+ * A decimal point or a version (1.5, v0.20.8) has no space after its dot, so it never ends one.
+ */
+const SENTENCE_END = /[.!?…]+[)\]"'”’」』]*\s+(?![\sa-z])|[。！？]+[)\]"'”’」』]*\s*|\n\s*/g
+
+/**
+ * Long text in the pieces it is spoken in, in order: each at most `max` characters, broken at sentence ends, a short
+ * sentence joined to its neighbour, a sentence longer than `max` broken at a comma or a space. Every word reaches a
+ * piece; only whitespace between pieces is dropped. A text that fits in one piece is that one piece.
+ */
+export function speechPieces(text: string, max = SPEECH_PIECE_MAX): string[] {
+  const all = text.trim()
+  if (all.length <= max) return all ? [all] : []
+  // sentences exactly as written (marks and the space after them included), so the pieces put back together are the text
+  const sentences: string[] = []
+  let from = 0
+  for (const m of all.matchAll(SENTENCE_END)) {
+    sentences.push(all.slice(from, m.index + m[0].length))
+    from = m.index + m[0].length
+  }
+  if (from < all.length) sentences.push(all.slice(from))
+  // a short sentence waits for the next one (the last one joins the one before), as long as the piece stays within max
+  const pieces: string[] = []
+  let carry = ''
+  for (const s of sentences.flatMap((s) => cutLong(s, max))) {
+    if (carry && (carry + s).trim().length > max) {
+      pieces.push(carry)
+      carry = ''
+    }
+    carry += s
+    if (carry.trim().length >= SPEECH_PIECE_MIN) {
+      pieces.push(carry)
+      carry = ''
+    }
+  }
+  if (carry) {
+    if (pieces.length && (pieces[pieces.length - 1] + carry).trim().length <= max) pieces[pieces.length - 1] += carry
+    else pieces.push(carry)
+  }
+  return pieces.map((p) => p.trim()).filter(Boolean)
+}
+
+/** A sentence longer than `max` cut at the last comma past half a piece, else the last space; a single word longer than `max` is cut where it must be. */
+function cutLong(sentence: string, max: number): string[] {
+  const out: string[] = []
+  let rest = sentence
+  while (rest.trim().length > max) {
+    const head = rest.slice(0, max)
+    // an ASCII comma only with a space after it, so 1,000 stays whole; a CJK comma takes none
+    let at = lastEnd(head, /,\s+|[，、]\s*/g, max / 2) ?? lastEnd(head, /\s+/g, 1)
+    if (at === undefined) {
+      at = max
+      // never between the two halves of an emoji
+      const c = rest.charCodeAt(at)
+      if (c >= 0xdc00 && c <= 0xdfff) at--
+    }
+    out.push(rest.slice(0, at))
+    rest = rest.slice(at)
+  }
+  out.push(rest)
+  return out
+}
+
+/** Where the last match of `re` in `s` ends, when that is at `min` or later. */
+function lastEnd(s: string, re: RegExp, min: number): number | undefined {
+  let end: number | undefined
+  for (const m of s.matchAll(re)) end = m.index + m[0].length
+  return end !== undefined && end >= min ? end : undefined
+}
+
 /** Only audio goes into the cache: a 200 with an HTML or JSON body would otherwise be replayed as a broken clip forever. */
 export function looksLikeAudio(bytes: Uint8Array, mime: string): boolean {
   if (bytes.length < 4) return false

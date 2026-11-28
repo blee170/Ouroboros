@@ -111,7 +111,7 @@ export function langFor(...texts: Array<string | undefined>): AnnounceLang {
  * title is 35 characters (" finished. Please check the report."), so every announcement fits one speech piece
  * (SPEECH_PIECE_MAX, 80) and is one request.
  */
-export const ANNOUNCE_TITLE_MAX = 45
+const ANNOUNCE_TITLE_MAX = 45
 
 /** A card title as said aloud: a longer one is cut at a word (whole characters if it has no space) and marked "…". */
 function sayTitle(title: string): string {

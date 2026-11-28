@@ -4,6 +4,13 @@ All notable changes to Ouroboros, newest first. Every entry names a GitHub Relea
 
 Each version lists what changed under **Added**, **Changed**, **Fixed**, **Security**, and what the release was **verified** with (the automated gate runs typecheck, build and the vitest suite on every push; "built-app probe" means a Playwright run against the packaged app; "not verified" is said when a feature was only unit-tested).
 
+## [Unreleased]
+
+### Fixed
+- **A long read-aloud plays, and to its end.** When you said yes to "읽어드릴까요?", the whole answer went to the voice engine as one clip. A slow local Voicebox voice (Sohee took 196 s for 300 characters on an RTX 4090) ran past the app's 120 s wait, the clip was cancelled ("Generation cancelled" in Voicebox) and nothing was heard; and the text was cut at 300 characters from the front, although the read-aloud keeps the end of the reply because the question is there, so even a fast engine dropped the question. Long text is now said sentence by sentence: the next sentence is made while one plays, never two at a time, and no character is dropped. A sentence of up to 80 characters stays whole, so every announcement is still one request. If the next sentence is not ready 20 s after the last one ended, the rest is read by the Windows voice in one go instead of leaving long silences while every other announcement waits. Closing the composer during a reading stops it, the Windows voice included, and lets held announcements go.
+- **A card's title is said at most 45 characters long in an announcement** (cut at a word, with "…"), so a runaway title is no longer a long, billed request now that the 300-character cut is gone. The read-aloud text itself is never cut.
+  - Checked: typecheck, build, vitest 1118 passed (the splitter on thousands of generated Korean and English texts with emoji, decimals and versions: nothing lost, doubled or reordered; the pipeline: order, one request ahead, failures, the silence limit and a stop on a fake clock; the read-aloud exchange step by step against its previous version). Against the real Voicebox with Sohee: the first sentence of today's failed read-aloud was heard after 23 s (before: nothing). One hunt and one narrow re-hunt, the confirmed findings fixed with a failing test first. **Not verified**: the built app; the Windows voice stopping when the composer closes (the wiring has no test, the logic does); how two cloud clips sound back to back. Known limits: with a voice as slow as Sohee was today, a long read-aloud usually switches to the Windows voice after its first sentence or two; Voicebox's own Autoplay (on in its Settings) also plays each sentence in its window, now possibly over the next one.
+
 ## [0.20.8] — 2026-11-26
 
 ### Fixed

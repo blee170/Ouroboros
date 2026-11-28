@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { phrase, readAloudText } from '@shared/announce'
 import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speakPieces, speechPieces } from '@shared/tts'
 
@@ -388,5 +388,116 @@ describe('speakPieces: a long text said piece by piece', () => {
     expect(await speakPieces([], r.voice)).toEqual({})
     expect(r.asked).toEqual([])
     expect(r.fellBack).toEqual([])
+  })
+})
+
+describe('speakPieces: a slow voice cannot hold the speaker for minutes', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  /** Moves the fake clock on by `ms`, letting every promise that can settle on the way settle. */
+  const wait = async (ms = 0): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(ms)
+  }
+
+  it('the next piece not ready 20 s after the last one was heard: the rest goes to the other voice in one go, told once', async () => {
+    const r = rig()
+    let done = false
+    const said = speakPieces(['one', 'two', 'three'], r.voice, { silenceMs: 20_000 }).then((x) => {
+      done = true
+      return x
+    })
+    await wait()
+    r.request('one').resolve('ONE')
+    await wait()
+    expect(r.asked).toEqual(['one', 'two'])
+    // "two" is still being made when "one" has been heard; the clock starts there
+    await wait(5_000)
+    r.clip('ONE').resolve()
+    await wait(19_999)
+    expect(r.fellBack).toEqual([])
+    await wait(1)
+    expect(r.fellBack).toEqual([1])
+    // never two requests at once: the call waits out "two", whose clip is never played
+    expect(done).toBe(false)
+    r.request('two').resolve('TWO')
+    const result = await said
+    expect(result.error).toContain('20 s')
+    expect(r.played).toEqual(['ONE'])
+    expect(r.asked).toEqual(['one', 'two'])
+    expect(r.fellBack).toEqual([1])
+  })
+
+  it('does not fall back while each piece is ready within 20 s of the last, however long the whole text takes', async () => {
+    const r = rig()
+    const pieces = ['one', 'two', 'three', 'four']
+    const said = speakPieces(pieces, r.voice, { silenceMs: 20_000 })
+    await wait()
+    r.request('one').resolve('ONE')
+    await wait()
+    for (const [i, piece] of pieces.slice(1).entries()) {
+      // a clip plays 30 s and the next takes 45 s to make: ready 15 s after the clip ended
+      await wait(30_000)
+      r.clip(pieces[i].toUpperCase()).resolve()
+      await wait(15_000)
+      r.request(piece).resolve(piece.toUpperCase())
+      await wait()
+    }
+    r.clip('FOUR').resolve()
+    expect(await said).toEqual({})
+    expect(r.played).toEqual(['ONE', 'TWO', 'THREE', 'FOUR'])
+    expect(r.fellBack).toEqual([])
+  })
+
+  it('stopped mid-way: the piece playing ends, the open request is waited out but never played, nothing more is asked, and the call resolves', async () => {
+    const r = rig()
+    const stop = new AbortController()
+    let done = false
+    const said = speakPieces(['one', 'two', 'three'], r.voice, { silenceMs: 20_000, signal: stop.signal }).then((x) => {
+      done = true
+      return x
+    })
+    await wait()
+    r.request('one').resolve('ONE')
+    await wait()
+    expect(r.asked).toEqual(['one', 'two'])
+    stop.abort()
+    r.clip('ONE').resolve()
+    // the silence limit passes too: nothing falls back after a stop
+    await wait(60_000)
+    expect(r.fellBack).toEqual([])
+    // "two" is still being made: whatever is said next must not ask the engine for another clip meanwhile
+    expect(done).toBe(false)
+    r.request('two').resolve('TWO')
+    expect(await said).toEqual({})
+    expect(r.played).toEqual(['ONE'])
+    expect(r.asked).toEqual(['one', 'two'])
+    expect(r.mostOpen()).toBe(1)
+  })
+
+  it('stopped while the next clip is ready: it is never played; stopped before the start: nothing is asked', async () => {
+    const r = rig()
+    const stop = new AbortController()
+    const said = speakPieces(['one', 'two', 'three'], r.voice, { signal: stop.signal })
+    await wait()
+    r.request('one').resolve('ONE')
+    await wait()
+    r.request('two').resolve('TWO')
+    await wait()
+    stop.abort()
+    r.clip('ONE').resolve()
+    expect(await said).toEqual({})
+    expect(r.played).toEqual(['ONE'])
+    expect(r.asked).toEqual(['one', 'two'])
+
+    const idle = rig()
+    const gone = new AbortController()
+    gone.abort()
+    expect(await speakPieces(['one', 'two'], idle.voice, { signal: gone.signal })).toEqual({})
+    expect(idle.asked).toEqual([])
+    expect(idle.fellBack).toEqual([])
   })
 })

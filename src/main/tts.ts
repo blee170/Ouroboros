@@ -17,6 +17,12 @@ import { decryptToken, encryptToken } from './updater'
 const TIMEOUT_MS = 20_000
 /** Voicebox is local and free, and a cloned voice on the CPU backend takes 20 s and more per sentence (plus a model load). */
 const VOICEBOX_TIMEOUT_MS = 120_000
+/**
+ * A heavy voice is slow for every character: "Sohee" (a qwen clone on a shared RTX 4090) took 0.65 to 1.58 s a
+ * character (measured 2026-11-28), so a whole 80-character sentence needs up to 126 s. The wait grows with the text,
+ * a quarter over the slowest seen, and is never shorter than VOICEBOX_TIMEOUT_MS.
+ */
+const VOICEBOX_MS_PER_CHAR = 2_000
 
 /** One file per engine + request body (model, voice, style, text); a changed model or voice is a new clip. */
 function cacheFile(engine: string, req: TtsRequest): string {
@@ -43,13 +49,18 @@ export function ttsKeyPatch(settings: AppSettings, engine: TtsKeyEngine, key: st
 export async function synthesize(settings: AppSettings, text: string): Promise<TtsResult> {
   const s = ttsSettings(settings)
   if (s.engine === 'windows') return { ok: false, error: 'Windows voice' }
+  // the renderer sends long text in pieces (speechPieces); a longer one is a bug, said by the Windows voice, never cut
+  if (text.length > MAX_TTS_CHARS) {
+    log(`tts ${s.engine}: ${text.length} characters in one request`)
+    return { ok: false, error: `${s.engine}: ${text.length} characters is more than one request carries (${MAX_TTS_CHARS})` }
+  }
   const local = s.engine === 'voicebox'
   const key = s.engine === 'voicebox' ? '' : ttsKeyFor(settings, s.engine)
   if (!local && !key) {
     log(`tts ${s.engine}: no key saved`)
     return { ok: false, error: `No ${s.engine} key saved in Settings` }
   }
-  const timeoutMs = local ? VOICEBOX_TIMEOUT_MS : TIMEOUT_MS
+  const timeoutMs = local ? Math.max(VOICEBOX_TIMEOUT_MS, text.length * VOICEBOX_MS_PER_CHAR) : TIMEOUT_MS
   let req: TtsRequest
   let bytes: Uint8Array
   let file: string | undefined
@@ -76,7 +87,7 @@ export async function synthesize(settings: AppSettings, text: string): Promise<T
         .then((j) => (voiceboxAutoplay(j) ? VOICEBOX_AUTOPLAY_NOTE : undefined))
         .catch(() => undefined)
     }
-    req = buildTtsRequest(s.engine, text.slice(0, MAX_TTS_CHARS), s, key ?? '', profile)
+    req = buildTtsRequest(s.engine, text, s, key ?? '', profile)
     step = 'the request'
     stepMs = timeoutMs
     // a local clip is free, and a profile re-recorded under the same name must not replay the old voice

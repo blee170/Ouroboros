@@ -171,8 +171,224 @@ export function geminiAudioData(json: unknown): string | undefined {
   return last?.data ?? (typeof j?.output_audio?.data === 'string' ? j.output_audio.data : undefined)
 }
 
-/** Announcements are one sentence; a runaway card title must not turn into a long, billed request. */
+/** The most one request carries: a runaway text must not turn into one long, billed request. Main refuses more rather than cut it. */
 export const MAX_TTS_CHARS = 300
+
+/**
+ * The most one spoken piece of a long text carries, so the longest sentence that is said whole: pieces only break at
+ * sentence ends, and only a sentence longer than this is cut. A heavy local voice (Voicebox "Sohee", a qwen clone, on
+ * an RTX 4090) took 0.65 to 1.58 s a character (measured 2026-11-28): 80 characters take up to 126 s, inside main's
+ * Voicebox wait of 2 s a character, and its clip (about 0.16 s of audio a character) far under the 30 s the renderer
+ * gives one clip. 80 also fits every announcement whole (ANNOUNCE_TITLE_MAX).
+ */
+export const SPEECH_PIECE_MAX = 80
+/** A sentence shorter than this joins its neighbour: a lone "네." is not worth a request of its own. */
+const SPEECH_PIECE_MIN = 20
+/**
+ * Where a sentence ends: its marks (an ellipsis run whole, closing quotes and brackets with it) and the space after
+ * them unless a lowercase word follows ("e.g. this", "ready... but"); a CJK full stop, space or not; a line break.
+ * A decimal point or a version (1.5, v0.20.8) has no space after its dot, so it never ends one.
+ */
+const SENTENCE_END = /[.!?…]+[)\]"'”’」』]*\s+(?![\sa-z])|[。！？]+[)\]"'”’」』]*\s*|\n\s*/g
+
+/**
+ * Long text in the pieces it is spoken in, in order: each at most `max` characters, broken at sentence ends, a short
+ * sentence joined to its neighbour, a sentence longer than `max` broken at a comma or a space. Every word reaches a
+ * piece; only whitespace between pieces is dropped. A text that fits in one piece is that one piece.
+ */
+export function speechPieces(text: string, limit = SPEECH_PIECE_MAX): string[] {
+  // a cut needs room for one character: below that (0, negative, NaN) no cut would ever move on
+  const max = Math.max(1, Math.floor(limit) || 0)
+  const all = text.trim()
+  if (all.length <= max) return all ? [all] : []
+  // sentences exactly as written (marks and the space after them included), so the pieces put back together are the text
+  const sentences: string[] = []
+  let from = 0
+  for (const m of all.matchAll(SENTENCE_END)) {
+    sentences.push(all.slice(from, m.index + m[0].length))
+    from = m.index + m[0].length
+  }
+  if (from < all.length) sentences.push(all.slice(from))
+  // a short sentence waits for the next one; when that has no room it joins the one before, else it goes alone
+  const pieces: string[] = []
+  let carry = ''
+  const flush = (): void => {
+    if (pieces.length && (pieces[pieces.length - 1] + carry).trim().length <= max) pieces[pieces.length - 1] += carry
+    else pieces.push(carry)
+    carry = ''
+  }
+  for (const s of sentences.flatMap((s) => cutLong(s, max))) {
+    if (carry && (carry + s).trim().length > max) flush()
+    carry += s
+    if (carry.trim().length >= SPEECH_PIECE_MIN) {
+      pieces.push(carry)
+      carry = ''
+    }
+  }
+  if (carry) flush()
+  return pieces.map((p) => p.trim()).filter(Boolean)
+}
+
+/** An ASCII comma only with a space after it, so 1,000 stays whole; a CJK comma takes none. */
+const COMMA = /,\s+|[，、]\s*/g
+const SPACE = /\s+/g
+
+/**
+ * A sentence longer than `max` cut at its last comma that leaves both sides at least a short sentence long, else at
+ * such a space: filled to the brim, a Korean sentence would leave its verb alone. Else at the last space that fits;
+ * only a single word longer than `max` is cut inside, between whole characters.
+ */
+function cutLong(sentence: string, max: number): string[] {
+  const out: string[] = []
+  let rest = sentence
+  while (rest.trim().length > max) {
+    const len = rest.trimEnd().length
+    const fair = (end: number): boolean => end >= SPEECH_PIECE_MIN && end <= max && len - end >= SPEECH_PIECE_MIN
+    const at = lastEnd(rest, COMMA, fair) ?? lastEnd(rest, SPACE, fair) ?? lastEnd(rest, SPACE, (end) => end <= max) ?? wholeStart(rest, max)
+    out.push(rest.slice(0, at))
+    rest = rest.slice(at)
+  }
+  out.push(rest)
+  return out
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+/**
+ * How long the start of `s` is that holds only whole characters (an emoji with its joiners and skin tone is one) and
+ * is at most `max` long; never less than the first character, so a cut always moves on.
+ */
+export function wholeStart(s: string, max: number): number {
+  let end = 0
+  for (const { index, segment } of graphemes.segment(s)) {
+    if (end > 0 && index + segment.length > max) break
+    end = index + segment.length
+  }
+  return end
+}
+
+/** Of the places `re` matches in `s`, the last end that `ok` allows. */
+function lastEnd(s: string, re: RegExp, ok: (end: number) => boolean): number | undefined {
+  let last: number | undefined
+  for (const m of s.matchAll(re)) if (ok(m.index + m[0].length)) last = m.index + m[0].length
+  return last
+}
+
+export interface PieceVoice<Clip> {
+  /** asks the engine for one piece's clip; rejects when it cannot */
+  make: (text: string) => Promise<Clip>
+  /** plays one clip; resolves when it has been heard */
+  play: (clip: Clip) => Promise<void>
+  /** says the pieces from `from` on another way (the Windows voice) */
+  fallback: (from: number) => Promise<void>
+}
+
+/**
+ * How long the speaker may stay silent between two pieces before the rest is said another way. A cloud engine makes
+ * a piece in seconds, and main gives its request 20 s from when it was sent, while the piece before still played: for
+ * it this limit never comes first. A slow local voice ("Sohee": 0.65 to 1.58 s a character to make, 0.16 s to play,
+ * measured 2026-11-28) leaves about 0.49 to 1.42 s of silence a character of the next sentence: 20 s keeps her voice
+ * for sentences up to about 40 characters at her best, and ends minute-long gaps in a reading.
+ */
+export const SPEECH_SILENCE_MS = 20_000
+
+export interface PieceBounds {
+  /** once a piece has been heard, how long the next may take to be ready before every piece left goes to `fallback` */
+  silenceMs?: number
+  /** once aborted, nothing more is played or asked for: the open request is waited out, its clip never played */
+  signal?: AbortSignal
+}
+
+const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+const settled = (p: Promise<unknown>): Promise<void> => p.then(() => undefined, () => undefined)
+
+/** A request's clip or error, or 'quiet' when `ms` passes first (no `ms`: no limit). */
+async function ready<Clip>(request: Promise<Clip>, ms: number | undefined): Promise<{ clip: Clip } | { error: string } | 'quiet'> {
+  const outcome = request.then(
+    (clip) => ({ clip }),
+    (err: unknown) => ({ error: message(err) })
+  )
+  if (ms === undefined) return outcome
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const quiet = new Promise<'quiet'>((resolve) => {
+    timer = setTimeout(() => resolve('quiet'), ms)
+  })
+  try {
+    return await Promise.race([outcome, quiet])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Says `pieces` in order: piece N+1 is being made while piece N plays, and never more than one request is open, so
+ * a local GPU is not asked for two clips at once. The first piece that cannot be made or played, or that is not ready
+ * `silenceMs` after the piece before it was heard, is said with every piece after it through `fallback`, and why is
+ * returned. A request still open then is waited out, so whatever is said next does not ask for a second clip
+ * meanwhile; the same after `signal` aborts, which ends it after the piece playing. Resolves when the last piece has
+ * been heard, or once it has ended that way.
+ */
+export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice<Clip>, bounds: PieceBounds = {}): Promise<{ error?: string }> {
+  const stopped = (): boolean => bounds.signal?.aborted === true
+  if (!pieces.length || stopped()) return {}
+  // a make that throws at once is a piece that failed, on its own turn
+  const make = (i: number): Promise<Clip> => {
+    const clip = new Promise<Clip>((resolve) => resolve(v.make(pieces[i])))
+    // it is awaited on its turn; until then a failure must not count as unhandled
+    clip.catch(() => undefined)
+    return clip
+  }
+  let next = make(0)
+  for (let i = 0; i < pieces.length; i++) {
+    // the first piece has no piece before it to be silent after
+    const got = await ready(next, i > 0 ? bounds.silenceMs : undefined)
+    if (stopped()) {
+      await settled(next)
+      return {}
+    }
+    if (got === 'quiet') {
+      await Promise.all([v.fallback(i), settled(next)])
+      return { error: `the next piece was not ready ${(bounds.silenceMs ?? 0) / 1000} s after the last one was heard` }
+    }
+    if ('error' in got) {
+      await v.fallback(i)
+      return { error: got.error }
+    }
+    const ahead = i + 1 < pieces.length ? make(i + 1) : undefined
+    try {
+      await v.play(got.clip)
+    } catch (err) {
+      const stop = stopped()
+      await Promise.all([stop ? undefined : v.fallback(i), ahead && settled(ahead)])
+      return stop ? {} : { error: message(err) }
+    }
+    if (ahead) next = ahead
+  }
+  return {}
+}
+
+/**
+ * One utterance of the Windows voice: `start` begins it and calls `done` once it has been said. Resolves then, after
+ * `watchdogMs` (Chromium does not always fire `end`), or at once when `signal` aborts, which `cancel`s the voice. An
+ * utterance already over is never cancelled: `cancel` drops whatever the voice is saying, maybe the next text.
+ */
+export function windowsUtterance(start: (done: () => void) => void, watchdogMs: number, cancel: () => void, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(watchdog)
+      signal?.removeEventListener('abort', stop)
+      resolve()
+    }
+    const stop = (): void => {
+      cancel()
+      finish()
+    }
+    const watchdog = setTimeout(finish, watchdogMs)
+    signal?.addEventListener('abort', stop)
+    start(finish)
+  })
+}
 
 /** Only audio goes into the cache: a 200 with an HTML or JSON body would otherwise be replayed as a broken clip forever. */
 export function looksLikeAudio(bytes: Uint8Array, mime: string): boolean {

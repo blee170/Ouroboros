@@ -10,6 +10,7 @@
  * `mode: 'every'` is the older behaviour: every finished turn of 10 s or more, and "all cards have finished".
  */
 import type { AppSettings, NodeKind } from './types'
+import { wholeStart } from './tts'
 
 export type AnnounceTarget = 'off' | 'conductor' | 'all'
 export type AnnounceMode = 'important' | 'every'
@@ -105,8 +106,24 @@ export function langFor(...texts: Array<string | undefined>): AnnounceLang {
   return texts.some((t) => t && hasHangul(t)) ? 'ko' : 'en'
 }
 
+/**
+ * The most of a card title that is said aloud (cards have no title length limit). The longest sentence around a
+ * title is 35 characters (" finished. Please check the report."), so every announcement fits one speech piece
+ * (SPEECH_PIECE_MAX, 80) and is one request.
+ */
+const ANNOUNCE_TITLE_MAX = 45
+
+/** A card title as said aloud: a longer one is cut at a word (whole characters if it has no space) and marked "…". */
+function sayTitle(title: string): string {
+  const t = title.trim()
+  if (t.length <= ANNOUNCE_TITLE_MAX) return t
+  const head = t.slice(0, wholeStart(t, ANNOUNCE_TITLE_MAX - 1))
+  const space = head.lastIndexOf(' ')
+  return `${(space >= ANNOUNCE_TITLE_MAX / 2 ? head.slice(0, space) : head).trimEnd()}…`
+}
+
 export function phrase(p: AnnouncePayload, lang: AnnounceLang = p.lang): string {
-  const t = p.title.trim()
+  const t = sayTitle(p.title)
   switch (p.kind) {
     case 'finished':
       return lang === 'ko' ? `${t} 작업이 끝났습니다. 보고를 확인해 주세요.` : `${t} finished. Please check the report.`
@@ -249,8 +266,54 @@ export function readAloudLine(step: ReadAloudStep, lang: AnnounceLang, text = ''
     case 'unclear':
       return ko ? '잘 못 알아들었어요. 화면에서 확인해 주세요.' : 'I did not catch that. Please check the screen.'
     case 'busy':
-      return ko ? `${text} 카드가 이미 다른 일을 하고 있어서 안 보냈어요. 화면에서 확인해 주세요.` : `${text} is busy with something else; not sent. Please check the screen.`
+      return ko ? `${sayTitle(text)} 카드가 이미 다른 일을 하고 있어서 안 보냈어요. 화면에서 확인해 주세요.` : `${sayTitle(text)} is busy with something else; not sent. Please check the screen.`
     case 'gone':
-      return ko ? `${text} 카드가 없어서 못 보냈어요.` : `${text} is gone; not sent.`
+      return ko ? `${sayTitle(text)} 카드가 없어서 못 보냈어요.` : `${sayTitle(text)} is gone; not sent.`
+  }
+}
+
+/** What `send` did with a spoken answer. */
+export type ReadAloudSend = 'sent' | 'gone' | 'busy'
+
+/** What a read-aloud exchange uses of the renderer: its speech queue, the composer's microphone and the card. */
+export interface ReadAloudIO {
+  /** says one text after everything asked before it; once `stop` aborts, what is left of it is dropped */
+  say: (text: string, lang: AnnounceLang, stop?: AbortSignal) => Promise<void>
+  /** one utterance from the composer's microphone */
+  hear: () => Promise<string | undefined>
+  /** types the answer into the card as the owner's words */
+  send: (nodeId: string, text: string) => ReadAloudSend
+  /** resolves once everything asked to be said so far has been said */
+  settled: () => Promise<void>
+  /** holds other announcements back; the returned function lets them go */
+  hold: () => () => void
+}
+
+/**
+ * One "shall I read it?" exchange about decision `p` (see useReadAloud). `stop` abandons it (the composer is gone):
+ * nothing more is heard or sent, the reading stops after the piece playing, and the held announcements go.
+ */
+export async function readAloudExchange(p: AnnouncePayload, nodeId: string, read: string, io: ReadAloudIO, stop: AbortSignal): Promise<void> {
+  const lang = p.lang
+  /** One utterance, or undefined once the composer (and its microphone) is gone. */
+  const hear = async (): Promise<string | undefined> => (stop.aborted ? undefined : io.hear())
+  // the announcement (queued by App in the same emit) first, then the question; the mic opens after both
+  await io.settled()
+  const release = io.hold()
+  try {
+    await io.say(readAloudLine('offer', lang), lang)
+    if (yesNo((await hear()) ?? '') !== 'yes') return
+    await io.say(read, lang, stop)
+    if (stop.aborted) return
+    await io.say(readAloudLine('listen-answer', lang), lang)
+    const answer = (await hear())?.trim()
+    if (!answer || yesNo(answer) === 'no') return
+    await io.say(readAloudLine('confirm', lang, answer), lang)
+    const ok = yesNo((await hear()) ?? '')
+    if (ok !== 'yes' || stop.aborted) return void (await io.say(readAloudLine(ok === 'no' ? 'cancelled' : 'unclear', lang), lang))
+    const r = io.send(nodeId, answer)
+    await io.say(r === 'sent' ? readAloudLine('sent', lang) : readAloudLine(r, lang, p.title), lang)
+  } finally {
+    release()
   }
 }

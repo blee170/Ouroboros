@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { BoardDone, Burst, MIN_TURN_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement } from '@shared/announce'
+import { BoardDone, Burst, MIN_TURN_MS, announceSettings, firstLine, langFor, ownerMarker, phrase, stopAnnouncement, type AnnounceKind } from '@shared/announce'
+import { SPEECH_PIECE_MAX, speechPieces } from '@shared/tts'
+
+const KINDS: AnnounceKind[] = ['finished', 'decision', 'report', 'needs-you', 'failed', 'all-done']
+const FAMILY = '👨‍👩‍👧‍👦'
 
 describe('announce settings', () => {
   it('defaults to conductor replies, decisions and reports only, toast and voice on', () => {
@@ -25,6 +29,42 @@ describe('phrase and language', () => {
     expect(phrase({ kind: 'all-done', title: '', lang: 'ko' })).toBe('모든 카드 작업이 끝났습니다.')
     // the renderer re-renders in English when no Korean voice is installed
     expect(phrase({ kind: 'all-done', title: '', lang: 'ko' }, 'en')).toBe('All cards have finished.')
+  })
+
+  it('a card title of ordinary length is said whole, and every kind is one request', () => {
+    const title = 'Marketing landing page copy reviewer (EN)'
+    for (const kind of KINDS.filter((k) => k !== 'all-done'))
+      for (const lang of ['en', 'ko'] as const) {
+        const said = phrase({ kind, title, lang })
+        expect(said, `${kind} ${lang}`).toContain(title)
+        expect(speechPieces(said), `${kind} ${lang}`).toEqual([said])
+      }
+  })
+
+  it('a runaway card title (5000 characters, no length limit on cards) gives one short announcement', () => {
+    const words = 'Marketing landing page copy reviewer for the spring campaign '.repeat(90).trim()
+    const titles = [words, 'x'.repeat(5000), FAMILY.repeat(500), '마케팅 랜딩 페이지 카피 검토 '.repeat(300).trim()]
+    for (const title of titles) {
+      expect(title.length).toBeGreaterThan(4000)
+      for (const kind of KINDS)
+        for (const lang of ['en', 'ko'] as const) {
+          const said = phrase({ kind, title, lang })
+          const what = `${kind} ${lang} ${title.slice(0, 12)}`
+          expect(said.length, what).toBeLessThanOrEqual(SPEECH_PIECE_MAX)
+          expect(speechPieces(said), what).toEqual([said])
+          // the fixed sentence is all there; the title is cut, marked, and starts as it did
+          expect(said.endsWith(phrase({ kind, title: '', lang }).trim().replace(/^:\s*/, '')), what).toBe(true)
+          if (kind !== 'all-done') {
+            expect(said.startsWith(title.slice(0, 10)), what).toBe(true)
+            expect(said, what).toContain('…')
+          }
+        }
+    }
+    // never half an emoji: the title part is whole families. One letter first, so a cut by code units (a family is
+    // 11 of them) would land inside a family
+    const fam = phrase({ kind: 'decision', title: `x${FAMILY.repeat(500)}`, lang: 'en' })
+    expect(fam[0]).toBe('x')
+    expect(fam.slice(1, fam.indexOf('…')).replaceAll(FAMILY, '')).toBe('')
   })
 })
 

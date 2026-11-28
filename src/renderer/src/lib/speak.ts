@@ -1,5 +1,5 @@
 import { phrase, type AnnounceLang, type AnnouncePayload } from '@shared/announce'
-import { SPEECH_SILENCE_MS, speakPieces, speechPieces, ttsSettings } from '@shared/tts'
+import { SPEECH_SILENCE_MS, speakPieces, speechPieces, ttsSettings, windowsUtterance } from '@shared/tts'
 import { useBoard } from '@/store/board'
 
 /**
@@ -27,9 +27,10 @@ export function voiceFor(lang: AnnounceLang): SpeechSynthesisVoice | undefined {
 
 /**
  * Windows voice; a Korean sentence falls back to the English one when no Korean voice is installed. Resolves when
- * it has been said, or after a watchdog (Chromium does not always fire `end`).
+ * it has been said, after a watchdog (Chromium does not always fire `end`), or once `stop` has silenced it. The
+ * stop cancels the whole synthesizer, which holds nothing else: all speech goes through `queued`, one text at a time.
  */
-function speakWindows(text: (lang: AnnounceLang) => string, want: AnnounceLang): Promise<void> {
+function speakWindows(text: (lang: AnnounceLang) => string, want: AnnounceLang, stop?: AbortSignal): Promise<void> {
   const synth = window.speechSynthesis
   if (!synth) return Promise.resolve()
   const lang: AnnounceLang = want === 'ko' && !voiceFor('ko') ? 'en' : want
@@ -38,14 +39,15 @@ function speakWindows(text: (lang: AnnounceLang) => string, want: AnnounceLang):
   const voice = voiceFor(lang)
   if (voice) u.voice = voice
   u.lang = lang === 'ko' ? 'ko-KR' : 'en-US'
-  return new Promise((resolve) => {
-    const watchdog = setTimeout(resolve, 5000 + said.length * 150)
-    u.onend = u.onerror = () => {
-      clearTimeout(watchdog)
-      resolve()
-    }
-    synth.speak(u)
-  })
+  return windowsUtterance(
+    (done) => {
+      u.onend = u.onerror = done
+      synth.speak(u)
+    },
+    5000 + said.length * 150,
+    () => synth.cancel(),
+    stop
+  )
 }
 
 let queue: Promise<void> = Promise.resolve()
@@ -87,7 +89,7 @@ async function say(text: (lang: AnnounceLang) => string, lang: AnnounceLang, sto
   if (stop?.aborted) return {}
   const tts = ttsSettings(useBoard.getState().settings)
   if (tts.engine === 'windows') {
-    await speakWindows(text, lang)
+    await speakWindows(text, lang, stop)
     return {}
   }
   const pieces = speechPieces(text(lang))
@@ -103,7 +105,7 @@ async function say(text: (lang: AnnounceLang) => string, lang: AnnounceLang, sto
       },
       play: (c) => play(c.bytes, c.mime),
       // nothing said yet: the whole text as before (a Korean sentence can still turn English); else what is left
-      fallback: (from) => speakWindows(from === 0 ? text : () => pieces.slice(from).join(' '), lang)
+      fallback: (from) => speakWindows(from === 0 ? text : () => pieces.slice(from).join(' '), lang, stop)
     },
     { silenceMs: SPEECH_SILENCE_MS, signal: stop }
   )

@@ -367,6 +367,29 @@ export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice
   return {}
 }
 
+/**
+ * One utterance of the Windows voice: `start` begins it and calls `done` once it has been said. Resolves then, after
+ * `watchdogMs` (Chromium does not always fire `end`), or at once when `signal` aborts, which `cancel`s the voice. An
+ * utterance already over is never cancelled: `cancel` drops whatever the voice is saying, maybe the next text.
+ */
+export function windowsUtterance(start: (done: () => void) => void, watchdogMs: number, cancel: () => void, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(watchdog)
+      signal?.removeEventListener('abort', stop)
+      resolve()
+    }
+    const stop = (): void => {
+      cancel()
+      finish()
+    }
+    const watchdog = setTimeout(finish, watchdogMs)
+    signal?.addEventListener('abort', stop)
+    start(finish)
+  })
+}
+
 /** Only audio goes into the cache: a 200 with an HTML or JSON body would otherwise be replayed as a broken clip forever. */
 export function looksLikeAudio(bytes: Uint8Array, mime: string): boolean {
   if (bytes.length < 4) return false

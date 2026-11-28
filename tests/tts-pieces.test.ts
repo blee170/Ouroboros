@@ -580,7 +580,7 @@ describe('windowsUtterance: the Windows voice stops when told', () => {
     await vi.advanceTimersByTimeAsync(1)
     expect(waited.done).toBe(true)
     later.abort()
-    expect(quiet.cancelled).toBe(0)
+    expect(quiet.s.cancelled).toBe(0)
   })
 
   it('stopped before it starts: nothing is said', async () => {

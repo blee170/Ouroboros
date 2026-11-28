@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { READ_ALOUD_MAX, readAloudLine, readAloudText, yesNo } from '@shared/announce'
+import { READ_ALOUD_MAX, readAloudExchange, readAloudLine, readAloudText, yesNo, type ReadAloudIO } from '@shared/announce'
+import { speakPieces, speechPieces, type PieceVoice } from '@shared/tts'
 
 describe('what a decision read-out says', () => {
   it('keeps the question and its options, drops the label, markdown, code and links', () => {
@@ -78,5 +79,84 @@ describe('the read-aloud sentences', () => {
       }
     const answer = '크림슨으로 가되 '.repeat(40).trim()
     expect(readAloudLine('confirm', 'ko', answer)).toBe(`"${answer}" 이렇게 보낼까요?`)
+  })
+})
+
+/** A voice engine and a speaker driven by hand: each request and each clip finishes when the test says so. */
+function hand(): { voice: PieceVoice<string>; asked: string[]; played: string[]; made: (t: string) => void; heard: (c: string) => void } {
+  const asked: string[] = []
+  const played: string[] = []
+  const requests = new Map<string, () => void>()
+  const clips = new Map<string, () => void>()
+  const voice: PieceVoice<string> = {
+    make: (t) => {
+      asked.push(t)
+      return new Promise((resolve) => requests.set(t, () => resolve(t.toUpperCase())))
+    },
+    play: (c) => {
+      played.push(c)
+      return new Promise((resolve) => clips.set(c, resolve))
+    },
+    fallback: async () => {}
+  }
+  return { voice, asked, played, made: (t) => requests.get(t)?.(), heard: (c) => clips.get(c)?.() }
+}
+const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+describe('an abandoned read-aloud', () => {
+  it('the composer gone mid-reading: no further piece is played or asked for, the exchange ends, and the announcements it held go once the open request is done', async () => {
+    const read = ['디자인 카드가 착샷 63장을 모두 끝냈습니다.', '마케팅 보고서 초안도 올라왔는데 수치 몇 개는 다시 확인이 필요합니다.', '크림슨으로 지금 출시할까요, 아니면 금요일까지 기다릴까요?'].join(' ')
+    const pieces = speechPieces(read)
+    expect(pieces.length).toBe(3)
+    const offer = readAloudLine('offer', 'ko')
+    const h = hand()
+    const said: string[] = []
+    let heardAsked = 0
+    let released = 0
+    let over = false
+    const stop = new AbortController()
+    const io: ReadAloudIO = {
+      say: (text, _lang, signal) => {
+        said.push(text)
+        return speakPieces(speechPieces(text), h.voice, { signal }).then(() => undefined)
+      },
+      hear: async () => {
+        heardAsked++
+        return '네'
+      },
+      send: () => 'sent',
+      settled: async () => {},
+      hold: () => () => {
+        released++
+      }
+    }
+    const exchange = readAloudExchange({ kind: 'decision', title: 'Design', lang: 'ko', nodeId: 'n1', read }, 'n1', read, io, stop.signal).then(() => {
+      over = true
+    })
+    await tick()
+    h.made(offer)
+    await tick()
+    h.heard(offer.toUpperCase())
+    await tick()
+    // "네": the reading starts; its second piece is being made while the first plays
+    h.made(pieces[0])
+    await tick()
+    expect(h.played).toEqual([offer.toUpperCase(), pieces[0].toUpperCase()])
+    expect(h.asked).toEqual([offer, pieces[0], pieces[1]])
+    stop.abort()
+    h.heard(pieces[0].toUpperCase())
+    await tick()
+    // the open request is waited out before anything else may speak
+    expect(released).toBe(0)
+    expect(over).toBe(false)
+    h.made(pieces[1])
+    await exchange
+    expect(over).toBe(true)
+    expect(released).toBe(1)
+    expect(h.played).toEqual([offer.toUpperCase(), pieces[0].toUpperCase()])
+    expect(h.asked).toEqual([offer, pieces[0], pieces[1]])
+    // nothing more of the exchange is said or heard
+    expect(said).toEqual([offer, read])
+    expect(heardAsked).toBe(1)
   })
 })

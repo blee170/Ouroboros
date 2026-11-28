@@ -196,7 +196,9 @@ const SENTENCE_END = /[.!?…]+[)\]"'”’」』]*\s+(?![\sa-z])|[。！？]+[)
  * sentence joined to its neighbour, a sentence longer than `max` broken at a comma or a space. Every word reaches a
  * piece; only whitespace between pieces is dropped. A text that fits in one piece is that one piece.
  */
-export function speechPieces(text: string, max = SPEECH_PIECE_MAX): string[] {
+export function speechPieces(text: string, limit = SPEECH_PIECE_MAX): string[] {
+  // a cut needs room for one character: below that (0, negative, NaN) no cut would ever move on
+  const max = Math.max(1, Math.floor(limit) || 0)
   const all = text.trim()
   if (all.length <= max) return all ? [all] : []
   // sentences exactly as written (marks and the space after them included), so the pieces put back together are the text
@@ -234,7 +236,7 @@ const SPACE = /\s+/g
 /**
  * A sentence longer than `max` cut at its last comma that leaves both sides at least a short sentence long, else at
  * such a space: filled to the brim, a Korean sentence would leave its verb alone. Else at the last space that fits;
- * only a single word longer than `max` is cut inside.
+ * only a single word longer than `max` is cut inside, between whole characters.
  */
 function cutLong(sentence: string, max: number): string[] {
   const out: string[] = []
@@ -242,13 +244,7 @@ function cutLong(sentence: string, max: number): string[] {
   while (rest.trim().length > max) {
     const len = rest.trimEnd().length
     const fair = (end: number): boolean => end >= SPEECH_PIECE_MIN && end <= max && len - end >= SPEECH_PIECE_MIN
-    let at = lastEnd(rest, COMMA, fair) ?? lastEnd(rest, SPACE, fair) ?? lastEnd(rest, SPACE, (end) => end <= max)
-    if (at === undefined) {
-      at = max
-      // never between the two halves of an emoji
-      const c = rest.charCodeAt(at)
-      if (c >= 0xdc00 && c <= 0xdfff) at--
-    }
+    const at = lastEnd(rest, COMMA, fair) ?? lastEnd(rest, SPACE, fair) ?? lastEnd(rest, SPACE, (end) => end <= max) ?? wholeStart(rest, max)
     out.push(rest.slice(0, at))
     rest = rest.slice(at)
   }
@@ -294,14 +290,19 @@ export interface PieceVoice<Clip> {
  */
 export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice<Clip>): Promise<{ error?: string }> {
   if (!pieces.length) return {}
-  let next = v.make(pieces[0])
+  // a make that throws at once is a piece that failed, on its own turn
+  const make = (i: number): Promise<Clip> => {
+    const clip = new Promise<Clip>((resolve) => resolve(v.make(pieces[i])))
+    // it is awaited on its turn; until then a failure must not count as unhandled
+    clip.catch(() => undefined)
+    return clip
+  }
+  let next = make(0)
   for (let i = 0; i < pieces.length; i++) {
     let ahead: Promise<Clip> | undefined
     try {
       const clip = await next
-      ahead = i + 1 < pieces.length ? v.make(pieces[i + 1]) : undefined
-      // it is awaited on the next turn; until then a failure must not count as unhandled
-      ahead?.catch(() => undefined)
+      ahead = i + 1 < pieces.length ? make(i + 1) : undefined
       await v.play(clip)
     } catch (err) {
       // a request already sent is waited out too, so the next text does not ask the engine for a second clip meanwhile

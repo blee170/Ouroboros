@@ -176,10 +176,11 @@ export const MAX_TTS_CHARS = 300
 
 /**
  * The most one spoken piece of a long text carries. A heavy local voice (Voicebox "Sohee", a qwen clone, on an
- * RTX 4090) took 196 s for 300 characters, about 0.65 s a character, so 100 stays well inside main's 120 s per
- * request; and its clip stays under the 30 s the renderer gives one clip to play.
+ * RTX 4090) took 196 s for 300 characters (0.65 s a character), and 0.77 to 1.58 s a character for 30 to
+ * 37-character pieces when the GPU was shared (measured 2026-11-28): 60 stays inside main's 120 s per request even
+ * at the slowest, and its clip (about 0.16 s of audio a character) far under the 30 s the renderer gives one clip.
  */
-export const SPEECH_PIECE_MAX = 100
+export const SPEECH_PIECE_MAX = 60
 /** A sentence shorter than this joins its neighbour: a lone "네." is not worth a request of its own. */
 const SPEECH_PIECE_MIN = 20
 /**
@@ -205,35 +206,42 @@ export function speechPieces(text: string, max = SPEECH_PIECE_MAX): string[] {
     from = m.index + m[0].length
   }
   if (from < all.length) sentences.push(all.slice(from))
-  // a short sentence waits for the next one (the last one joins the one before), as long as the piece stays within max
+  // a short sentence waits for the next one; when that has no room it joins the one before, else it goes alone
   const pieces: string[] = []
   let carry = ''
+  const flush = (): void => {
+    if (pieces.length && (pieces[pieces.length - 1] + carry).trim().length <= max) pieces[pieces.length - 1] += carry
+    else pieces.push(carry)
+    carry = ''
+  }
   for (const s of sentences.flatMap((s) => cutLong(s, max))) {
-    if (carry && (carry + s).trim().length > max) {
-      pieces.push(carry)
-      carry = ''
-    }
+    if (carry && (carry + s).trim().length > max) flush()
     carry += s
     if (carry.trim().length >= SPEECH_PIECE_MIN) {
       pieces.push(carry)
       carry = ''
     }
   }
-  if (carry) {
-    if (pieces.length && (pieces[pieces.length - 1] + carry).trim().length <= max) pieces[pieces.length - 1] += carry
-    else pieces.push(carry)
-  }
+  if (carry) flush()
   return pieces.map((p) => p.trim()).filter(Boolean)
 }
 
-/** A sentence longer than `max` cut at the last comma past half a piece, else the last space; a single word longer than `max` is cut where it must be. */
+/** An ASCII comma only with a space after it, so 1,000 stays whole; a CJK comma takes none. */
+const COMMA = /,\s+|[，、]\s*/g
+const SPACE = /\s+/g
+
+/**
+ * A sentence longer than `max` cut at its last comma that leaves both sides at least a short sentence long, else at
+ * such a space: filled to the brim, a Korean sentence would leave its verb alone. Else at the last space that fits;
+ * only a single word longer than `max` is cut inside.
+ */
 function cutLong(sentence: string, max: number): string[] {
   const out: string[] = []
   let rest = sentence
   while (rest.trim().length > max) {
-    const head = rest.slice(0, max)
-    // an ASCII comma only with a space after it, so 1,000 stays whole; a CJK comma takes none
-    let at = lastEnd(head, /,\s+|[，、]\s*/g, max / 2) ?? lastEnd(head, /\s+/g, 1)
+    const len = rest.trimEnd().length
+    const fair = (end: number): boolean => end >= SPEECH_PIECE_MIN && end <= max && len - end >= SPEECH_PIECE_MIN
+    let at = lastEnd(rest, COMMA, fair) ?? lastEnd(rest, SPACE, fair) ?? lastEnd(rest, SPACE, (end) => end <= max)
     if (at === undefined) {
       at = max
       // never between the two halves of an emoji
@@ -247,11 +255,11 @@ function cutLong(sentence: string, max: number): string[] {
   return out
 }
 
-/** Where the last match of `re` in `s` ends, when that is at `min` or later. */
-function lastEnd(s: string, re: RegExp, min: number): number | undefined {
-  let end: number | undefined
-  for (const m of s.matchAll(re)) end = m.index + m[0].length
-  return end !== undefined && end >= min ? end : undefined
+/** Of the places `re` matches in `s`, the last end that `ok` allows. */
+function lastEnd(s: string, re: RegExp, ok: (end: number) => boolean): number | undefined {
+  let last: number | undefined
+  for (const m of s.matchAll(re)) if (ok(m.index + m[0].length)) last = m.index + m[0].length
+  return last
 }
 
 export interface PieceVoice<Clip> {

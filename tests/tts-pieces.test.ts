@@ -37,7 +37,8 @@ describe('speechPieces: long text in sentence pieces', () => {
   })
 
   it('a short last sentence that has no room beside the one before is still said, as its own piece', () => {
-    const long = 'word '.repeat(19) + 'end.'
+    // as long as a piece may be, give or take a word: " OK?" does not fit beside it
+    const long = 'word '.repeat(Math.floor((SPEECH_PIECE_MAX - 4) / 5)) + 'end.'
     expect(speechPieces(`${long} OK?`)).toEqual([long, 'OK?'])
   })
 
@@ -105,12 +106,30 @@ describe('speechPieces: long text in sentence pieces', () => {
     for (const p of pieces.slice(0, -1)) expect(p.endsWith(','), p).toBe(true)
   })
 
+  it('a sentence a little over a piece is cut with a sentence’s worth on each side, so its verb never goes off alone or into the next sentence', () => {
+    // from a real read-aloud: filled to the limit, it left "확인해요." for the start of the next sentence
+    const withComma = '📹 레인이 녹화로 정답과 대조하고, 자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회로 확인해요.'
+    const next = '노트북 Claude 메모: «Court Watch 클라우드 세션» 은 제 쪽에서 안 보여요.'
+    expect(withComma.length).toBeGreaterThan(SPEECH_PIECE_MAX)
+    const cut = speechPieces(`${withComma}\n${next}`)
+    expectWhole(`${withComma} ${next}`, cut)
+    expect(cut).toEqual(['📹 레인이 녹화로 정답과 대조하고,', '자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회로 확인해요.', next])
+    const noComma = withComma.replace(',', '')
+    const even = speechPieces(`${noComma} ${next}`)
+    expectWhole(`${noComma} ${next}`, even)
+    expect(even.some((p) => p.endsWith('조회로 확인해요.') && p.length > 20)).toBe(true)
+    expect(even.every((p) => !p.startsWith('확인해요'))).toBe(true)
+  })
+
   it('a sentence longer than a piece with no comma breaks at a space', () => {
     const text = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ') + '.'
     expect(text.length).toBeGreaterThan(SPEECH_PIECE_MAX * 2)
     const pieces = speechPieces(text)
     expectWhole(text, pieces)
     expect(pieces.length).toBeGreaterThan(2)
+    // the only space leaves a short side: still better than cutting inside a word
+    const lopsided = 'abc ' + 'x'.repeat(SPEECH_PIECE_MAX - 3) + '.'
+    expectWhole(lopsided, speechPieces(lopsided))
   })
 
   it('one word longer than a piece is cut, losing nothing and never splitting an emoji', () => {

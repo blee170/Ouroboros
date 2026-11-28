@@ -271,3 +271,49 @@ export function readAloudLine(step: ReadAloudStep, lang: AnnounceLang, text = ''
       return ko ? `${sayTitle(text)} 카드가 없어서 못 보냈어요.` : `${sayTitle(text)} is gone; not sent.`
   }
 }
+
+/** What `send` did with a spoken answer. */
+export type ReadAloudSend = 'sent' | 'gone' | 'busy'
+
+/** What a read-aloud exchange uses of the renderer: its speech queue, the composer's microphone and the card. */
+export interface ReadAloudIO {
+  /** says one text after everything asked before it; once `stop` aborts, what is left of it is dropped */
+  say: (text: string, lang: AnnounceLang, stop?: AbortSignal) => Promise<void>
+  /** one utterance from the composer's microphone */
+  hear: () => Promise<string | undefined>
+  /** types the answer into the card as the owner's words */
+  send: (nodeId: string, text: string) => ReadAloudSend
+  /** resolves once everything asked to be said so far has been said */
+  settled: () => Promise<void>
+  /** holds other announcements back; the returned function lets them go */
+  hold: () => () => void
+}
+
+/**
+ * One "shall I read it?" exchange about decision `p` (see useReadAloud). `stop` abandons it (the composer is gone):
+ * nothing more is heard or sent, the reading stops after the piece playing, and the held announcements go.
+ */
+export async function readAloudExchange(p: AnnouncePayload, nodeId: string, read: string, io: ReadAloudIO, stop: AbortSignal): Promise<void> {
+  const lang = p.lang
+  /** One utterance, or undefined once the composer (and its microphone) is gone. */
+  const hear = async (): Promise<string | undefined> => (stop.aborted ? undefined : io.hear())
+  // the announcement (queued by App in the same emit) first, then the question; the mic opens after both
+  await io.settled()
+  const release = io.hold()
+  try {
+    await io.say(readAloudLine('offer', lang), lang)
+    if (yesNo((await hear()) ?? '') !== 'yes') return
+    await io.say(read, lang, stop)
+    if (stop.aborted) return
+    await io.say(readAloudLine('listen-answer', lang), lang)
+    const answer = (await hear())?.trim()
+    if (!answer || yesNo(answer) === 'no') return
+    await io.say(readAloudLine('confirm', lang, answer), lang)
+    const ok = yesNo((await hear()) ?? '')
+    if (ok !== 'yes' || stop.aborted) return void (await io.say(readAloudLine(ok === 'no' ? 'cancelled' : 'unclear', lang), lang))
+    const r = io.send(nodeId, answer)
+    await io.say(r === 'sent' ? readAloudLine('sent', lang) : readAloudLine(r, lang, p.title), lang)
+  } finally {
+    release()
+  }
+}

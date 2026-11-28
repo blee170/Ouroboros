@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readAloudText } from '@shared/announce'
+import { phrase, readAloudText } from '@shared/announce'
 import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speakPieces, speechPieces } from '@shared/tts'
 
 /** The words of a text in order: a piece that ends inside a word shows up as a word the text does not have. */
@@ -26,6 +26,21 @@ describe('speechPieces: long text in sentence pieces', () => {
     expect(speechPieces('총괄 작업이 끝났습니다. 보고를 확인해 주세요.')).toEqual(['총괄 작업이 끝났습니다. 보고를 확인해 주세요.'])
     expect(speechPieces('  Conductor needs your decision.  ')).toEqual(['Conductor needs your decision.'])
     expect(speechPieces('   ')).toEqual([])
+  })
+
+  it('an ordinary announcement is one request, never cut after the card title', () => {
+    const decision = phrase({ kind: 'decision', title: 'Marketing landing page copy reviewer (EN)', lang: 'en' })
+    expect(decision.length).toBe(62)
+    expect(speechPieces(decision)).toEqual([decision])
+    const finished = phrase({ kind: 'finished', title: 'Marketing landing page copy reviewer (EN)', lang: 'en' })
+    expect(speechPieces(finished)).toEqual([finished])
+  })
+
+  it('in a long text, a sentence a little longer than the old 60-character piece stays whole', () => {
+    const sentence = '📹 레인이 녹화로 정답과 대조하고, 자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회로 확인해요.'
+    const next = '노트북 Claude 메모: «Court Watch 클라우드 세션» 은 제 쪽에서 안 보여요.'
+    expect(sentence.length).toBeGreaterThan(60)
+    expect(speechPieces(`${sentence}\n${next}`)).toEqual([sentence, next])
   })
 
   it('breaks Korean at sentence ends, keeps decimals and versions whole, and a lone "네." joins its neighbour', () => {
@@ -107,17 +122,17 @@ describe('speechPieces: long text in sentence pieces', () => {
   })
 
   it('a sentence a little over a piece is cut with a sentence’s worth on each side, so its verb never goes off alone or into the next sentence', () => {
-    // from a real read-aloud: filled to the limit, it left "확인해요." for the start of the next sentence
-    const withComma = '📹 레인이 녹화로 정답과 대조하고, 자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회로 확인해요.'
+    // from a real read-aloud, made longer than a piece: filled to the limit, it left "확인해요." for the start of the next sentence
+    const withComma = '📹 레인이 녹화로 정답과 대조하고, 자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회와 서버 로그 두 가지로 모두 꼼꼼하게 확인해요.'
     const next = '노트북 Claude 메모: «Court Watch 클라우드 세션» 은 제 쪽에서 안 보여요.'
     expect(withComma.length).toBeGreaterThan(SPEECH_PIECE_MAX)
     const cut = speechPieces(`${withComma}\n${next}`)
     expectWhole(`${withComma} ${next}`, cut)
-    expect(cut).toEqual(['📹 레인이 녹화로 정답과 대조하고,', '자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회로 확인해요.', next])
+    expect(cut).toEqual(['📹 레인이 녹화로 정답과 대조하고,', '자동 비우기가 사이트에서 실제로 무엇을 했는지 읽기 전용 조회와 서버 로그 두 가지로 모두 꼼꼼하게 확인해요.', next])
     const noComma = withComma.replace(',', '')
     const even = speechPieces(`${noComma} ${next}`)
     expectWhole(`${noComma} ${next}`, even)
-    expect(even.some((p) => p.endsWith('조회로 확인해요.') && p.length > 20)).toBe(true)
+    expect(even.some((p) => p.endsWith('꼼꼼하게 확인해요.') && p.length > 20)).toBe(true)
     expect(even.every((p) => !p.startsWith('확인해요'))).toBe(true)
   })
 

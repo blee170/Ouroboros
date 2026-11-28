@@ -160,6 +160,33 @@ describe('speechPieces: long text in sentence pieces', () => {
     expect(cut.join('')).toBe(party)
     expect(cut.every((p) => p.length <= SPEECH_PIECE_MAX && !loneSurrogate.test(p))).toBe(true)
   })
+
+  it('a cut inside a word never splits an emoji joined from several (ZWJ)', () => {
+    // 11 code units: 👨 ZWJ 👩 ZWJ 👧 ZWJ 👦. After the leading "a", a plain cut at 15 falls between a joiner and 👩,
+    // and one at the real piece size on a joiner
+    const family = '👨‍👩‍👧‍👦'
+    for (const [text, max] of [
+      ['a' + family.repeat(10), 15],
+      ['a' + family.repeat(30), SPEECH_PIECE_MAX]
+    ] as const) {
+      const pieces = speechPieces(text, max)
+      expect(pieces.join('')).toBe(text)
+      for (const p of pieces) {
+        expect(p.length, p).toBeLessThanOrEqual(max)
+        expect(p.replace(/^a/, '').replaceAll(family, ''), p).toBe('')
+      }
+    }
+  })
+
+  it('a tiny or broken max still ends, loses nothing and keeps every character whole', () => {
+    const text = 'hello world, 🎉 party 👨‍👩‍👧‍👦 done.'
+    const chars = new Set([...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((g) => g.segment))
+    for (const max of [0, -3, 0.5, 1, 2, Number.NaN]) {
+      const pieces = speechPieces(text, max)
+      expect(pieces.join('').replace(/\s+/g, ''), String(max)).toBe(text.replace(/\s+/g, ''))
+      for (const p of pieces) for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(p)) expect(chars.has(segment), `${max}: ${p}`).toBe(true)
+    }
+  })
 })
 
 interface Deferred<T> {
@@ -328,6 +355,32 @@ describe('speakPieces: a long text said piece by piece', () => {
     })
     expect(fellBack).toEqual([0])
     expect(failed).toEqual({ error: 'No gemini key saved in Settings' })
+  })
+
+  it('a make that throws at once is a piece that failed, never a rejected call', async () => {
+    const played: string[] = []
+    const fellBack: number[] = []
+    const voice = (failOn: string) => ({
+      make: (t: string): Promise<string> => {
+        if (t === failOn) throw new Error('synthesize is not a function')
+        return Promise.resolve(t.toUpperCase())
+      },
+      play: async (c: string): Promise<void> => {
+        played.push(c)
+      },
+      fallback: async (from: number): Promise<void> => {
+        fellBack.push(from)
+      }
+    })
+    await expect(speakPieces(['one', 'two'], voice('one'))).resolves.toEqual({ error: 'synthesize is not a function' })
+    expect(played).toEqual([])
+    expect(fellBack).toEqual([0])
+    // on a later piece: the one before it is still heard, then the rest goes the other way
+    played.length = 0
+    fellBack.length = 0
+    await expect(speakPieces(['one', 'two', 'three'], voice('two'))).resolves.toEqual({ error: 'synthesize is not a function' })
+    expect(played).toEqual(['ONE'])
+    expect(fellBack).toEqual([1])
   })
 
   it('nothing to say asks for nothing', async () => {

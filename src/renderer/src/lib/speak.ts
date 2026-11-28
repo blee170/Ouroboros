@@ -1,5 +1,5 @@
 import { phrase, type AnnounceLang, type AnnouncePayload } from '@shared/announce'
-import { ttsSettings } from '@shared/tts'
+import { speakPieces, speechPieces, ttsSettings } from '@shared/tts'
 import { useBoard } from '@/store/board'
 
 /**
@@ -77,24 +77,35 @@ function play(bytes: Uint8Array, mime: string): Promise<void> {
   return turn
 }
 
-/** Say any text: the chosen engine, else the Windows voice. Resolves once it has been said. */
+/**
+ * Say any text: the chosen engine, else the Windows voice. A long text goes in sentence pieces, the next made while
+ * one plays, so a slow local voice starts within one piece's time and no request runs into main's limit. Resolves
+ * once all of it has been said.
+ */
 async function say(text: (lang: AnnounceLang) => string, lang: AnnounceLang): Promise<{ error?: string; note?: string }> {
   const tts = ttsSettings(useBoard.getState().settings)
   if (tts.engine === 'windows') {
     await speakWindows(text, lang)
     return {}
   }
-  try {
-    const r = await window.ouroboros.tts.synthesize(text(lang))
-    if (!r.ok) throw new Error(r.error)
-    await play(r.bytes, r.mime)
-    return r.note ? { note: r.note } : {}
-  } catch (err) {
-    const m = (err as Error).message
-    console.warn(`[tts] ${tts.engine}: ${m} — Windows voice instead`)
-    await speakWindows(text, lang)
-    return { error: m }
+  const pieces = speechPieces(text(lang))
+  let note: string | undefined
+  const r = await speakPieces(pieces, {
+    make: async (piece) => {
+      const c = await window.ouroboros.tts.synthesize(piece)
+      if (!c.ok) throw new Error(c.error)
+      note ??= c.note
+      return c
+    },
+    play: (c) => play(c.bytes, c.mime),
+    // nothing said yet: the whole text as before (a Korean sentence can still turn English); else what is left
+    fallback: (from) => speakWindows(from === 0 ? text : () => pieces.slice(from).join(' '), lang)
+  })
+  if (r.error) {
+    console.warn(`[tts] ${tts.engine}: ${r.error} — Windows voice instead`)
+    return { error: r.error }
   }
+  return note ? { note } : {}
 }
 
 /** Everything asked to be said (announcements, read-alouds), one after another; settles when the last one has. */

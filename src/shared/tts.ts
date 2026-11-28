@@ -254,6 +254,41 @@ function lastEnd(s: string, re: RegExp, min: number): number | undefined {
   return end !== undefined && end >= min ? end : undefined
 }
 
+export interface PieceVoice<Clip> {
+  /** asks the engine for one piece's clip; rejects when it cannot */
+  make: (text: string) => Promise<Clip>
+  /** plays one clip; resolves when it has been heard */
+  play: (clip: Clip) => Promise<void>
+  /** says the pieces from `from` on another way (the Windows voice) */
+  fallback: (from: number) => Promise<void>
+}
+
+/**
+ * Says `pieces` in order: piece N+1 is being made while piece N plays, and never more than one request is open, so
+ * a local GPU is not asked for two clips at once. The first piece that cannot be made or played is said with every
+ * piece after it through `fallback`, and its error is returned. Resolves when the last piece has been heard.
+ */
+export async function speakPieces<Clip>(pieces: readonly string[], v: PieceVoice<Clip>): Promise<{ error?: string }> {
+  if (!pieces.length) return {}
+  let next = v.make(pieces[0])
+  for (let i = 0; i < pieces.length; i++) {
+    let ahead: Promise<Clip> | undefined
+    try {
+      const clip = await next
+      ahead = i + 1 < pieces.length ? v.make(pieces[i + 1]) : undefined
+      // it is awaited on the next turn; until then a failure must not count as unhandled
+      ahead?.catch(() => undefined)
+      await v.play(clip)
+    } catch (err) {
+      // a request already sent is waited out too, so the next text does not ask the engine for a second clip meanwhile
+      await Promise.all([v.fallback(i), ahead?.catch(() => undefined)])
+      return { error: err instanceof Error ? err.message : String(err) }
+    }
+    if (ahead) next = ahead
+  }
+  return {}
+}
+
 /** Only audio goes into the cache: a 200 with an HTML or JSON body would otherwise be replayed as a broken clip forever. */
 export function looksLikeAudio(bytes: Uint8Array, mime: string): boolean {
   if (bytes.length < 4) return false

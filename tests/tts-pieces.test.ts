@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { phrase, readAloudText } from '@shared/announce'
-import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speakPieces, speechPieces } from '@shared/tts'
+import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speakPieces, speechPieces, windowsUtterance } from '@shared/tts'
 
 /** The words of a text in order: a piece that ends inside a word shows up as a word the text does not have. */
 const words = (s: string): string[] => s.split(/\s+/).filter(Boolean)
@@ -515,5 +515,109 @@ describe('speakPieces: a slow voice cannot hold the speaker for minutes', () => 
     expect(await said).toEqual({})
     expect(r.fellBack).toEqual([])
     expect(r.played).toEqual(['ONE'])
+  })
+})
+
+describe('windowsUtterance: the Windows voice stops when told', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A Windows voice that says one utterance until the test ends it, and counts what it was asked to do. */
+  function synth() {
+    const s = { started: 0, cancelled: 0, end: (): void => {} }
+    return {
+      s,
+      start: (done: () => void): void => {
+        s.started++
+        s.end = done
+      },
+      cancel: (): void => {
+        s.cancelled++
+      }
+    }
+  }
+  const resolved = (p: Promise<unknown>): { done: boolean } => {
+    const r = { done: false }
+    void p.then(() => {
+      r.done = true
+    })
+    return r
+  }
+
+  it('stopped mid-utterance: the voice is cancelled and the call resolves at once', async () => {
+    const v = synth()
+    const stop = new AbortController()
+    const said = resolved(windowsUtterance(v.start, 95_000, v.cancel, stop.signal))
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(v.s.started).toBe(1)
+    expect(said.done).toBe(false)
+    stop.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(v.s.cancelled).toBe(1)
+    expect(said.done).toBe(true)
+  })
+
+  it('a stop after the utterance was said, or after the watchdog, cancels nothing: the voice may be saying the next text', async () => {
+    const v = synth()
+    const stop = new AbortController()
+    const said = resolved(windowsUtterance(v.start, 95_000, v.cancel, stop.signal))
+    v.s.end()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(said.done).toBe(true)
+    stop.abort()
+    expect(v.s.cancelled).toBe(0)
+
+    const quiet = synth()
+    const later = new AbortController()
+    // Chromium does not always tell the end: the watchdog resolves instead
+    const waited = resolved(windowsUtterance(quiet.start, 5_000, quiet.cancel, later.signal))
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(waited.done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(waited.done).toBe(true)
+    later.abort()
+    expect(quiet.cancelled).toBe(0)
+  })
+
+  it('stopped before it starts: nothing is said', async () => {
+    const v = synth()
+    const gone = new AbortController()
+    gone.abort()
+    await windowsUtterance(v.start, 95_000, v.cancel, gone.signal)
+    expect(v.s.started).toBe(0)
+    expect(v.s.cancelled).toBe(0)
+  })
+
+  it('stopped while the Windows voice says the rest of a text after the engine failed: the voice is cancelled and speakPieces resolves', async () => {
+    const v = synth()
+    const stop = new AbortController()
+    let fellBackFrom: number | undefined
+    const said = resolved(
+      speakPieces(
+        ['one', 'two'],
+        {
+          make: async () => {
+            throw new Error('Voicebox: not finished within 120 s')
+          },
+          play: async () => {},
+          fallback: (from) => {
+            fellBackFrom = from
+            return windowsUtterance(v.start, 95_000, v.cancel, stop.signal)
+          }
+        },
+        { signal: stop.signal }
+      )
+    )
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(fellBackFrom).toBe(0)
+    expect(said.done).toBe(false)
+    stop.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(v.s.cancelled).toBe(1)
+    expect(said.done).toBe(true)
   })
 })

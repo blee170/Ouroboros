@@ -256,6 +256,21 @@ function cutLong(sentence: string, max: number): string[] {
   return out
 }
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+/**
+ * How long the start of `s` is that holds only whole characters (an emoji with its joiners and skin tone is one) and
+ * is at most `max` long; never less than the first character, so a cut always moves on.
+ */
+export function wholeStart(s: string, max: number): number {
+  let end = 0
+  for (const { index, segment } of graphemes.segment(s)) {
+    if (end > 0 && index + segment.length > max) break
+    end = index + segment.length
+  }
+  return end
+}
+
 /** Of the places `re` matches in `s`, the last end that `ok` allows. */
 function lastEnd(s: string, re: RegExp, ok: (end: number) => boolean): number | undefined {
   let last: number | undefined

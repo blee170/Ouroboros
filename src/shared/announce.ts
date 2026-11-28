@@ -10,6 +10,7 @@
  * `mode: 'every'` is the older behaviour: every finished turn of 10 s or more, and "all cards have finished".
  */
 import type { AppSettings, NodeKind } from './types'
+import { wholeStart } from './tts'
 
 export type AnnounceTarget = 'off' | 'conductor' | 'all'
 export type AnnounceMode = 'important' | 'every'
@@ -105,8 +106,24 @@ export function langFor(...texts: Array<string | undefined>): AnnounceLang {
   return texts.some((t) => t && hasHangul(t)) ? 'ko' : 'en'
 }
 
+/**
+ * The most of a card title that is said aloud (cards have no title length limit). The longest sentence around a
+ * title is 35 characters (" finished. Please check the report."), so every announcement fits one speech piece
+ * (SPEECH_PIECE_MAX, 80) and is one request.
+ */
+export const ANNOUNCE_TITLE_MAX = 45
+
+/** A card title as said aloud: a longer one is cut at a word (whole characters if it has no space) and marked "…". */
+function sayTitle(title: string): string {
+  const t = title.trim()
+  if (t.length <= ANNOUNCE_TITLE_MAX) return t
+  const head = t.slice(0, wholeStart(t, ANNOUNCE_TITLE_MAX - 1))
+  const space = head.lastIndexOf(' ')
+  return `${(space >= ANNOUNCE_TITLE_MAX / 2 ? head.slice(0, space) : head).trimEnd()}…`
+}
+
 export function phrase(p: AnnouncePayload, lang: AnnounceLang = p.lang): string {
-  const t = p.title.trim()
+  const t = sayTitle(p.title)
   switch (p.kind) {
     case 'finished':
       return lang === 'ko' ? `${t} 작업이 끝났습니다. 보고를 확인해 주세요.` : `${t} finished. Please check the report.`
@@ -249,8 +266,8 @@ export function readAloudLine(step: ReadAloudStep, lang: AnnounceLang, text = ''
     case 'unclear':
       return ko ? '잘 못 알아들었어요. 화면에서 확인해 주세요.' : 'I did not catch that. Please check the screen.'
     case 'busy':
-      return ko ? `${text} 카드가 이미 다른 일을 하고 있어서 안 보냈어요. 화면에서 확인해 주세요.` : `${text} is busy with something else; not sent. Please check the screen.`
+      return ko ? `${sayTitle(text)} 카드가 이미 다른 일을 하고 있어서 안 보냈어요. 화면에서 확인해 주세요.` : `${sayTitle(text)} is busy with something else; not sent. Please check the screen.`
     case 'gone':
-      return ko ? `${text} 카드가 없어서 못 보냈어요.` : `${text} is gone; not sent.`
+      return ko ? `${sayTitle(text)} 카드가 없어서 못 보냈어요.` : `${sayTitle(text)} is gone; not sent.`
   }
 }

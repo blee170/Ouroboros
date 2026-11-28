@@ -175,12 +175,13 @@ export function geminiAudioData(json: unknown): string | undefined {
 export const MAX_TTS_CHARS = 300
 
 /**
- * The most one spoken piece of a long text carries. A heavy local voice (Voicebox "Sohee", a qwen clone, on an
- * RTX 4090) took 196 s for 300 characters (0.65 s a character), and 0.77 to 1.58 s a character for 30 to
- * 37-character pieces when the GPU was shared (measured 2026-11-28): 60 stays inside main's 120 s per request even
- * at the slowest, and its clip (about 0.16 s of audio a character) far under the 30 s the renderer gives one clip.
+ * The most one spoken piece of a long text carries, so the longest sentence that is said whole: pieces only break at
+ * sentence ends, and only a sentence longer than this is cut. A heavy local voice (Voicebox "Sohee", a qwen clone, on
+ * an RTX 4090) took 0.65 to 1.58 s a character (measured 2026-11-28): 80 characters take up to 126 s, inside main's
+ * Voicebox wait of 2 s a character, and its clip (about 0.16 s of audio a character) far under the 30 s the renderer
+ * gives one clip. 80 also fits every announcement whole (ANNOUNCE_TITLE_MAX).
  */
-export const SPEECH_PIECE_MAX = 60
+export const SPEECH_PIECE_MAX = 80
 /** A sentence shorter than this joins its neighbour: a lone "네." is not worth a request of its own. */
 const SPEECH_PIECE_MIN = 20
 /**

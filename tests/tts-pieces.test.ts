@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readAloudText } from '@shared/announce'
-import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speechPieces } from '@shared/tts'
+import { MAX_TTS_CHARS, SPEECH_PIECE_MAX, speakPieces, speechPieces } from '@shared/tts'
 
 /** The words of a text in order: a piece that ends inside a word shows up as a word the text does not have. */
 const words = (s: string): string[] => s.split(/\s+/).filter(Boolean)
@@ -123,5 +123,181 @@ describe('speechPieces: long text in sentence pieces', () => {
     const cut = speechPieces(party)
     expect(cut.join('')).toBe(party)
     expect(cut.every((p) => p.length <= SPEECH_PIECE_MAX && !loneSurrogate.test(p))).toBe(true)
+  })
+})
+
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (v: T) => void
+  reject: (e: Error) => void
+}
+function deferred<T>(): Deferred<T> {
+  let resolve!: (v: T) => void
+  let reject!: (e: Error) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+/** Lets every promise that can settle now settle. */
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+/** A voice engine and a speaker driven by hand: each request and each clip finishes when the test says so. */
+function rig() {
+  const asked: string[] = []
+  const played: string[] = []
+  const fellBack: number[] = []
+  const requests = new Map<string, Deferred<string>>()
+  const clips = new Map<string, Deferred<void>>()
+  let open = 0
+  let mostOpen = 0
+  const voice = {
+    make: (text: string): Promise<string> => {
+      asked.push(text)
+      open++
+      mostOpen = Math.max(mostOpen, open)
+      const d = deferred<string>()
+      requests.set(text, d)
+      return d.promise.finally(() => open--)
+    },
+    play: (clip: string): Promise<void> => {
+      played.push(clip)
+      const d = deferred<void>()
+      clips.set(clip, d)
+      return d.promise
+    },
+    fallback: async (from: number): Promise<void> => {
+      fellBack.push(from)
+    }
+  }
+  return { voice, asked, played, fellBack, request: (t: string) => requests.get(t)!, clip: (c: string) => clips.get(c)!, mostOpen: () => mostOpen }
+}
+
+describe('speakPieces: a long text said piece by piece', () => {
+  it('plays the pieces in order, making the next one while one plays, never two requests at once', async () => {
+    const r = rig()
+    let done = false
+    const said = speakPieces(['one', 'two', 'three'], r.voice).then((x) => {
+      done = true
+      return x
+    })
+    await settle()
+    expect(r.asked).toEqual(['one'])
+    r.request('one').resolve('ONE')
+    await settle()
+    // the second piece is asked for as soon as the first is ready, while it plays
+    expect(r.played).toEqual(['ONE'])
+    expect(r.asked).toEqual(['one', 'two'])
+    r.request('two').resolve('TWO')
+    await settle()
+    // the second is ready but the first still plays: nothing more is asked for yet
+    expect(r.asked).toEqual(['one', 'two'])
+    expect(r.played).toEqual(['ONE'])
+    r.clip('ONE').resolve()
+    await settle()
+    expect(r.played).toEqual(['ONE', 'TWO'])
+    expect(r.asked).toEqual(['one', 'two', 'three'])
+    // the first clip ended before the next was ready: it plays when it is
+    r.clip('TWO').resolve()
+    await settle()
+    expect(r.played).toEqual(['ONE', 'TWO'])
+    r.request('three').resolve('THREE')
+    await settle()
+    expect(r.played).toEqual(['ONE', 'TWO', 'THREE'])
+    // whoever waits on this text (the next announcement) waits for the last piece to be heard
+    expect(done).toBe(false)
+    r.clip('THREE').resolve()
+    expect(await said).toEqual({})
+    expect(r.mostOpen()).toBe(1)
+    expect(r.fellBack).toEqual([])
+  })
+
+  it('a piece the engine fails is said another way with every piece after it, and the error is told once', async () => {
+    const asked: string[] = []
+    const played: string[] = []
+    const fellBack: number[] = []
+    const result = await speakPieces(['one', 'two', 'three'], {
+      make: async (t) => {
+        asked.push(t)
+        if (t === 'two') throw new Error('Voicebox: not finished within 120 s')
+        return t.toUpperCase()
+      },
+      play: async (c) => {
+        played.push(c)
+      },
+      fallback: async (from) => {
+        fellBack.push(from)
+      }
+    })
+    expect(played).toEqual(['ONE'])
+    expect(fellBack).toEqual([1])
+    expect(asked).toEqual(['one', 'two'])
+    expect(result).toEqual({ error: 'Voicebox: not finished within 120 s' })
+  })
+
+  it('a clip that will not play is said another way from there on, and the request already sent is waited out first', async () => {
+    const r = rig()
+    let done = false
+    const said = speakPieces(['one', 'two', 'three'], r.voice).then((x) => {
+      done = true
+      return x
+    })
+    await settle()
+    r.request('one').resolve('ONE')
+    await settle()
+    r.request('two').resolve('TWO')
+    r.clip('ONE').resolve()
+    await settle()
+    // "three" is being made while "two" plays; then "two" fails to play
+    expect(r.asked).toEqual(['one', 'two', 'three'])
+    r.clip('TWO').reject(new Error('audio playback stalled'))
+    await settle()
+    expect(r.fellBack).toEqual([1])
+    // the engine is still making "three": the next text must not ask it for another clip meanwhile
+    expect(done).toBe(false)
+    r.request('three').resolve('THREE')
+    expect(await said).toEqual({ error: 'audio playback stalled' })
+    expect(r.played).toEqual(['ONE', 'TWO'])
+  })
+
+  it('a text of one piece is one request, and a first piece that fails hands the whole text over', async () => {
+    const asked: string[] = []
+    const played: string[] = []
+    const ok = await speakPieces(['총괄 작업이 끝났습니다. 보고를 확인해 주세요.'], {
+      make: async (t) => {
+        asked.push(t)
+        return t
+      },
+      play: async (c) => {
+        played.push(c)
+      },
+      fallback: async () => {
+        throw new Error('not expected')
+      }
+    })
+    expect(ok).toEqual({})
+    expect(asked).toEqual(['총괄 작업이 끝났습니다. 보고를 확인해 주세요.'])
+    expect(played).toEqual(['총괄 작업이 끝났습니다. 보고를 확인해 주세요.'])
+
+    const fellBack: number[] = []
+    const failed = await speakPieces(['one', 'two'], {
+      make: async () => {
+        throw new Error('No gemini key saved in Settings')
+      },
+      play: async () => {},
+      fallback: async (from) => {
+        fellBack.push(from)
+      }
+    })
+    expect(fellBack).toEqual([0])
+    expect(failed).toEqual({ error: 'No gemini key saved in Settings' })
+  })
+
+  it('nothing to say asks for nothing', async () => {
+    const r = rig()
+    expect(await speakPieces([], r.voice)).toEqual({})
+    expect(r.asked).toEqual([])
+    expect(r.fellBack).toEqual([])
   })
 })

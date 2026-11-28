@@ -159,4 +159,32 @@ describe('an abandoned read-aloud', () => {
     expect(said).toEqual([offer, read])
     expect(heardAsked).toBe(1)
   })
+
+  it('the composer gone while the confirming yes is heard: the answer is not sent', async () => {
+    const stop = new AbortController()
+    const said: string[] = []
+    const sent: string[] = []
+    const answers = ['네', 'A로 가자', '네']
+    const io: ReadAloudIO = {
+      say: async (text) => {
+        said.push(text)
+      },
+      hear: async () => {
+        const answer = answers.shift()
+        // the last utterance, the yes to "send it?", comes back after the composer went away
+        if (!answers.length) stop.abort()
+        return answer
+      },
+      send: (_nodeId, text) => {
+        sent.push(text)
+        return 'sent'
+      },
+      settled: async () => {},
+      hold: () => () => {}
+    }
+    await readAloudExchange({ kind: 'decision', title: 'Design', lang: 'ko', nodeId: 'n1', read: '읽을 내용' }, 'n1', '읽을 내용', io, stop.signal)
+    expect(said).toContain(readAloudLine('confirm', 'ko', 'A로 가자'))
+    expect(sent).toEqual([])
+    expect(said).not.toContain(readAloudLine('sent', 'ko'))
+  })
 })
